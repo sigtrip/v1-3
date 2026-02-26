@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  argos:
+    build: .
+    container_name: argos-universal-os
+    restart: unless-stopped
+    
+    # Environment variables
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://localhost:11434}
+    
+    # Volumes for persistent data
+    volumes:
+      - ./logs:/app/logs
+      - ./backups:/app/backups
+      - ./archives:/app/archives
+      - ./config:/app/config
+    
+    # Network mode
+    network_mode: host
+    
+    # Keep container running in interactive mode
+    stdin_open: true
+    tty: true
+    
+    # Command
+    command: python main.py
+
+  # Optional: Ollama service for local AI
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: argos-ollama
+  #   restart: unless-stopped
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-data:/root/.ollama
+
+# volumes:
+#   ollama-data:
