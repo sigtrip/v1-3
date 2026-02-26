@@ -1,0 +1,121 @@
+import customtkinter as ctk
+import threading
+
+class ArgosGUI(ctk.CTk):
+    def __init__(self, core, admin, flasher, location):
+        super().__init__()
+        self.core    = core
+        self.admin   = admin
+        self.flasher = flasher
+        self._listening = False
+
+        self.title("ARGOS UNIVERSAL OS")
+        self.geometry("1100x700")
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
+
+        # ── Sidebar ───────────────────────────────────────
+        self.sidebar = ctk.CTkFrame(self, width=260)
+        self.sidebar.pack(side="left", fill="y", padx=10, pady=10)
+        self.sidebar.pack_propagate(False)
+
+        ctk.CTkLabel(self.sidebar, text="👁️ ARGOS OS",
+                     font=("Consolas", 20, "bold"), text_color="#00FFFF").pack(pady=16)
+
+        ctk.CTkLabel(self.sidebar, text=f"📍 {location}",
+                     wraplength=230, justify="left", font=("Consolas", 11)).pack(pady=4)
+
+        self.q_label = ctk.CTkLabel(self.sidebar, text="⚛ Состояние: —",
+                                    text_color="#00FF88", font=("Consolas", 12))
+        self.q_label.pack(pady=6)
+
+        self.voice_label = ctk.CTkLabel(self.sidebar, text="🔊 Голос: ВКЛ",
+                                        text_color="#88FF00", font=("Consolas", 11))
+        self.voice_label.pack(pady=2)
+
+        ctk.CTkLabel(self.sidebar, text="─" * 28, text_color="#333").pack(pady=8)
+
+        # Быстрые кнопки
+        for label, cmd in [
+            ("📊 Статус системы",    "статус системы"),
+            ("🪙 Крипто",            "крипто"),
+            ("📡 Сканировать сеть",  "сканируй сеть"),
+            ("📰 AI Дайджест",       "дайджест"),
+            ("🔍 Сканируй порты",    "сканируй порты"),
+            ("💾 Создать копию",     "репликация"),
+        ]:
+            btn = ctk.CTkButton(self.sidebar, text=label, height=32,
+                                command=lambda c=cmd: self._send_text(c))
+            btn.pack(fill="x", padx=10, pady=3)
+
+        ctk.CTkLabel(self.sidebar, text="─" * 28, text_color="#333").pack(pady=8)
+
+        self.voice_btn = ctk.CTkButton(self.sidebar, text="🎤 Слушать",
+                                       height=40, fg_color="#1a4a1a",
+                                       hover_color="#2a6a2a",
+                                       command=self._toggle_listen)
+        self.voice_btn.pack(fill="x", padx=10, pady=4)
+
+        # ── Чат ───────────────────────────────────────────
+        self.chat = ctk.CTkTextbox(self, font=("Consolas", 13), wrap="word")
+        self.chat.pack(side="top", fill="both", expand=True, padx=(0,10), pady=10)
+        self.chat.configure(state="disabled")
+
+        # ── Ввод ──────────────────────────────────────────
+        inp = ctk.CTkFrame(self, fg_color="transparent")
+        inp.pack(side="bottom", fill="x", padx=(0,10), pady=(0,10))
+
+        self.entry = ctk.CTkEntry(inp, placeholder_text="Директива для Аргоса...", height=42,
+                                  font=("Consolas", 13))
+        self.entry.pack(side="left", fill="x", expand=True, padx=(0,8))
+        self.entry.bind("<Return>", lambda e: self._send_text(self.entry.get()))
+
+        ctk.CTkButton(inp, text="▶ EXECUTE", width=110, height=42,
+                      command=lambda: self._send_text(self.entry.get())).pack(side="right")
+
+    # ── ОТПРАВКА ──────────────────────────────────────────
+    def _send_text(self, text: str):
+        if not text or not text.strip():
+            return
+        self.entry.delete(0, "end")
+        state = self.core.quantum.generate_state()['name'][:3].upper()
+        self._append(f"[{state}] ВСЕВОЛОД: {text}\n", "#5599ff")
+        threading.Thread(target=self._process, args=(text,), daemon=True).start()
+
+    def _process(self, text: str):
+        res = self.core.process_logic(text, self.admin, self.flasher)
+        self.after(0, self._on_response, res)
+
+    def _on_response(self, res: dict):
+        self.q_label.configure(text=f"⚛ Состояние: {res['state']}")
+        self._append(f"👁 АРГОС [{res['state']}]:\n{res['answer']}\n\n", "#00d4ff")
+        # Голос — уже вызывается внутри core.process_logic через self.say()
+        v = "ВКЛ" if self.core.voice_on else "ВЫКЛ"
+        self.voice_label.configure(text=f"🔊 Голос: {v}")
+
+    # ── ГОЛОСОВОЙ ВВОД ────────────────────────────────────
+    def _toggle_listen(self):
+        if self._listening:
+            return
+        self._listening = True
+        self.voice_btn.configure(text="🔴 Слушаю...", fg_color="#4a1a1a")
+        threading.Thread(target=self._listen_loop, daemon=True).start()
+
+    def _listen_loop(self):
+        text = self.core.listen()
+        self.after(0, self._after_listen, text)
+
+    def _after_listen(self, text: str):
+        self._listening = False
+        self.voice_btn.configure(text="🎤 Слушать", fg_color="#1a4a1a")
+        if text:
+            self._send_text(text)
+        else:
+            self._append("👂 Не распознано. Попробуй снова.\n", "#ff8800")
+
+    # ── ВЫВОД В ЧАТ ───────────────────────────────────────
+    def _append(self, text: str, color: str = "#ffffff"):
+        self.chat.configure(state="normal")
+        self.chat.insert("end", text)
+        self.chat.see("end")
+        self.chat.configure(state="disabled")

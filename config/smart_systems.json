@@ -1,0 +1,20 @@
+{
+  "main": {
+    "type": "aquarium",
+    "sensors": {},
+    "actuators": {},
+    "custom_rules": []
+  },
+  "tank1": {
+    "type": "aquarium",
+    "sensors": {},
+    "actuators": {},
+    "custom_rules": []
+  },
+  "a1": {
+    "type": "aquarium",
+    "sensors": {},
+    "actuators": {},
+    "custom_rules": []
+  }
+}
