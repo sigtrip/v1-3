@@ -1,6 +1,7 @@
 import os
 import asyncio
 from telegram import Update
+from telegram.error import InvalidToken, TelegramError
 from telegram.ext import (
     Application, MessageHandler, CommandHandler,
     filters, ContextTypes
@@ -14,6 +15,26 @@ class ArgosTelegram:
         self.token   = os.getenv("TELEGRAM_BOT_TOKEN")
         self.user_id = os.getenv("USER_ID")
         self.app     = None
+
+    def _is_placeholder_token(self, token: str) -> bool:
+        value = (token or "").strip().lower()
+        return value in {"", "your_token_here", "none", "null", "changeme"}
+
+    def _looks_like_token(self, token: str) -> bool:
+        t = (token or "").strip()
+        if ":" not in t:
+            return False
+        bot_id, secret = t.split(":", 1)
+        return bot_id.isdigit() and len(secret) >= 30
+
+    def can_start(self) -> tuple[bool, str]:
+        if self._is_placeholder_token(self.token):
+            return False, "Токен не задан"
+        if not self._looks_like_token(self.token):
+            return False, "Формат токена некорректен"
+        if not self.user_id:
+            return False, "USER_ID не задан"
+        return True, "ok"
 
     # ── ПРОВЕРКА ДОСТУПА ──────────────────────────────────
     def _auth(self, update: Update) -> bool:
@@ -213,8 +234,9 @@ class ArgosTelegram:
 
     # ── ЗАПУСК ────────────────────────────────────────────
     def run(self):
-        if not self.token or self.token == "your_token_here":
-            print("[TG-BRIDGE]: Токен не найден. Telegram-мост отключён.")
+        can_start, reason = self.can_start()
+        if not can_start:
+            print(f"[TG-BRIDGE]: Telegram-мост отключён: {reason}.")
             return
 
         loop = asyncio.new_event_loop()
@@ -246,4 +268,11 @@ class ArgosTelegram:
         )
 
         print(f"[TG-BRIDGE]: Мост активен. USER_ID={self.user_id}")
-        self.app.run_polling(close_loop=False)
+        try:
+            self.app.run_polling(close_loop=False)
+        except InvalidToken:
+            print("[TG-BRIDGE]: Telegram-мост отключён: токен отклонён сервером.")
+        except TelegramError as e:
+            print(f"[TG-BRIDGE]: Telegram error: {e}")
+        except Exception as e:
+            print(f"[TG-BRIDGE]: Неожиданная ошибка Telegram-моста: {e}")

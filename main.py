@@ -71,6 +71,10 @@ class ArgosOrchestrator:
     def _start_telegram(self):
         try:
             self.tg = ArgosTelegram(self.core, self.admin, self.flasher)
+            can_start, reason = self.tg.can_start()
+            if not can_start:
+                log.warning("[TG] Отключён: %s", reason)
+                return
             threading.Thread(target=self.tg.run, daemon=True).start()
             log.info("[TG] Telegram-бот запущен")
         except Exception as e:

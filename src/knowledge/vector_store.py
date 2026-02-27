@@ -98,6 +98,9 @@ class ArgosVectorStore:
                 return doc_id
             except Exception as e:
                 log.warning("Vector upsert fallback: %s", e)
+                self._mode = "fallback"
+                self._collection = None
+                log.info("VectorStore: переключаюсь в fallback mode после ошибки upsert")
 
         return doc_id
 
@@ -159,6 +162,9 @@ class ArgosVectorStore:
                 return out
             except Exception as e:
                 log.warning("Vector search fallback: %s", e)
+                self._mode = "fallback"
+                self._collection = None
+                log.info("VectorStore: переключаюсь в fallback mode после ошибки search")
                 return self._fallback_search(query, top_k=top_k)
 
         return self._fallback_search(query, top_k=top_k)
