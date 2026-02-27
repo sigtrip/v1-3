@@ -5,9 +5,35 @@ argos_logger.py — Централизованный логгер Аргоса
 """
 import logging
 import os
+import re
 from logging.handlers import RotatingFileHandler
 
 os.makedirs("logs", exist_ok=True)
+
+
+class _SensitiveDataFilter(logging.Filter):
+    _TG_TOKEN_RE = re.compile(r"\b\d{6,12}:[A-Za-z0-9_-]{20,}\b")
+
+    @classmethod
+    def _sanitize(cls, value):
+        if isinstance(value, str):
+            return cls._TG_TOKEN_RE.sub("***REDACTED***", value)
+        return value
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.msg = self._sanitize(record.msg)
+        if record.args:
+            if isinstance(record.args, dict):
+                record.args = {k: self._sanitize(v) for k, v in record.args.items()}
+            else:
+                record.args = tuple(self._sanitize(v) for v in record.args)
+        if record.exc_info and record.exc_info[1] is not None:
+            record.exc_info = (
+                record.exc_info[0],
+                type(record.exc_info[1])(self._sanitize(str(record.exc_info[1]))),
+                record.exc_info[2],
+            )
+        return True
 
 def get_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)
@@ -31,6 +57,10 @@ def get_logger(name: str) -> logging.Logger:
     ch = logging.StreamHandler()
     ch.setLevel(logging.INFO)
     ch.setFormatter(fmt)
+
+    scrub = _SensitiveDataFilter()
+    fh.addFilter(scrub)
+    ch.addFilter(scrub)
 
     logger.addHandler(fh)
     logger.addHandler(ch)
