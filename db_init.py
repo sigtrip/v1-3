@@ -4,12 +4,13 @@ db_init.py — Инициализация базы данных Аргоса (SQ
 """
 import sqlite3
 import os
+import threading
 
 DB_PATH = "data/argos.db"
 
 def init_db() -> sqlite3.Connection:
     os.makedirs("data", exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     c = conn.cursor()
 
     # История диалогов
@@ -79,44 +80,52 @@ class ArgosDB:
 
     def __init__(self):
         self.conn = init_db()
+        self._lock = threading.RLock()
+
+    def _execute(self, query: str, params: tuple = (), commit: bool = False):
+        with self._lock:
+            cur = self.conn.execute(query, params)
+            if commit:
+                self.conn.commit()
+            return cur
 
     def log_chat(self, role: str, message: str, state: str = None):
-        self.conn.execute(
+        self._execute(
             "INSERT INTO chat_history (role, state, message) VALUES (?,?,?)",
-            (role, state, message)
+            (role, state, message),
+            commit=True,
         )
-        self.conn.commit()
 
     def log_command(self, command: str, result: str, source: str = "gui"):
-        self.conn.execute(
+        self._execute(
             "INSERT INTO command_log (command, result, source) VALUES (?,?,?)",
-            (command, result, source)
+            (command, result, source),
+            commit=True,
         )
-        self.conn.commit()
 
     def log_geo(self, city: str, country: str, isp: str = "", ip: str = ""):
-        self.conn.execute(
+        self._execute(
             "INSERT INTO geo_log (city, country, isp, ip) VALUES (?,?,?,?)",
-            (city, country, isp, ip)
+            (city, country, isp, ip),
+            commit=True,
         )
-        self.conn.commit()
 
     def get_history(self, limit: int = 20) -> list:
-        cur = self.conn.execute(
+        cur = self._execute(
             "SELECT timestamp, role, state, message FROM chat_history ORDER BY id DESC LIMIT ?",
             (limit,)
         )
         return cur.fetchall()
 
     def get_command_log(self, limit: int = 20) -> list:
-        cur = self.conn.execute(
+        cur = self._execute(
             "SELECT timestamp, command, result, source FROM command_log ORDER BY id DESC LIMIT ?",
             (limit,)
         )
         return cur.fetchall()
 
     def search_history(self, query: str) -> list:
-        cur = self.conn.execute(
+        cur = self._execute(
             "SELECT timestamp, role, message FROM chat_history WHERE message LIKE ? ORDER BY id DESC LIMIT 10",
             (f"%{query}%",)
         )
@@ -134,7 +143,8 @@ class ArgosDB:
         return "\n".join(lines)
 
     def close(self):
-        self.conn.close()
+        with self._lock:
+            self.conn.close()
 
 
 if __name__ == "__main__":

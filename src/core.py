@@ -48,16 +48,63 @@ class _GeminiResponse:
 
 class _GeminiCompatClient:
     """Лёгкий адаптер google.genai под старый интерфейс generate_content()."""
-    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash"):
-        self.model_name = model_name
+    def __init__(self, api_key: str, model_name: str = "gemini-2.0-flash"):
         self.client = genai_sdk.Client(api_key=api_key)
+        self.model_name = self._resolve_model_name(model_name)
+
+    def _resolve_model_name(self, requested: str) -> str:
+        env_model = os.getenv("GEMINI_MODEL", "").strip()
+        if env_model:
+            requested = env_model
+
+        candidates = [
+            requested,
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+        ]
+
+        try:
+            available = []
+            for model in self.client.models.list():
+                name = getattr(model, "name", "") or ""
+                if name:
+                    available.append(name)
+
+            if not available:
+                return requested
+
+            for cand in candidates:
+                if cand in available:
+                    return cand
+                if f"models/{cand}" in available:
+                    return f"models/{cand}"
+
+            # Берём первую flash-модель, если есть
+            for name in available:
+                if "flash" in name.lower():
+                    return name
+            return available[0]
+        except Exception:
+            return requested
 
     def generate_content(self, contents):
         if isinstance(contents, list):
             prompt = "\n\n".join(str(x) for x in contents if isinstance(x, str) and x.strip())
         else:
             prompt = str(contents)
-        resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
+        try:
+            resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
+        except Exception as first_error:
+            # Попытка один раз переключиться на доступную модель (404/NOT_FOUND и совместимость API)
+            new_model = self._resolve_model_name("gemini-2.0-flash")
+            if new_model != self.model_name:
+                self.model_name = new_model
+                resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
+            else:
+                raise first_error
+
         text = getattr(resp, "text", "") or ""
         return _GeminiResponse(text=text)
 
@@ -361,7 +408,7 @@ class ArgosCore:
     def _setup_ai(self):
         key = os.getenv("GEMINI_API_KEY", "")
         if GEMINI_OK and key and key != "your_key_here":
-            self.model = _GeminiCompatClient(api_key=key, model_name="gemini-1.5-flash")
+            self.model = _GeminiCompatClient(api_key=key, model_name="gemini-2.0-flash")
             log.info("Gemini: OK")
         else:
             self.model = None

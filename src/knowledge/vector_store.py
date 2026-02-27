@@ -38,6 +38,11 @@ class ArgosVectorStore:
     def _init_chroma(self):
         os.makedirs(self.path, exist_ok=True)
         try:
+            if os.getenv("ARGOS_VECTOR_FORCE_FALLBACK", "").strip().lower() in {"1", "true", "on", "yes"}:
+                self._mode = "fallback"
+                log.info("VectorStore: fallback mode forced by ARGOS_VECTOR_FORCE_FALLBACK")
+                return
+
             chromadb = importlib.import_module("chromadb")
             chromadb_config = importlib.import_module("chromadb.config")
             Settings = chromadb_config.Settings
@@ -60,8 +65,12 @@ class ArgosVectorStore:
 
                 self._embedder = _Embedder(st_model)
                 self._collection = client.get_or_create_collection("argos_memory", embedding_function=self._embedder)
-            except Exception:
-                self._collection = client.get_or_create_collection("argos_memory")
+            except Exception as e:
+                # Не включаем chromadb без embedder, чтобы не триггерить дефолтный ONNX download/таймауты
+                self._mode = "fallback"
+                self._collection = None
+                log.warning("VectorStore: sentence-transformers недоступен, fallback mode: %s", e)
+                return
 
             self._mode = "chromadb"
             log.info("VectorStore: ChromaDB активирован (%s)", self.path)
@@ -79,6 +88,9 @@ class ArgosVectorStore:
             digest = hashlib.sha1((text + str(metadata)).encode("utf-8", errors="ignore")).hexdigest()
             doc_id = f"mem_{digest[:16]}"
 
+        # Всегда держим локальное зеркало для мгновенного fallback-поиска
+        self._fallback_docs[doc_id] = {"text": text, "metadata": metadata}
+
         if self._mode == "chromadb" and self._collection is not None:
             try:
                 meta = {k: str(v) for k, v in metadata.items()}
@@ -87,7 +99,6 @@ class ArgosVectorStore:
             except Exception as e:
                 log.warning("Vector upsert fallback: %s", e)
 
-        self._fallback_docs[doc_id] = {"text": text, "metadata": metadata}
         return doc_id
 
     def _fallback_search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
@@ -148,6 +159,7 @@ class ArgosVectorStore:
                 return out
             except Exception as e:
                 log.warning("Vector search fallback: %s", e)
+                return self._fallback_search(query, top_k=top_k)
 
         return self._fallback_search(query, top_k=top_k)
 
