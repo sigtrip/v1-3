@@ -1,5 +1,8 @@
 import os
 import asyncio
+import tempfile
+import subprocess
+from pathlib import Path
 from telegram import Update
 from telegram.error import InvalidToken, TelegramError
 from telegram.ext import (
@@ -15,6 +18,33 @@ class ArgosTelegram:
         self.token   = os.getenv("TELEGRAM_BOT_TOKEN")
         self.user_id = os.getenv("USER_ID")
         self.app     = None
+
+    def _find_apk_artifact(self) -> str | None:
+        candidates = []
+        for pattern in ["bin/*.apk", "dist/**/*.apk", "build/**/*.apk"]:
+            candidates.extend(Path(".").glob(pattern))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        return str(candidates[0])
+
+    def _build_apk_sync(self) -> tuple[bool, str]:
+        """Собирает APK внешней командой из ARGOS_APK_BUILD_CMD."""
+        cmd = os.getenv("ARGOS_APK_BUILD_CMD", "").strip()
+        if not cmd:
+            return False, "ARGOS_APK_BUILD_CMD не задан. Пример: buildozer -v android debug"
+
+        try:
+            subprocess.run(cmd, shell=True, check=True)
+        except subprocess.CalledProcessError as e:
+            return False, f"Сборка APK завершилась с ошибкой: {e}"
+        except Exception as e:
+            return False, f"Ошибка запуска сборки APK: {e}"
+
+        apk_path = self._find_apk_artifact()
+        if not apk_path:
+            return False, "Сборка завершена, но APK не найден (bin/dist/build)."
+        return True, apk_path
 
     def _is_placeholder_token(self, token: str) -> bool:
         value = (token or "").strip().lower()
@@ -64,8 +94,9 @@ class ArgosTelegram:
             "`создай прошивку [id] [шаблон] [порт]` — подготовка/прошивка\n"
             "/skills — список навыков\n"
             "/voice_on /voice_off — озвучка\n"
+            "/apk — собрать и отправить APK\n"
             "/help — справка\n\n"
-            "Или просто напиши директиву текстом.",
+            "Или отправь директиву текстом/голосом.",
             parse_mode="Markdown"
         )
 
@@ -181,6 +212,23 @@ class ArgosTelegram:
         else:
             await update.message.reply_text("IoT Bridge не подключен.")
 
+    async def cmd_apk(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        """Собрать APK и отправить файл в Telegram."""
+        if not self._auth(update):
+            return
+        await update.message.reply_text("📦 Запускаю сборку APK. Это может занять несколько минут...")
+        ok, payload = await asyncio.to_thread(self._build_apk_sync)
+        if not ok:
+            await update.message.reply_text(f"❌ {payload}")
+            return
+
+        apk_path = payload
+        try:
+            with open(apk_path, "rb") as f:
+                await update.message.reply_document(document=f, filename=os.path.basename(apk_path), caption="✅ APK готов")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Не удалось отправить APK: {e}")
+
     async def cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._auth(update): return
         help_text = (
@@ -209,6 +257,9 @@ class ArgosTelegram:
             "• `шаблоны шлюзов` — доступные профили gateway\n\n"
             "*Голос:*\n"
             "• `/voice_on` / `/voice_off` — TTS\n"
+            "• Отправь голосовое сообщение — Аргос распознает и выполнит команду\n"
+            "\n*APK:*\n"
+            "• `/apk` — сборка APK и отправка в Telegram (через ARGOS_APK_BUILD_CMD)\n"
         )
         await update.message.reply_text(help_text, parse_mode="Markdown")
 
@@ -231,6 +282,48 @@ class ArgosTelegram:
             f"👁️ *ARGOS* `[{state}]`\n\n{answer}",
             parse_mode="Markdown"
         )
+
+    async def handle_voice(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        if not self._auth(update):
+            await update.message.reply_text("⛔ Доступ заблокирован.")
+            return
+
+        voice = update.message.voice if update.message else None
+        if not voice:
+            await update.message.reply_text("❌ Голосовое сообщение не обнаружено.")
+            return
+
+        await update.message.reply_text("🎙 Получил голосовое. Распознаю...")
+
+        temp_path = None
+        try:
+            tg_file = await ctx.bot.get_file(voice.file_id)
+            with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+                temp_path = tmp.name
+
+            await tg_file.download_to_drive(custom_path=temp_path)
+            text = await asyncio.to_thread(self.core.transcribe_audio_path, temp_path)
+
+            if not text:
+                await update.message.reply_text("🤷 Не удалось распознать голосовое. Попробуйте ещё раз.")
+                return
+
+            await update.message.reply_text(f"📝 Распознано: {text}")
+            result = await self.core.process_logic_async(text, self.admin, self.flasher)
+            answer = result['answer'][:4000]
+            state = result['state']
+            await update.message.reply_text(
+                f"👁️ *ARGOS* `[{state}]`\n\n{answer}",
+                parse_mode="Markdown"
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка обработки голосового: {e}")
+        finally:
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except Exception:
+                    pass
 
     # ── ЗАПУСК ────────────────────────────────────────────
     def run(self):
@@ -261,8 +354,10 @@ class ArgosTelegram:
         self.app.add_handler(CommandHandler("replicate", self.cmd_replicate))
         self.app.add_handler(CommandHandler("smart",     self.cmd_smart))
         self.app.add_handler(CommandHandler("iot",       self.cmd_iot))
+        self.app.add_handler(CommandHandler("apk",       self.cmd_apk))
 
         # Текстовые сообщения
+        self.app.add_handler(MessageHandler(filters.VOICE, self.handle_voice))
         self.app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
         )

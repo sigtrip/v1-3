@@ -403,6 +403,25 @@ class ArgosCore:
             log.warning("Whisper STT fallback: %s", e)
             return ""
 
+    def transcribe_audio_path(self, audio_path: str) -> str:
+        """Транскрибация аудиофайла (ogg/mp3/wav) через faster-whisper."""
+        if not audio_path or not os.path.exists(audio_path):
+            return ""
+        try:
+            if self._whisper_model is None:
+                from faster_whisper import WhisperModel
+                model_size = os.getenv("WHISPER_MODEL", "small")
+                device = os.getenv("WHISPER_DEVICE", "cpu")
+                compute = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+                self._whisper_model = WhisperModel(model_size, device=device, compute_type=compute)
+
+            segments, _ = self._whisper_model.transcribe(audio_path, language="ru", vad_filter=True)
+            text = " ".join(seg.text.strip() for seg in segments if seg.text and seg.text.strip())
+            return text.strip()
+        except Exception as e:
+            log.warning("Whisper file STT: %s", e)
+            return ""
+
     # ═══════════════════════════════════════════════════════
     # ИИ
     # ═══════════════════════════════════════════════════════

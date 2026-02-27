@@ -4,7 +4,7 @@
     "type": "interval",
     "command": "тест",
     "interval_sec": 3600,
-    "last_run": 1772181701.2094128
+    "last_run": 1772185301.2362347
   },
   {
     "id": 2,
