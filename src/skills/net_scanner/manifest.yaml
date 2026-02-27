@@ -3,6 +3,7 @@ display_name: "Сетевой Призрак"
 version: "1.2.0"
 description: "Сканирование сети и портов"
 author: "Аргос / Всеволод"
+entry: "skill.py"
 permissions: ['network', 'system']
 dependencies: []
 entry_class: NetGhost

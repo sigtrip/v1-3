@@ -33,15 +33,19 @@ class TestNodeProfile(unittest.TestCase):
         self.assertLessEqual(pwr["index"], 100)
 
     def test_authority_formula(self):
-        """Авторитет = мощность × log(возраст + 2)."""
+        """Авторитет = мощность × log(возраст + 2).
+        Мокаем get_power чтобы убрать влияние CPU-флуктуаций."""
         import math
-        p         = self.NodeProfile()
-        power     = p.get_power()["index"]
-        age_days  = p.get_age_days()
-        authority = p.get_authority()
-        expected  = round(power * math.log(age_days + 2), 2)
-        self.assertAlmostEqual(authority, expected, delta=5,
-                               msg="Авторитет не соответствует формуле")
+        from unittest.mock import patch
+        p = self.NodeProfile()
+        fixed_power = {"index": 50, "cpu_free": 50.0, "ram_free": 80.0,
+                       "cpu_cores": 2, "ram_gb": 4.0}
+        with patch.object(type(p), 'get_power', return_value=fixed_power):
+            age_days  = p.get_age_days()
+            authority = p.get_authority()
+            expected  = int(fixed_power["index"] * math.log(age_days + 2))
+            self.assertEqual(authority, expected,
+                             msg="Авторитет не соответствует формуле")
 
     def test_authority_increases_with_age(self):
         """Более старая нода должна иметь больший авторитет при той же мощности."""

@@ -11,6 +11,7 @@ import sys
 import subprocess
 import platform
 import shutil
+import importlib.util
 
 OS = platform.system()
 
@@ -21,7 +22,7 @@ ICON_ARG  = f"--icon={ICON_PATH}" if os.path.exists(ICON_PATH) else ""
 # Скрытые импорты — модули которые PyInstaller может не увидеть
 HIDDEN = [
     "customtkinter",
-    "google.generativeai",
+    "google.genai",
     "pyttsx3",
     "speech_recognition",
     "cryptography.fernet",
@@ -38,9 +39,7 @@ def build():
     print(f"[BUILD]: Сборка argos.exe...")
 
     # Проверяем PyInstaller
-    try:
-        import PyInstaller
-    except ImportError:
+    if importlib.util.find_spec("PyInstaller") is None:
         print("[BUILD]: Устанавливаю PyInstaller...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
 
@@ -56,12 +55,14 @@ def build():
         "--add-data", f"src{os.pathsep}src",
         "--add-data", f"config{os.pathsep}config",
         "--add-data", f"assets{os.pathsep}assets",
-        "--add-data", f".env{os.pathsep}.",
         # Скрытые импорты
         *[arg for h in HIDDEN for arg in ("--hidden-import", h)],
         # Консоль (False = без чёрного окна на Windows)
         "--console",
     ]
+
+    if os.path.exists(".env"):
+        cmd += ["--add-data", f".env{os.pathsep}."]
 
     if ICON_ARG:
         cmd.append(ICON_ARG)

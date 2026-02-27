@@ -77,6 +77,16 @@ class Event:
         self.ts     = time.time()
         self.source = source
 
+    @property
+    def payload(self):
+        """Совместимость с src.connectivity.event_bus.Event (поле payload)."""
+        return self.data
+
+    @property
+    def type(self):
+        """Совместимость с src.connectivity.event_bus.Event (поле type)."""
+        return self.topic
+
     def get(self, key: str, default=None):
         """Dict-like доступ к data для обратной совместимости."""
         if isinstance(self.data, dict):

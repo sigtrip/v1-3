@@ -177,14 +177,20 @@ def build_setup() -> str:
         r"C:\Program Files\NSIS\makensis.exe",
         "makensis",
     ]
+    nsis_found = False
+    last_error = ""
     for nsis in nsis_paths:
         try:
             result = subprocess.run([nsis, "setup_argos.nsi"])
+            nsis_found = True
             if result.returncode == 0:
                 size = os.path.getsize("setup_argos.exe") / (1024*1024)
                 return f"✅ setup_argos.exe создан ({size:.1f} MB)"
+            last_error = f"NSIS завершился с кодом: {result.returncode}"
         except FileNotFoundError:
             continue
+    if nsis_found:
+        return f"❌ Ошибка компиляции setup_argos.nsi ({last_error}).\nПроверь наличие dist/argos и входных файлов."
     return "❌ NSIS не найден. Скачай: https://nsis.sourceforge.io\nNSIS-скрипт setup_argos.nsi готов к компиляции."
 
 def generate_linux_service():
@@ -223,24 +229,77 @@ Project: Argos Universal OS v{VERSION}
         f.write(lic)
     print("✅ LICENSE создан")
 
+
+def install_deps() -> int:
+    """Устанавливает Python-зависимости проекта из requirements.txt."""
+    req = "requirements.txt"
+    if not os.path.exists(req):
+        print(f"❌ Файл зависимостей не найден: {req}")
+        return 1
+
+    use_break_system = "--break-system-packages" in sys.argv
+
+    def _run_pip(python_exe: str, extra_args: list[str] | None = None) -> int:
+        cmd = [python_exe, "-m", "pip", "install", "-r", req]
+        if extra_args:
+            cmd.extend(extra_args)
+        print("📦 Установка зависимостей:", " ".join(cmd))
+        result = subprocess.run(cmd)
+        return result.returncode
+
+    try:
+        extra = ["--break-system-packages"] if use_break_system else None
+        code = _run_pip(sys.executable, extra_args=extra)
+        if code == 0:
+            print("✅ Зависимости установлены.")
+            return 0
+
+        if use_break_system:
+            print(f"❌ pip завершился с кодом: {code}")
+            return code
+
+        print("ℹ️ Системная установка не удалась. Пробую безопасный fallback через .venv ...")
+        venv_dir = os.path.abspath(".venv")
+        if not os.path.exists(venv_dir):
+            subprocess.run([sys.executable, "-m", "venv", venv_dir], check=True)
+
+        if platform.system() == "Windows":
+            venv_python = os.path.join(venv_dir, "Scripts", "python.exe")
+        else:
+            venv_python = os.path.join(venv_dir, "bin", "python")
+
+        code = _run_pip(venv_python)
+        if code == 0:
+            print("✅ Зависимости установлены в .venv")
+            print(f"▶ Используй интерпретатор: {venv_python}")
+            return 0
+
+        print(f"❌ Установка в .venv завершилась с кодом: {code}")
+        return code
+    except Exception as e:
+        print(f"❌ Ошибка установки зависимостей: {e}")
+        return 1
+
 if __name__ == "__main__":
     os_type = platform.system()
     
     if "--install" in sys.argv or "--deps" in sys.argv:
-        install_deps()
+        code = install_deps()
+        sys.exit(code)
+
+    if "--build" in sys.argv:
+        generate_license()
+        print(build_setup())
         sys.exit(0)
     
     generate_license()
 
     if os_type == "Windows":
-        if "--build" in sys.argv:
-            print(build_setup())
-        else:
-            generate_nsis()
-            print("\nДля сборки setup.exe:")
-            print("  1. Установи NSIS: https://nsis.sourceforge.io")
-            print("  2. python setup_builder.py --build")
-            print("  ИЛИ python build_exe.py  →  потом  python setup_builder.py --build")
+        generate_nsis()
+        print("\nДля сборки setup.exe:")
+        print("  1. Установи NSIS: https://nsis.sourceforge.io")
+        print("  2. python setup_builder.py --build")
+        print("  ИЛИ python build_exe.py  →  потом  python setup_builder.py --build")
     elif os_type == "Linux":
         generate_linux_service()
     else:

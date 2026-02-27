@@ -51,6 +51,22 @@ class Event:
     source:   str      = field(compare=False, default="system")
     ts:       float    = field(compare=False, default_factory=time.time)
 
+    @property
+    def data(self):
+        """Совместимость с src.event_bus.Event (поле data)."""
+        return self.payload
+
+    @property
+    def topic(self):
+        """Совместимость с src.event_bus.Event (поле topic)."""
+        return self.type
+
+    def get(self, key: str, default=None):
+        """Dict-like доступ к payload."""
+        if isinstance(self.payload, dict):
+            return self.payload.get(key, default)
+        return default
+
     def to_json(self) -> str:
         return json.dumps({
             "type":    self.type,

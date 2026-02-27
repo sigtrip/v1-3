@@ -31,7 +31,19 @@ PERMISSIONS = {
     "p2p",        # P2P сеть
 }
 
+PERMISSION_ALIASES = {
+    "system": "execute",
+    "file_write": "files",
+}
+
 ARGOS_VERSION = "1.0.0"
+
+IMPORT_NAME_ALIASES = {
+    "beautifulsoup4": "bs4",
+    "pyyaml": "yaml",
+    "python-telegram-bot": "telegram",
+    "google-genai": "google.genai",
+}
 
 
 class SkillManifest:
@@ -42,7 +54,8 @@ class SkillManifest:
         self.author      = data.get("author", "unknown")
         self.description = data.get("description", "")
         self.dependencies= data.get("dependencies", [])
-        self.permissions = set(data.get("permissions", []))
+        raw_permissions = set(data.get("permissions", []))
+        self.permissions = {PERMISSION_ALIASES.get(p, p) for p in raw_permissions}
         self.min_version = data.get("min_argos_version", "0.0.0")
         self.tags        = data.get("tags", [])
         self.category    = data.get("category", "general")
@@ -52,7 +65,7 @@ class SkillManifest:
     def validate(self) -> list[str]:
         errors = []
         for f in MANIFEST_SCHEMA["required"]:
-            if not self._raw.get(f):
+            if not getattr(self, f, None):
                 errors.append(f"Отсутствует обязательное поле: {f}")
         invalid_perms = self.permissions - PERMISSIONS
         if invalid_perms:
@@ -197,8 +210,9 @@ class SkillLoader:
         missing = []
         for dep in deps:
             pkg = dep.split(">=")[0].split("==")[0].strip()
+            module_name = IMPORT_NAME_ALIASES.get(pkg.lower(), pkg.replace("-", "_"))
             try:
-                importlib.import_module(pkg.replace("-", "_"))
+                importlib.import_module(module_name)
             except ImportError:
                 missing.append(dep)
         return missing

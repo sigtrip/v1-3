@@ -26,6 +26,28 @@ VERSION         = "1.0.0"
 NETWORK_SECRET  = os.getenv("ARGOS_NETWORK_SECRET", "argos_default_secret")
 
 
+def p2p_protocol_roadmap() -> str:
+    """Статус протокола и дорожная карта миграции на libp2p + ZKP."""
+    return (
+        "🛰️ P2P ПРОТОКОЛ ARGOS\n"
+        "Текущий транспорт: UDP discovery + TCP JSON (custom).\n"
+        "\n"
+        "🎯 Рекомендуемый target: libp2p (совместимость с dHT, pubsub, secure transports).\n"
+        "Этапы миграции:\n"
+        "1) Discovery: mDNS/Kademlia вместо широковещательного UDP.\n"
+        "2) Transport Security: Noise/TLS + peer identity keys.\n"
+        "3) Messaging: gossipsub для событий, request-response для RPC.\n"
+        "4) Data exchange: protobuf-сообщения и версионирование протокола.\n"
+        "\n"
+        "🔐 ZKP roadmap (перспектива):\n"
+        "- Phase A: selective disclosure (минимизация персональных полей).\n"
+        "- Phase B: proof-of-attribute (подтверждение факта без раскрытия значения).\n"
+        "- Phase C: proof-of-policy (валидность данных/правил между нодами).\n"
+        "\n"
+        "Примечание: в текущей версии ZKP не активирован, это roadmap для следующей итерации."
+    )
+
+
 # ═══════════════════════════════════════════════════════════
 # ПРОФИЛЬ НОДЫ — мощность, возраст, навыки
 # ═══════════════════════════════════════════════════════════

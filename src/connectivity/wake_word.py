@@ -51,7 +51,7 @@ class WakeWordListener:
                     log.debug("Слушаю wake word...")
                     audio = recognizer.listen(source, timeout=3, phrase_time_limit=3)
 
-                text = recognizer.recognize_google(audio, language="ru-RU").lower()
+                text = self._recognize_with_fallback(recognizer, audio).lower()
                 log.debug("Услышал: %s", text)
 
                 if any(w in text for w in WAKE_WORDS):
@@ -77,7 +77,7 @@ class WakeWordListener:
                 recognizer.adjust_for_ambient_noise(source, duration=0.3)
                 audio = recognizer.listen(source, timeout=7, phrase_time_limit=15)
 
-            command = recognizer.recognize_google(audio, language="ru-RU")
+            command = self._recognize_with_fallback(recognizer, audio)
             log.info("Команда: %s", command)
 
             # Убираем wake word из начала
@@ -96,3 +96,13 @@ class WakeWordListener:
             self.core.say("Не понял команду.")
         finally:
             self._active = False
+
+    def _recognize_with_fallback(self, recognizer, audio) -> str:
+        try:
+            return recognizer.recognize_google(audio, language="ru-RU")
+        except Exception:
+            try:
+                text = self.core._transcribe_with_whisper(audio)
+                return text or ""
+            except Exception:
+                return ""

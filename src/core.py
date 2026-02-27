@@ -1,16 +1,17 @@
 """
 core.py — ArgosCore FINAL v2.0
-  Все подсистемы интегрированы:
-  ИИ + Контекст + Голос + Wake Word + Память + Планировщик +
-  Алерты + Агент + Vision + P2P + Загрузчик + 50+ команд
+    Все подсистемы интегрированы:
+    ИИ + Контекст + Голос + Wake Word + Память + Планировщик +
+    Алерты + Агент + Vision + P2P + Загрузчик + 50+ команд
 """
-import os, threading, requests
+import os, threading, requests, asyncio, tempfile
+import json
 
 # ── Graceful imports ──────────────────────────────────────
 try:
-    import google.generativeai as genai; GEMINI_OK = True
+    from google import genai as genai_sdk; GEMINI_OK = True
 except ImportError:
-    genai = None; GEMINI_OK = False
+    genai_sdk = None; GEMINI_OK = False
 
 try:
     import pyttsx3; PYTTSX3_OK = True
@@ -26,7 +27,11 @@ from src.quantum.logic               import ArgosQuantum
 from src.skills.web_scrapper         import ArgosScrapper
 from src.factory.replicator          import Replicator
 from src.connectivity.sensor_bridge  import ArgosSensorBridge
-from src.connectivity.p2p_bridge     import ArgosBridge
+from src.connectivity.p2p_bridge     import ArgosBridge, p2p_protocol_roadmap
+from src.skill_loader                import SkillLoader
+from src.dag_agent                   import DAGManager
+from src.github_marketplace          import GitHubMarketplace
+from src.modules                     import ModuleLoader
 from src.context_manager             import DialogContext
 from src.agent                       import ArgosAgent
 from src.argos_logger                import get_logger
@@ -34,6 +39,27 @@ from dotenv import load_dotenv
 load_dotenv()
 
 log = get_logger("argos.core")
+
+
+class _GeminiResponse:
+    def __init__(self, text: str = ""):
+        self.text = text or ""
+
+
+class _GeminiCompatClient:
+    """Лёгкий адаптер google.genai под старый интерфейс generate_content()."""
+    def __init__(self, api_key: str, model_name: str = "gemini-1.5-flash"):
+        self.model_name = model_name
+        self.client = genai_sdk.Client(api_key=api_key)
+
+    def generate_content(self, contents):
+        if isinstance(contents, list):
+            prompt = "\n\n".join(str(x) for x in contents if isinstance(x, str) and x.strip())
+        else:
+            prompt = str(contents)
+        resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
+        text = getattr(resp, "text", "") or ""
+        return _GeminiResponse(text=text)
 
 
 class ArgosCore:
@@ -45,7 +71,9 @@ class ArgosCore:
         self.context    = DialogContext(max_turns=10)
         self.agent      = ArgosAgent(self)
         self.ollama_url = "http://localhost:11434/api/generate"
-        self.voice_on   = True
+        self.voice_on   = os.getenv("ARGOS_VOICE_DEFAULT", "off").strip().lower() in (
+            "1", "true", "on", "yes", "да", "вкл"
+        )
         self.p2p        = None
         self.db         = None
         self.memory     = None
@@ -56,6 +84,19 @@ class ArgosCore:
         self._dashboard = None
         self._wake      = None
         self._tts_engine = None
+        self._whisper_model = None
+        self.skill_loader = None
+        self.dag_manager  = None
+        self.marketplace  = None
+        self.iot_bridge   = None
+        self.mesh_net     = None
+        self.smart_sys    = None
+        self.gateway_mgr  = None
+        self.smart_profiles = {}
+        self._smart_create_wizard = None
+        self.module_loader = None
+        self.ha = None
+        self.tool_calling = None
 
         self._init_voice()
         self._setup_ai()
@@ -63,6 +104,14 @@ class ArgosCore:
         self._init_scheduler()
         self._init_alerts()
         self._init_vision()
+        self._init_skills()
+        self._init_dags()
+        self._init_marketplace()
+        self._init_iot()
+        self._init_smart_systems()
+        self._init_home_assistant()
+        self._init_modules()
+        self._init_tool_calling()
         log.info("ArgosCore FINAL v2.0 инициализирован.")
 
     # ═══════════════════════════════════════════════════════
@@ -102,9 +151,99 @@ class ArgosCore:
         except Exception as e:
             log.warning("Vision: %s", e)
 
+    def _init_skills(self):
+        try:
+            self.skill_loader = SkillLoader()
+            report = self.skill_loader.load_all(core=self)
+            log.info("SkillLoader: OK")
+            log.info(report.replace("\n", " | "))
+        except Exception as e:
+            log.warning("SkillLoader: %s", e)
+
+    def _init_dags(self):
+        try:
+            self.dag_manager = DAGManager(core=self)
+            log.info("DAG Manager: OK")
+        except Exception as e:
+            log.warning("DAG Manager: %s", e)
+
+    def _init_marketplace(self):
+        try:
+            self.marketplace = GitHubMarketplace(skill_loader=self.skill_loader, core=self)
+            log.info("GitHub Marketplace: OK")
+        except Exception as e:
+            log.warning("GitHub Marketplace: %s", e)
+
+    def _init_iot(self):
+        """IoT Bridge + Mesh Network + Gateway Manager."""
+        try:
+            from src.connectivity.iot_bridge import IoTBridge
+            self.iot_bridge = IoTBridge()
+            log.info("IoT Bridge: OK (%d устройств)", len(self.iot_bridge.registry.all()))
+        except Exception as e:
+            log.warning("IoT Bridge: %s", e)
+
+        try:
+            from src.connectivity.mesh_network import MeshNetwork
+            self.mesh_net = MeshNetwork()
+            log.info("Mesh Network: OK (%d устройств)", len(self.mesh_net.devices))
+        except Exception as e:
+            log.warning("Mesh Network: %s", e)
+
+        try:
+            from src.connectivity.gateway_manager import GatewayManager
+            self.gateway_mgr = GatewayManager(iot_bridge=self.iot_bridge)
+            log.info("Gateway Manager: OK")
+        except Exception as e:
+            log.warning("Gateway Manager: %s", e)
+
+    def _init_smart_systems(self):
+        """Smart Systems Manager — умные среды."""
+        try:
+            from src.smart_systems import SmartSystemsManager, SYSTEM_PROFILES
+            self.smart_sys = SmartSystemsManager(on_alert=self._on_alert)
+            self.smart_profiles = SYSTEM_PROFILES
+            log.info("Smart Systems: OK (%d систем)", len(self.smart_sys.systems))
+        except Exception as e:
+            log.warning("Smart Systems: %s", e)
+
+    def _init_modules(self):
+        """Dynamic modules (src/modules/*_module.py)."""
+        try:
+            self.module_loader = ModuleLoader()
+            report = self.module_loader.load_all(core=self)
+            log.info(report.replace("\n", " | "))
+        except Exception as e:
+            log.warning("Modules: %s", e)
+
+    def _init_home_assistant(self):
+        try:
+            from src.connectivity.home_assistant import HomeAssistantBridge
+            self.ha = HomeAssistantBridge()
+            log.info("Home Assistant bridge: %s", "ON" if self.ha.enabled else "OFF")
+        except Exception as e:
+            log.warning("Home Assistant bridge: %s", e)
+
+    def _init_tool_calling(self):
+        try:
+            from src.tool_calling import ArgosToolCallingEngine
+            self.tool_calling = ArgosToolCallingEngine(core=self)
+            log.info("Tool Calling: OK")
+        except Exception as e:
+            log.warning("Tool Calling: %s", e)
+
     def _on_alert(self, msg: str):
         log.warning("ALERT: %s", msg)
         self.say(msg)
+
+    def _remember_dialog_turn(self, user_text: str, answer: str, state: str):
+        if not self.memory:
+            return
+        try:
+            self.memory.log_dialogue("user", user_text, state=state)
+            self.memory.log_dialogue("argos", answer, state=state)
+        except Exception as e:
+            log.warning("Memory dialogue index: %s", e)
 
     # ═══════════════════════════════════════════════════════
     # P2P / DASHBOARD / WAKE WORD
@@ -116,6 +255,15 @@ class ArgosCore:
         return result
 
     def start_dashboard(self, admin, flasher, port: int = 8080) -> str:
+        try:
+            from src.interface.fastapi_dashboard import FastAPIDashboard
+            self._dashboard = FastAPIDashboard(self, admin, flasher, port)
+            result = self._dashboard.start()
+            if isinstance(result, str) and not result.startswith("❌"):
+                return result
+        except Exception:
+            pass
+
         try:
             from src.interface.web_dashboard import WebDashboard
             self._dashboard = WebDashboard(self, admin, flasher, port)
@@ -161,20 +309,50 @@ class ArgosCore:
         threading.Thread(target=_speak, daemon=True).start()
 
     def listen(self) -> str:
-        if not SR_OK:
-            log.warning("SpeechRecognition не установлен")
-            return ""
+        if SR_OK:
+            try:
+                rec = sr.Recognizer()
+                with sr.Microphone() as src:
+                    log.info("Слушаю...")
+                    rec.adjust_for_ambient_noise(src, duration=0.5)
+                    audio = rec.listen(src, timeout=7, phrase_time_limit=15)
+                    try:
+                        text = rec.recognize_google(audio, language="ru-RU")
+                        log.info("Распознано (google): %s", text)
+                        return text.lower()
+                    except Exception:
+                        text = self._transcribe_with_whisper(audio)
+                        if text:
+                            log.info("Распознано (whisper): %s", text)
+                            return text.lower()
+            except Exception as e:
+                log.error("STT: %s", e)
+
+        log.warning("STT недоступен (SpeechRecognition/Whisper)")
+        return ""
+
+    def _transcribe_with_whisper(self, audio_data) -> str:
         try:
-            rec = sr.Recognizer()
-            with sr.Microphone() as src:
-                log.info("Слушаю...")
-                rec.adjust_for_ambient_noise(src, duration=0.5)
-                audio = rec.listen(src, timeout=7, phrase_time_limit=15)
-                text  = rec.recognize_google(audio, language="ru-RU")
-                log.info("Распознано: %s", text)
-                return text.lower()
+            if self._whisper_model is None:
+                from faster_whisper import WhisperModel
+                model_size = os.getenv("WHISPER_MODEL", "small")
+                device = os.getenv("WHISPER_DEVICE", "cpu")
+                compute = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
+                self._whisper_model = WhisperModel(model_size, device=device, compute_type=compute)
+
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp.write(audio_data.get_wav_data())
+                wav_path = tmp.name
+
+            segments, _ = self._whisper_model.transcribe(wav_path, language="ru", vad_filter=True)
+            text = " ".join(seg.text.strip() for seg in segments if seg.text and seg.text.strip())
+            try:
+                os.remove(wav_path)
+            except Exception:
+                pass
+            return text
         except Exception as e:
-            log.error("STT: %s", e)
+            log.warning("Whisper STT fallback: %s", e)
             return ""
 
     # ═══════════════════════════════════════════════════════
@@ -183,8 +361,7 @@ class ArgosCore:
     def _setup_ai(self):
         key = os.getenv("GEMINI_API_KEY", "")
         if GEMINI_OK and key and key != "your_key_here":
-            genai.configure(api_key=key)
-            self.model = genai.GenerativeModel('gemini-1.5-flash')
+            self.model = _GeminiCompatClient(api_key=key, model_name="gemini-1.5-flash")
             log.info("Gemini: OK")
         else:
             self.model = None
@@ -194,13 +371,9 @@ class ArgosCore:
         if not self.model:
             return None
         try:
-            # Используем историю диалога для multi-turn
-            history = self.context.get_gemini_messages()
-            if history:
-                chat = self.model.start_chat(history=history[:-1] if history else [])
-                res  = chat.send_message(f"{context}\n\n{user_text}")
-            else:
-                res = self.model.generate_content([context, user_text])
+            hist = self.context.get_prompt_context()
+            payload = f"{context}\n\n{hist}\n\nUser: {user_text}\nArgos:"
+            res = self.model.generate_content(payload)
             return res.text
         except Exception as e:
             log.error("Gemini: %s", e)
@@ -233,11 +406,25 @@ class ArgosCore:
             for r in self.memory.check_reminders():
                 self.say(r)
 
+        # Tool Calling — модель сама выбирает инструменты по JSON-схемам
+        if self.tool_calling:
+            tool_answer = self.tool_calling.try_handle(user_text, admin, flasher)
+            if tool_answer:
+                self.context.add("user", user_text)
+                self.context.add("argos", tool_answer)
+                self._remember_dialog_turn(user_text, tool_answer, "ToolCalling")
+                if self.db:
+                    self.db.log_chat("user", user_text)
+                    self.db.log_chat("argos", tool_answer, "ToolCalling")
+                self.say(tool_answer)
+                return {"answer": tool_answer, "state": "ToolCalling"}
+
         # Агентный режим — цепочка задач
         agent_result = self.agent.execute_plan(user_text, admin, flasher)
         if agent_result:
             self.context.add("user", user_text)
             self.context.add("argos", agent_result)
+            self._remember_dialog_turn(user_text, agent_result, "Agent")
             if self.db:
                 self.db.log_chat("user", user_text)
                 self.db.log_chat("argos", agent_result, "Agent")
@@ -249,11 +436,25 @@ class ArgosCore:
         if intent:
             self.context.add("user", user_text)
             self.context.add("argos", intent)
+            self._remember_dialog_turn(user_text, intent, "System")
             if self.db:
                 self.db.log_chat("user", user_text)
                 self.db.log_chat("argos", intent, "System")
             self.say(intent)
             return {"answer": intent, "state": "System"}
+
+        # Плагины SkillLoader v2
+        if self.skill_loader:
+            skill_answer = self.skill_loader.dispatch(user_text, core=self)
+            if skill_answer:
+                self.context.add("user", user_text)
+                self.context.add("argos", skill_answer)
+                self._remember_dialog_turn(user_text, skill_answer, "Skill")
+                if self.db:
+                    self.db.log_chat("user", user_text)
+                    self.db.log_chat("argos", skill_answer, "Skill")
+                self.say(skill_answer)
+                return {"answer": skill_answer, "state": "Skill"}
 
         # Веб-поиск при необходимости
         if any(w in t for w in ["найди", "новости", "кто такой", "что такое"]):
@@ -269,6 +470,9 @@ class ArgosCore:
             mc = self.memory.get_context()
             if mc:
                 context += f"\n\n{mc}"
+            rag_ctx = self.memory.get_rag_context(user_text, top_k=4)
+            if rag_ctx:
+                context += f"\n\n{rag_ctx}"
 
         answer = self._ask_gemini(context, user_text)
         engine = q_data['name']
@@ -284,6 +488,7 @@ class ArgosCore:
         # Сохраняем в контекст и БД
         self.context.add("user", user_text)
         self.context.add("argos", answer)
+        self._remember_dialog_turn(user_text, answer, engine)
         if self.db:
             self.db.log_chat("user", user_text)
             self.db.log_chat("argos", answer, engine)
@@ -291,11 +496,70 @@ class ArgosCore:
         self.say(answer)
         return {"answer": answer, "state": engine}
 
+    async def process_logic_async(self, user_text: str, admin, flasher) -> dict:
+        """Неблокирующий async-вход для UI/ботов.
+        Вся синхронная логика выполняется в thread executor.
+        """
+        return await asyncio.to_thread(self.process_logic, user_text, admin, flasher)
+
     # ═══════════════════════════════════════════════════════
     # ДИСПЕТЧЕР КОМАНД — 50+ интентов
     # ═══════════════════════════════════════════════════════
     def execute_intent(self, text: str, admin, flasher) -> str | None:
         t = text.lower()
+
+        if self.module_loader and any(k in t for k in ["модули", "список модулей", "modules"]):
+            return self.module_loader.list_modules()
+
+        if self.tool_calling and any(k in t for k in ["схемы инструментов", "tool schema", "tool calling schema", "json схемы инструментов"]):
+            return json.dumps(self.tool_calling.tool_schemas(), ensure_ascii=False, indent=2)
+
+        # ── Мастер создания умной системы (пошаговый) ─────
+        if self._smart_create_wizard is not None:
+            if any(k in t.strip() for k in ["отмена", "cancel", "стоп"]):
+                self._smart_create_wizard = None
+                return "🛑 Мастер создания отменён."
+            return self._continue_smart_create_wizard(text)
+
+        # ── Dynamic modules dispatcher ────────────────────
+        if self.module_loader:
+            mod_answer = self.module_loader.dispatch(text, admin=admin, flasher=flasher)
+            if mod_answer:
+                return mod_answer
+
+        # ── Home Assistant ────────────────────────────────
+        if self.ha:
+            if any(k in t for k in ["ha статус", "home assistant статус", "статус home assistant"]):
+                return self.ha.health()
+            if any(k in t for k in ["ha состояния", "home assistant состояния"]):
+                return self.ha.list_states()
+            if t.startswith("ha сервис "):
+                # ha сервис light turn_on entity_id=light.kitchen brightness=180
+                parts = text.split()
+                if len(parts) < 4:
+                    return "Формат: ha сервис [domain] [service] [key=value ...]"
+                domain = parts[2]
+                service = parts[3]
+                data = {}
+                for item in parts[4:]:
+                    if "=" in item:
+                        key, val = item.split("=", 1)
+                        data[key] = val
+                return self.ha.call_service(domain, service, data)
+            if t.startswith("ha mqtt "):
+                # ha mqtt home/livingroom/light/set state=ON brightness=180
+                parts = text.split()
+                if len(parts) < 3:
+                    return "Формат: ha mqtt [topic] [key=value ...]"
+                topic = parts[2]
+                payload = {}
+                for item in parts[3:]:
+                    if "=" in item:
+                        key, val = item.split("=", 1)
+                        payload[key] = val
+                if not payload:
+                    payload = {"msg": "on"}
+                return self.ha.publish_mqtt(topic, payload)
 
         # ── Мониторинг ────────────────────────────────────
         if any(k in t for k in ["статус системы", "чек-ап", "состояние здоровья"]):
@@ -364,6 +628,18 @@ class ArgosCore:
             return self.start_wake_word(admin, flasher)
 
         # ── Навыки ────────────────────────────────────────
+        if self.skill_loader and any(k in t for k in ["навыки v2", "skills v2", "skillloader"]):
+            return self.skill_loader.list_skills()
+        if self.skill_loader and t.startswith("загрузи навык "):
+            name = text.split("загрузи навык ", 1)[-1].strip()
+            return self.skill_loader.load(name, core=self)
+        if self.skill_loader and t.startswith("выгрузи навык "):
+            name = text.split("выгрузи навык ", 1)[-1].strip()
+            return self.skill_loader.unload(name)
+        if self.skill_loader and t.startswith("перезагрузи навык "):
+            name = text.split("перезагрузи навык ", 1)[-1].strip()
+            return self.skill_loader.reload(name, core=self)
+
         if "дайджест" in t:
             from src.skills.content_gen import ContentGen
             return ContentGen().generate_digest()
@@ -377,6 +653,8 @@ class ArgosCore:
             from src.skills.net_scanner import NetGhost
             return NetGhost().scan()
         if any(k in t for k in ["список навыков", "навыки аргоса"]):
+            if self.skill_loader:
+                return self.skill_loader.list_skills()
             from src.skills.evolution import ArgosEvolution
             return ArgosEvolution().list_skills()
         if any(k in t for k in ["напиши навык", "создай навык"]):
@@ -390,6 +668,17 @@ class ArgosCore:
                 return self.memory.parse_and_remember(text.replace("аргос","").replace("запомни","").strip())
             if any(k in t for k in ["что ты знаешь", "моя память", "покажи память"]):
                 return self.memory.format_memory()
+            if any(k in t for k in ["поиск по памяти", "найди в памяти", "rag память"]):
+                q = text
+                for pref in ["поиск по памяти", "найди в памяти", "rag память", "аргос"]:
+                    q = q.replace(pref, "")
+                q = q.strip()
+                if not q:
+                    return "Формат: найди в памяти [запрос]"
+                rag = self.memory.get_rag_context(q, top_k=5)
+                return rag or "Ничего релевантного в векторной памяти не найдено."
+            if any(k in t for k in ["граф знаний", "связи памяти", "мои связи"]):
+                return self.memory.graph_report()
             if "забудь" in t and "разговор" not in t:
                 return self.memory.forget(text.replace("аргос","").replace("забудь","").strip())
             if any(k in t for k in ["запиши заметку", "новая заметка"]):
@@ -408,7 +697,7 @@ class ArgosCore:
         if self.scheduler:
             if any(k in t for k in ["расписание", "список задач"]):
                 return self.scheduler.list_tasks()
-            if any(k in t for k in ["каждые", "напомни", "ежедневно"]) or "через" in t:
+            if any(k in t for k in ["каждые", "напомни", "ежедневно"]) or "через" in t or (t.strip().startswith("в ") and ":" in t):
                 return self.scheduler.parse_and_add(text)
             if "удали задачу" in t:
                 try: return self.scheduler.remove(int(text.split()[-1]))
@@ -438,7 +727,7 @@ class ArgosCore:
             from src.security.bootloader_manager import BootloaderManager
             if not self._boot: self._boot = BootloaderManager()
             return self._boot.full_report()
-        if "argos-boot-confirm" in t.upper():
+        if "ARGOS-BOOT-CONFIRM" in t.upper():
             from src.security.bootloader_manager import BootloaderManager
             if not self._boot: self._boot = BootloaderManager()
             return self._boot.confirm("ARGOS-BOOT-CONFIRM")
@@ -465,6 +754,8 @@ class ArgosCore:
         # ── P2P ───────────────────────────────────────────
         if any(k in t for k in ["статус сети", "p2p статус", "сеть нод"]):
             return self.p2p.network_status() if self.p2p else "P2P не запущен. Команда: запусти p2p"
+        if any(k in t for k in ["протокол p2p", "p2p протокол", "libp2p", "zkp"]):
+            return p2p_protocol_roadmap()
         if "запусти p2p" in t:
             return self.start_p2p()
         if "синхронизируй навыки" in t:
@@ -478,9 +769,204 @@ class ArgosCore:
                 return self.p2p.route_query(q or "Статус сети Аргоса.")
             return "P2P не запущен."
 
+        # ── DAG ───────────────────────────────────────────
+        if self.dag_manager and any(k in t for k in ["список dag", "dag список", "доступные dag"]):
+            return self.dag_manager.list_dags()
+        if self.dag_manager and ("запусти_dag" in t or "запусти dag" in t):
+            name = text.replace("запусти_dag", "").replace("запусти dag", "").strip()
+            name = name.replace(".json", "")
+            name = name.split("/")[-1]
+            if not name:
+                return "Формат: запусти_dag имя_графа"
+            return self.dag_manager.run(name)
+        if self.dag_manager and ("создай_dag" in t or "создай dag" in t):
+            desc = text.replace("создай_dag", "").replace("создай dag", "").strip()
+            if not desc:
+                return "Формат: создай_dag описание шагов"
+            return self.dag_manager.create_from_text(desc)
+        if self.dag_manager and any(k in t for k in ["синхронизируй dag", "dag sync"]):
+            return self.dag_manager.sync_to_p2p()
+
+        # ── GitHub Marketplace ────────────────────────────
+        if self.marketplace and "установи навык из github" in t:
+            spec = text.split("установи навык из github", 1)[-1].strip().split()
+            if len(spec) < 2:
+                return "Формат: установи навык из github USER/REPO SKILL"
+            return self.marketplace.install(repo=spec[0], skill_name=spec[1])
+        if self.marketplace and "обнови из github" in t:
+            spec = text.split("обнови из github", 1)[-1].strip().split()
+            if len(spec) < 2:
+                return "Формат: обнови из github USER/REPO SKILL"
+            return self.marketplace.update(repo=spec[0], skill_name=spec[1])
+
         # ── История ───────────────────────────────────────
         if any(k in t for k in ["история", "предыдущие разговоры"]):
             return self.db.format_history(10) if self.db else "БД не подключена."
+
+        # ══════════════════════════════════════════════════
+        # УМНЫЕ СИСТЕМЫ (дом, теплица, гараж, погреб, инкубатор, аквариум, террариум)
+        # ══════════════════════════════════════════════════
+        if self.smart_sys:
+            if any(k in t for k in ["создай умную систему", "добавь умную систему", "мастер умной системы"]):
+                return self._start_smart_create_wizard()
+            if any(k in t for k in ["умные системы", "статус систем", "мои системы", "умный дом"]):
+                return self.smart_sys.full_status()
+            if any(k in t for k in ["типы систем", "доступные системы"]):
+                return self.smart_sys.available_types()
+            if "добавь систему" in t or "создай систему" in t:
+                parts = text.replace("добавь систему","").replace("создай систему","").strip().split()
+                if not parts:
+                    return self.smart_sys.available_types()
+                sys_type = parts[0]
+                sys_id   = parts[1] if len(parts) > 1 else None
+                return self.smart_sys.add_system(sys_type, sys_id)
+            if "обнови сенсор" in t or "сенсор" in t and "=" in t:
+                # Формат: обнови сенсор [система] [сенсор] [значение]
+                parts = text.replace("обнови сенсор","").strip().split()
+                if len(parts) >= 3:
+                    return self.smart_sys.update(parts[0], parts[1], parts[2])
+                return "Формат: обнови сенсор [id_системы] [сенсор] [значение]"
+            if any(k in t for k in ["включи", "выключи", "установи"]) and self.smart_sys.systems:
+                # включи полив greenhouse / выключи обогрев home
+                for action_w, state in [("включи","on"),("выключи","off"),("установи","set")]:
+                    if action_w in t:
+                        rest = text.split(action_w, 1)[-1].strip().split()
+                        if len(rest) >= 2:
+                            actuator = rest[0]
+                            sys_id   = rest[1]
+                            if sys_id in self.smart_sys.systems:
+                                return self.smart_sys.command(sys_id, actuator, state)
+                        break
+            if "добавь правило" in t:
+                # добавь правило [система] если [условие] то [действие]
+                rest = text.split("добавь правило", 1)[-1].strip()
+                parts = rest.split(maxsplit=1)
+                if len(parts) >= 2 and parts[0] in self.smart_sys.systems:
+                    rule_text = parts[1]
+                    if "если" in rule_text and "то" in rule_text:
+                        cond = rule_text.split("если")[1].split("то")[0].strip()
+                        act  = rule_text.split("то")[1].strip()
+                        return self.smart_sys.systems[parts[0]].add_rule(cond, act)
+                return "Формат: добавь правило [система] если [условие] то [действие]"
+
+        # ══════════════════════════════════════════════════
+        # IoT МОСТ (устройства, протоколы)
+        # ══════════════════════════════════════════════════
+        if self.iot_bridge:
+            if any(k in t for k in ["iot статус", "iot устройства", "устройства iot"]):
+                return self.iot_bridge.status()
+            if any(k in t for k in ["iot протоколы", "протоколы iot", "пром протоколы", "какие протоколы"]):
+                return self._iot_protocols_help()
+            if "зарегистрируй устройство" in t or "добавь устройство" in t:
+                # добавь устройство [id] [тип] [протокол] [адрес] [имя]
+                parts = text.split("устройство", 1)[-1].strip().split()
+                if len(parts) >= 3:
+                    dev_id, dtype, proto = parts[0], parts[1], parts[2]
+                    addr = parts[3] if len(parts) > 3 else ""
+                    name = parts[4] if len(parts) > 4 else dev_id
+                    return self.iot_bridge.register_device(dev_id, dtype, proto, addr, name)
+                return "Формат: добавь устройство [id] [тип] [протокол] [адрес] [имя]"
+            if "статус устройства" in t or "мониторинг устройства" in t:
+                parts = text.split("устройства" if "устройства" in t else "устройство")[-1].strip().split()
+                if parts:
+                    return self.iot_bridge.device_status(parts[0])
+                return "Формат: статус устройства [id]"
+            if "подключи zigbee" in t:
+                parts = text.split("подключи zigbee")[-1].strip().split()
+                host = parts[0] if parts else "localhost"
+                port = int(parts[1]) if len(parts) > 1 else 1883
+                return self.iot_bridge.connect_zigbee(host, port)
+            if "подключи lora" in t:
+                parts = text.split("подключи lora")[-1].strip().split()
+                port = parts[0] if parts else "/dev/ttyUSB0"
+                baud = int(parts[1]) if len(parts) > 1 else 9600
+                return self.iot_bridge.connect_lora(port, baud)
+            if "запусти mesh" in t or "mesh старт" in t:
+                return self.iot_bridge.start_mesh()
+            if "подключи mqtt" in t:
+                parts = text.split("подключи mqtt")[-1].strip().split()
+                host = parts[0] if parts else "localhost"
+                port = int(parts[1]) if len(parts) > 1 else 1883
+                return self.iot_bridge.connect_mqtt(host, port)
+            if any(k in t for k in ["команда устройству", "отправь команду"]):
+                parts = text.split("устройству" if "устройству" in t else "команду")[-1].strip().split()
+                if len(parts) >= 2:
+                    return self.iot_bridge.send_command(parts[0], parts[1],
+                                                       parts[2] if len(parts) > 2 else None)
+                return "Формат: команда устройству [id] [команда] [значение]"
+
+        # ══════════════════════════════════════════════════
+        # MESH-СЕТЬ (Zigbee, LoRa, WiFi Mesh)
+        # ══════════════════════════════════════════════════
+        if self.mesh_net:
+            if any(k in t for k in ["статус mesh", "mesh статус", "mesh сеть", "mesh-сеть"]):
+                return self.mesh_net.status_report()
+            if "запусти zigbee" in t:
+                parts = text.split("запусти zigbee")[-1].strip().split()
+                port = parts[0] if parts else "/dev/ttyUSB0"
+                baud = int(parts[1]) if len(parts) > 1 else 115200
+                return self.mesh_net.start_zigbee(port, baud)
+            if "запусти lora" in t:
+                parts = text.split("запусти lora")[-1].strip().split()
+                port = parts[0] if parts else "/dev/ttyUSB1"
+                baud = int(parts[1]) if len(parts) > 1 else 9600
+                return self.mesh_net.start_lora(port, baud)
+            if "запусти wifi mesh" in t:
+                ssid = text.split("запусти wifi mesh")[-1].strip() or "ArgosNet"
+                return self.mesh_net.start_wifi_mesh(ssid)
+            if "добавь mesh устройство" in t:
+                parts = text.split("mesh устройство")[-1].strip().split()
+                if len(parts) >= 3:
+                    return self.mesh_net.add_device(parts[0], parts[1], parts[2],
+                                                    parts[3] if len(parts) > 3 else "",
+                                                    parts[4] if len(parts) > 4 else "")
+                return "Формат: добавь mesh устройство [id] [протокол] [адрес] [имя] [комната]"
+            if "mesh broadcast" in t or "mesh рассылка" in t:
+                parts = text.split("broadcast" if "broadcast" in t else "рассылка")[-1].strip().split(maxsplit=1)
+                if len(parts) >= 2:
+                    return self.mesh_net.broadcast(parts[0], parts[1])
+                return "Формат: mesh broadcast [протокол] [команда]"
+            if "прошей gateway" in t:
+                parts = text.split("gateway")[-1].strip().split()
+                if len(parts) >= 1:
+                    port = parts[0]
+                    fw   = parts[1] if len(parts) > 1 else "zigbee_gateway"
+                    return self.mesh_net.flash_gateway(port, fw)
+                return "Формат: прошей gateway [порт] [прошивка]"
+
+        # ══════════════════════════════════════════════════
+        # IoT ШЛЮЗЫ (создание, конфиг, прошивка)
+        # ══════════════════════════════════════════════════
+        if self.gateway_mgr:
+            if any(k in t for k in ["список шлюзов", "шлюзы", "gateways"]):
+                return self.gateway_mgr.list_gateways()
+            if any(k in t for k in ["шаблоны шлюзов", "типы шлюзов"]):
+                return self.gateway_mgr.list_templates()
+            if "создай прошивку" in t or "собери прошивку" in t:
+                # создай прошивку [id] [шаблон] [порт?]
+                tail = text.split("прошивку", 1)[-1].strip().split()
+                if len(tail) >= 2:
+                    gw_id = tail[0]
+                    template = tail[1]
+                    port = tail[2] if len(tail) > 2 else None
+                    return self.gateway_mgr.prepare_firmware(gw_id, template, port)
+                return f"Формат: создай прошивку [id] [шаблон] [порт]\n{self.gateway_mgr.list_templates()}"
+            if "создай шлюз" in t or "создай gateway" in t:
+                parts = text.split("шлюз" if "шлюз" in t else "gateway")[-1].strip().split()
+                if len(parts) >= 2:
+                    return self.gateway_mgr.create_gateway(parts[0], parts[1])
+                return f"Формат: создай шлюз [id] [шаблон]\n{self.gateway_mgr.list_templates()}"
+            if "прошей шлюз" in t or "flash gateway" in t:
+                parts = text.split("шлюз" if "шлюз" in t else "gateway")[-1].strip().split()
+                if parts:
+                    port = parts[1] if len(parts) > 1 else None
+                    return self.gateway_mgr.flash_gateway(parts[0], port)
+                return "Формат: прошей шлюз [id] [порт]"
+            if "конфиг шлюза" in t:
+                gw_id = text.split("конфиг шлюза")[-1].strip().split()[0] if text.split("конфиг шлюза")[-1].strip() else ""
+                if gw_id:
+                    return self.gateway_mgr.get_config(gw_id)
+                return "Формат: конфиг шлюза [id]"
 
         # ── Помощь ────────────────────────────────────────
         if t.strip() in ("помощь", "команды", "что умеешь", "help", "?"):
@@ -514,6 +1000,8 @@ class ArgosCore:
 
 🧠 ПАМЯТЬ
   запомни [ключ]: [значение] · что ты знаешь
+    найди в памяти [запрос] · поиск по памяти [запрос]
+    граф знаний · связи памяти
   запиши заметку [название]: [текст]
   мои заметки · прочитай заметку [№]
 
@@ -524,15 +1012,174 @@ class ArgosCore:
 🌐 P2P СЕТЬ
   статус сети · синхронизируй навыки
   подключись к [IP] · распредели задачу [вопрос]
+    p2p протокол · libp2p · zkp
 
-🎤 ГОЛОС
+🧠 TOOL CALLING
+    схемы инструментов · json схемы инструментов
+
+� УМНЫЕ СИСТЕМЫ
+  умные системы · типы систем
+  добавь систему [тип] [id]
+  обнови сенсор [система] [сенсор] [значение]
+  включи/выключи [актуатор] [система]
+  добавь правило [система] если [условие] то [действие]
+  Типы: home, greenhouse, garage, cellar, incubator, aquarium, terrarium
+
+📡 IoT / MESH-СЕТЬ
+  iot статус · добавь устройство [id] [тип] [протокол]
+    статус устройства [id] · iot протоколы
+  подключи zigbee/lora/mqtt · запусти mesh
+  статус mesh · запусти zigbee/lora [порт]
+  запусти wifi mesh [SSID]
+  добавь mesh устройство [id] [протокол] [адрес]
+  mesh broadcast [протокол] [команда]
+    Протоколы: BACnet, Modbus RTU/ASCII/TCP, KNX, LonWorks, M-Bus, OPC UA, MQTT
+    Сети: Zigbee mesh, LoRa (SX1276), WiFi mesh
+
+🔧 IoT ШЛЮЗЫ
+  список шлюзов · шаблоны шлюзов
+  создай шлюз [id] [шаблон]
+    создай прошивку [id] [шаблон] [порт]
+  прошей шлюз [id] [порт] · прошей gateway [порт] [прошивка]
+  конфиг шлюза [id]
+    MCU: STM32H503, ESP8266, RP2040
+
+🏠 HOME ASSISTANT
+    ha статус · ha состояния
+    ha сервис [domain] [service] [key=value]
+    ha mqtt [topic] [key=value]
+
+🧩 МОДУЛИ
+    список модулей
+
+�🎤 ГОЛОС
   голос вкл/выкл · включи wake word
 
 💬 ДИАЛОГ
   контекст диалога · сброс контекста
   история · помощь"""
 
+    def _iot_protocols_help(self) -> str:
+        return """🏭 ПОДДЕРЖИВАЕМЫЕ IoT/ПРОМ ПРОТОКОЛЫ:
+
+    • BACnet (Building Automation and Control Networks)
+    • Modbus RTU / ASCII / TCP
+    • KNX
+    • LonWorks (Local Operating Network)
+    • M-Bus (Meter-Bus)
+    • OPC UA (Open Platform Communications Unified Architecture)
+    • MQTT
+
+📡 Mesh и радио:
+    • Zigbee mesh
+    • LoRa mesh (включая SX1276)
+    • WiFi mesh / gateway bridge
+
+🔧 Прошивка устройств:
+    • STM32H503, ESP8266, RP2040
+    • Команда: создай прошивку [id] [шаблон] [порт]"""
+
+    def _start_smart_create_wizard(self) -> str:
+        if not self.smart_sys:
+            return "❌ Умные системы не инициализированы."
+
+        self._smart_create_wizard = {
+            "step": "type",
+            "type": None,
+            "id": None,
+            "purpose": "",
+            "functions": [],
+        }
+        types = ", ".join(self.smart_profiles.keys()) if self.smart_profiles else "home, greenhouse, garage, cellar, incubator, aquarium, terrarium"
+        return (
+            "🧭 Мастер создания умной системы.\n"
+            "Шаг 1/4: выбери тип системы:\n"
+            f"{types}\n"
+            "Пример: greenhouse\n"
+            "(для отмены: 'отмена')"
+        )
+
+    def _continue_smart_create_wizard(self, text: str) -> str:
+        wiz = self._smart_create_wizard
+        if not wiz:
+            return None
+
+        value = text.strip()
+        step = wiz.get("step")
+
+        if step == "type":
+            sys_type = value.split()[0].lower()
+            if sys_type not in self.smart_profiles:
+                types = ", ".join(self.smart_profiles.keys())
+                return f"❌ Неизвестный тип. Доступные: {types}\nВведи тип ещё раз."
+            wiz["type"] = sys_type
+            wiz["step"] = "id"
+            profile = self.smart_profiles.get(sys_type, {})
+            return (
+                f"✅ Тип: {profile.get('icon','⚙️')} {profile.get('name', sys_type)}\n"
+                "Шаг 2/4: задай ID системы (латиница/цифры), например: my_greenhouse\n"
+                "Или напиши 'авто' для ID по умолчанию."
+            )
+
+        if step == "id":
+            if value.lower() in ("авто", "auto", "default"):
+                wiz["id"] = wiz["type"]
+            else:
+                wiz["id"] = value.split()[0]
+            wiz["step"] = "purpose"
+            return (
+                f"✅ ID: {wiz['id']}\n"
+                "Шаг 3/4: что система должна делать?\n"
+                "Пример: поддерживать климат и безопасность, управлять поливом и вентиляцией."
+            )
+
+        if step == "purpose":
+            wiz["purpose"] = value
+            wiz["step"] = "functions"
+            profile = self.smart_profiles.get(wiz["type"], {})
+            actuators = ", ".join(profile.get("actuators", []))
+            return (
+                f"✅ Назначение: {wiz['purpose']}\n"
+                "Шаг 4/4: какие функции включить сразу?\n"
+                f"Доступные функции: {actuators}\n"
+                "Введи через запятую (пример: irrigation, ventilation)\n"
+                "или напиши 'авто' для стандартного профиля."
+            )
+
+        if step == "functions":
+            profile = self.smart_profiles.get(wiz["type"], {})
+            actuators = profile.get("actuators", [])
+            if value.lower() not in ("авто", "auto", "default"):
+                selected = [x.strip() for x in value.split(",") if x.strip()]
+                valid = [x for x in selected if x in actuators]
+                wiz["functions"] = valid
+            else:
+                wiz["functions"] = []
+
+            create_msg = self.smart_sys.add_system(wiz["type"], wiz["id"])
+            if create_msg.startswith("❌"):
+                self._smart_create_wizard = None
+                return create_msg
+
+            if wiz["functions"]:
+                for function_name in wiz["functions"]:
+                    self.smart_sys.command(wiz["id"], function_name, "on")
+
+            summary = (
+                f"🧾 Создано: {wiz['type']} [{wiz['id']}]\n"
+                f"🎯 Назначение: {wiz['purpose']}\n"
+                f"🧩 Функции: {', '.join(wiz['functions']) if wiz['functions'] else 'стандартный профиль'}"
+            )
+            self._smart_create_wizard = None
+            return f"{create_msg}\n\n{summary}"
+
+        self._smart_create_wizard = None
+        return "⚠️ Мастер сброшен. Запусти заново: 'создай умную систему'."
+
     def load_skill(self, name: str):
+        if self.skill_loader:
+            result = self.skill_loader.load(name, core=self)
+            return self.skill_loader, result
         import importlib
         try:
             return importlib.import_module(f"src.skills.{name}"), f"✅ '{name}' загружен."

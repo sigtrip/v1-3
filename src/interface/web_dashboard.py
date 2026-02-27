@@ -80,6 +80,12 @@ HTML = """<!DOCTYPE html>
     <h2>⌨️ ДИРЕКТИВА</h2>
     <input type="text" id="cmd" placeholder="Введи команду для Аргоса..." onkeydown="if(event.key==='Enter')sendCmd()">
     <button onclick="sendCmd()">▶ ВЫПОЛНИТЬ</button>
+    <button id="voice-toggle" onclick="quickVoiceToggle()">🔊 ВКЛЮЧИТЬ ГОЛОС</button>
+    <button onclick="quickIotStatus()">📡 IoT СТАТУС</button>
+    <button onclick="quickIotProtocols()">🏭 IoT ПРОТОКОЛЫ</button>
+    <button onclick="quickGatewayTemplates()">🧩 ШАБЛОНЫ ШЛЮЗОВ</button>
+    <button onclick="quickDeviceStatus()">📟 СТАТУС УСТРОЙСТВА</button>
+    <button onclick="quickCreateFirmware()">🛠 СОЗДАЙ ПРОШИВКУ</button>
     <div id="resp" style="margin-top:10px;font-size:0.8em;color:#8cf;min-height:40px"></div>
   </div>
 
@@ -101,6 +107,7 @@ const ORB_COLORS = {
   Analytic:'#00ffff', Protective:'#ff3333', Creative:'#00ff88',
   Unstable:'#ffff00', 'All-Seeing':'#ffffff', System:'#ff8800', Offline:'#444'
 };
+let voiceOn = false;
 
 async function fetch_status() {
   try {
@@ -110,6 +117,11 @@ async function fetch_status() {
     document.getElementById('ts').textContent = new Date().toLocaleTimeString('ru');
     document.getElementById('state').textContent = d.state || '—';
     document.getElementById('voice').textContent = d.voice_on ? '🔊 ВКЛ' : '🔇 ВЫКЛ';
+    voiceOn = !!d.voice_on;
+    const voiceBtn = document.getElementById('voice-toggle');
+    if (voiceBtn) {
+      voiceBtn.textContent = voiceOn ? '🔇 ОТКЛЮЧИТЬ ГОЛОС' : '🔊 ВКЛЮЧИТЬ ГОЛОС';
+    }
     document.getElementById('nodes').textContent = d.p2p_nodes ?? '0';
     document.getElementById('uptime').textContent = d.uptime || '—';
 
@@ -171,6 +183,47 @@ async function sendCmd() {
     const d = await r.json();
     document.getElementById('resp').textContent = d.answer || d.error || '—';
   } catch(e) { document.getElementById('resp').textContent = '❌ '+e; }
+}
+
+function quickVoiceToggle() {
+  const inp = document.getElementById('cmd');
+  inp.value = voiceOn ? 'голос выкл' : 'голос вкл';
+  sendCmd();
+  setTimeout(fetch_status, 300);
+}
+
+function quickIotProtocols() {
+  const inp = document.getElementById('cmd');
+  inp.value = 'iot протоколы';
+  sendCmd();
+}
+
+function quickIotStatus() {
+  const inp = document.getElementById('cmd');
+  inp.value = 'iot статус';
+  sendCmd();
+}
+
+function quickGatewayTemplates() {
+  const inp = document.getElementById('cmd');
+  inp.value = 'шаблоны шлюзов';
+  sendCmd();
+}
+
+function quickDeviceStatus() {
+  const devId = prompt('ID устройства (пример: zb_kitchen_sensor):', '');
+  if (!devId || !devId.trim()) return;
+  const inp = document.getElementById('cmd');
+  inp.value = `статус устройства ${devId.trim()}`;
+  sendCmd();
+}
+
+function quickCreateFirmware() {
+  const args = prompt('Формат: id шаблон [порт]\nПример: gw1 esp32_lora /dev/ttyUSB0', '');
+  if (!args || !args.trim()) return;
+  const inp = document.getElementById('cmd');
+  inp.value = `создай прошивку ${args.trim()}`;
+  sendCmd();
 }
 
 setInterval(fetch_status, 3000);

@@ -28,9 +28,21 @@ class ArgosTelegram:
             "👁️ *АРГОС ОНЛАЙН*\n\n"
             "Доступные команды:\n"
             "/status — здоровье системы\n"
-            "/voice_on — включить озвучку\n"
-            "/voice_off — выключить озвучку\n"
+            "/crypto — BTC/ETH курсы\n"
+            "/history — история диалога\n"
+            "/geo — геолокация\n"
+            "/memory — долгосрочная память\n"
+            "/alerts — статус алертов\n"
+            "/network — P2P сеть\n"
+            "/sync — синхронизация навыков\n"
+            "/replicate — создать копию\n"
+            "/smart — умные системы\n"
+            "/iot — IoT устройства\n"
+            "`iot протоколы` — список поддерживаемых протоколов\n"
+            "`статус устройства [id]` — мониторинг устройства\n"
+            "`создай прошивку [id] [шаблон] [порт]` — подготовка/прошивка\n"
             "/skills — список навыков\n"
+            "/voice_on /voice_off — озвучка\n"
             "/help — справка\n\n"
             "Или просто напиши директиву текстом.",
             parse_mode="Markdown"
@@ -82,6 +94,72 @@ class ArgosTelegram:
         else:
             await update.message.reply_text("P2P не запущен.")
 
+    async def cmd_crypto(self, update, ctx):
+        if not self._auth(update): return
+        try:
+            from src.skills.crypto_monitor import CryptoSentinel
+            report = CryptoSentinel().report()
+            await update.message.reply_text(report)
+        except Exception as e:
+            await update.message.reply_text(f"❌ Крипто: {e}")
+
+    async def cmd_history(self, update, ctx):
+        if not self._auth(update): return
+        if self.core.db:
+            hist = self.core.db.format_history(10)
+            await update.message.reply_text(hist[:4000])
+        else:
+            await update.message.reply_text("БД не подключена.")
+
+    async def cmd_geo(self, update, ctx):
+        if not self._auth(update): return
+        try:
+            from src.connectivity.spatial import SpatialAwareness
+            report = SpatialAwareness(db=self.core.db).get_full_report()
+            await update.message.reply_text(report)
+        except Exception as e:
+            await update.message.reply_text(f"❌ Геолокация: {e}")
+
+    async def cmd_memory(self, update, ctx):
+        if not self._auth(update): return
+        if self.core.memory:
+            await update.message.reply_text(self.core.memory.format_memory()[:4000])
+        else:
+            await update.message.reply_text("Память не активирована.")
+
+    async def cmd_alerts(self, update, ctx):
+        if not self._auth(update): return
+        if self.core.alerts:
+            await update.message.reply_text(self.core.alerts.status())
+        else:
+            await update.message.reply_text("Система алертов не активирована.")
+
+    async def cmd_replicate(self, update, ctx):
+        if not self._auth(update): return
+        await update.message.reply_text("📦 Создаю реплику системы...")
+        try:
+            result = self.core.replicator.create_replica()
+            await update.message.reply_text(result)
+        except Exception as e:
+            await update.message.reply_text(f"❌ {e}")
+
+    async def cmd_smart(self, update, ctx):
+        """Статус умных систем."""
+        if not self._auth(update): return
+        if self.core.smart_sys:
+            report = self.core.smart_sys.full_status()
+            await update.message.reply_text(report[:4000])
+        else:
+            await update.message.reply_text("Умные системы не подключены.")
+
+    async def cmd_iot(self, update, ctx):
+        """Статус IoT устройств."""
+        if not self._auth(update): return
+        if self.core.iot_bridge:
+            await update.message.reply_text(self.core.iot_bridge.status()[:4000])
+        else:
+            await update.message.reply_text("IoT Bridge не подключен.")
+
     async def cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._auth(update): return
         help_text = (
@@ -100,6 +178,14 @@ class ArgosTelegram:
             "• `сканируй сеть` — устройства в сети\n"
             "• `сканируй порты` — открытые порты\n"
             "• `репликация` — создать архив системы\n\n"
+            "*IoT / Mesh / Прошивка:*\n"
+            "• `iot статус` — сводка всех устройств\n"
+            "• `статус устройства [id]` — детальный мониторинг устройства\n"
+            "• `iot протоколы` — BACnet, Modbus, KNX, LonWorks, M-Bus, OPC UA, MQTT\n"
+            "• `подключи zigbee [host] [port]` / `подключи lora [port] [baud]`\n"
+            "• `запусти mesh` / `статус mesh`\n"
+            "• `создай прошивку [id] [шаблон] [порт]` — создать/обновить прошивку\n"
+            "• `шаблоны шлюзов` — доступные профили gateway\n\n"
             "*Голос:*\n"
             "• `/voice_on` / `/voice_off` — TTS\n"
         )
@@ -116,7 +202,7 @@ class ArgosTelegram:
         user_text = update.message.text
         await update.message.reply_text("⚙️ Обрабатываю директиву...")
 
-        result = self.core.process_logic(user_text, self.admin, self.flasher)
+        result = await self.core.process_logic_async(user_text, self.admin, self.flasher)
         answer = result['answer'][:4000]  # Telegram лимит
         state  = result['state']
 
@@ -145,6 +231,14 @@ class ArgosTelegram:
         self.app.add_handler(CommandHandler("help",      self.cmd_help))
         self.app.add_handler(CommandHandler("network",   self.cmd_network))
         self.app.add_handler(CommandHandler("sync",      self.cmd_sync))
+        self.app.add_handler(CommandHandler("crypto",    self.cmd_crypto))
+        self.app.add_handler(CommandHandler("history",   self.cmd_history))
+        self.app.add_handler(CommandHandler("geo",       self.cmd_geo))
+        self.app.add_handler(CommandHandler("memory",    self.cmd_memory))
+        self.app.add_handler(CommandHandler("alerts",    self.cmd_alerts))
+        self.app.add_handler(CommandHandler("replicate", self.cmd_replicate))
+        self.app.add_handler(CommandHandler("smart",     self.cmd_smart))
+        self.app.add_handler(CommandHandler("iot",       self.cmd_iot))
 
         # Текстовые сообщения
         self.app.add_handler(

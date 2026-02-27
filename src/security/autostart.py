@@ -44,6 +44,125 @@ class ArgosAutostart:
         return "Статус неизвестен."
 
     # ══════════════════════════════════════════════════════
+    # ARGOS SHELL (Login REPL)
+    # ══════════════════════════════════════════════════════
+    def install_argos_shell(self) -> str:
+        if self.os_type == "Linux":
+            return self._install_argos_shell_linux()
+        if self.os_type == "Windows":
+            return (
+                "🪟 Для Windows автоматическая подмена shell отключена из соображений безопасности.\n"
+                "Запускай вручную: python argos_shell.py\n"
+                "(или назначь в Task Scheduler как shell-приложение пользователя)."
+            )
+        return "Argos Shell login persistence пока поддерживается только на Linux."
+
+    def uninstall_argos_shell(self) -> str:
+        if self.os_type == "Linux":
+            return self._uninstall_argos_shell_linux()
+        if self.os_type == "Windows":
+            return "На Windows подмена shell не устанавливалась."
+        return "Argos Shell login persistence пока поддерживается только на Linux."
+
+    def argos_shell_status(self) -> str:
+        if self.os_type == "Linux":
+            return self._status_argos_shell_linux()
+        return "Argos Shell status: для текущей ОС отдельная проверка не реализована."
+
+    def _install_argos_shell_linux(self) -> str:
+        profile = os.path.expanduser("~/.profile")
+        marker_start = "# ARGOS_SHELL_START"
+        marker_end = "# ARGOS_SHELL_END"
+        
+        main_py = os.path.join(self.app_path, "main.py")
+        
+        block = (
+            f"\n{marker_start}\n"
+            "if [ -z \"$SSH_TTY\" ] && [ \"$ARGOS_SHELL_ACTIVE\" != \"1\" ]; then\n"
+            "  export ARGOS_SHELL_ACTIVE=1\n"
+            f"  exec {self.exe_path} {main_py} --shell\n"
+            "fi\n"
+            f"{marker_end}\n"
+        )
+
+        try:
+            if not os.path.exists(profile):
+                with open(profile, "w", encoding="utf-8") as f:
+                    f.write("# ~/.profile\n")
+
+            with open(profile, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            if marker_start in content and marker_end in content:
+                return "✅ Argos Shell уже установлен в ~/.profile"
+
+            with open(profile, "a", encoding="utf-8") as f:
+                f.write(block)
+
+            return (
+                "✅ Argos Shell установлен как login-shell в ~/.profile.\n"
+                "Будет запускаться при локальном входе в систему (без SSH)."
+            )
+        except Exception as e:
+            return f"❌ Не удалось установить Argos Shell: {e}"
+
+    def _uninstall_argos_shell_linux(self) -> str:
+        profile = os.path.expanduser("~/.profile")
+        marker_start = "# ARGOS_SHELL_START"
+        marker_end = "# ARGOS_SHELL_END"
+
+        if not os.path.exists(profile):
+            return "⚠️ ~/.profile не найден. Нечего удалять."
+
+        try:
+            with open(profile, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+
+            new_lines = []
+            skip = False
+            removed = False
+            for line in lines:
+                if marker_start in line:
+                    skip = True
+                    removed = True
+                    continue
+                if marker_end in line:
+                    skip = False
+                    continue
+                if not skip:
+                    new_lines.append(line)
+
+            if not removed:
+                return "⚠️ Argos Shell блок не найден в ~/.profile"
+
+            with open(profile, "w", encoding="utf-8") as f:
+                f.writelines(new_lines)
+
+            return "✅ Argos Shell удалён из ~/.profile"
+        except Exception as e:
+            return f"❌ Ошибка удаления Argos Shell: {e}"
+
+    def _status_argos_shell_linux(self) -> str:
+        profile = os.path.expanduser("~/.profile")
+        marker_start = "# ARGOS_SHELL_START"
+        marker_end = "# ARGOS_SHELL_END"
+
+        if not os.path.exists(profile):
+            return "📟 Argos Shell: ~/.profile не найден"
+
+        try:
+            with open(profile, "r", encoding="utf-8") as f:
+                content = f.read()
+            enabled = marker_start in content and marker_end in content
+            return (
+                "📟 ARGOS SHELL STATUS (Linux):\n"
+                f"  Login-shell persistence: {'✅ enabled' if enabled else '❌ disabled'}\n"
+                f"  Entry point: {self.app_path}/argos_shell.py"
+            )
+        except Exception as e:
+            return f"❌ Argos Shell status error: {e}"
+
+    # ══════════════════════════════════════════════════════
     # WINDOWS
     # ══════════════════════════════════════════════════════
     def _install_windows(self) -> str:

@@ -74,6 +74,24 @@ class ArgosMobileUI(App):
             grid.add_widget(btn)
         root.add_widget(grid)
 
+        # ── IoT / прошивка быстрые кнопки ────────────────
+        iot_grid = BoxLayout(size_hint_y=None, height=50, spacing=6)
+        iot_quick = [
+            ("📡 IoT",       "iot статус"),
+            ("🏭 Протоколы", "iot протоколы"),
+            ("🧩 Шаблоны",   "шаблоны шлюзов"),
+            ("🛠 Прошивка",  "создай прошивку "),
+        ]
+        for label, cmd in iot_quick:
+            btn = Button(text=label, font_size='12sp',
+                         background_color=(0.12, 0.24, 0.44, 1))
+            if cmd.endswith(" "):
+                btn.bind(on_press=lambda _, c=cmd: self._prefill(c))
+            else:
+                btn.bind(on_press=lambda _, c=cmd: self._send(c))
+            iot_grid.add_widget(btn)
+        root.add_widget(iot_grid)
+
         # ── Чат ───────────────────────────────────────────
         scroll = ScrollView()
         self.chat = Label(
@@ -116,6 +134,10 @@ class ArgosMobileUI(App):
         self.entry.text = ""
         self._append(f"[color=5599ff]▷ ВЫ:[/color] {text}\n")
         threading.Thread(target=self._process, args=(text,), daemon=True).start()
+
+    def _prefill(self, text: str):
+        self.entry.text = text
+        self.entry.focus = True
 
     def _process(self, text: str):
         if self.core and self.admin and self.flasher:

@@ -1,11 +1,12 @@
 """
 iot_bridge.py — IoT-мост Аргоса
   Поддержка: Zigbee (zigpy/zigbee2mqtt), LoRa (pyserial + AT),
-             Mesh (ESP-NOW / custom UDP mesh), ModBus, MQTT.
+             Mesh (ESP-NOW / custom UDP mesh), MQTT, Modbus (RTU/ASCII/TCP),
+             BACnet, KNX, LonWorks, M-Bus, OPC UA.
   Аргос — оператор умных систем: дом, теплица, гараж, погреб,
   инкубатор, аквариум, террариум.
 """
-import json, os, time, threading, socket
+import json, os, time, threading, socket, struct
 from collections import defaultdict
 from src.argos_logger import get_logger
 from src.event_bus import get_bus, Events
@@ -386,6 +387,29 @@ class IoTBridge:
 
     def status(self) -> str:
         return self.registry.report()
+
+    def device_status(self, dev_id: str) -> str:
+        dev = self.registry.get(dev_id)
+        if not dev:
+            return f"❌ Устройство '{dev_id}' не найдено."
+
+        status = "🟢 online" if dev.online else "🔴 offline"
+        lines = [
+            f"📟 Устройство: {dev.name}",
+            f"  id: {dev.id}",
+            f"  тип: {dev.type}",
+            f"  протокол: {dev.protocol}",
+            f"  адрес: {dev.address or '—'}",
+            f"  статус: {status}",
+            f"  last_seen: {_ago(dev.last_seen)}",
+        ]
+        if dev.state:
+            lines.append("  данные:")
+            for k, v in list(dev.state.items())[:20]:
+                lines.append(f"    - {k}: {v}")
+        else:
+            lines.append("  данные: нет")
+        return "\n".join(lines)
 
     def send_command(self, dev_id: str, command: str, value=None) -> str:
         dev = self.registry.get(dev_id)

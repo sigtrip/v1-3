@@ -3,6 +3,7 @@ display_name: "Паук"
 version: "1.0.1"
 description: "Анонимный парсинг DuckDuckGo"
 author: "Аргос / Всеволод"
+entry: "skill.py"
 permissions: ['network']
 dependencies: ['requests', 'beautifulsoup4']
 entry_class: ArgosScrapper

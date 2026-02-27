@@ -150,6 +150,28 @@ class GatewayManager:
                 f"   Описание: {GATEWAY_TEMPLATES[template]['description']}\n"
                 f"   Конфиг: {path}")
 
+    def prepare_firmware(self, gw_id: str, template: str, port: str = None) -> str:
+        """Создаёт (или обновляет) шлюз по шаблону и готовит прошивку/конфиг.
+        Для некоторых шаблонов при наличии порта выполняет заливку.
+        """
+        created = False
+        if gw_id not in self._gateways:
+            res = self.create_gateway(gw_id, template)
+            if res.startswith("❌"):
+                return res
+            created = True
+        else:
+            gw = self._gateways[gw_id]
+            if gw.template != template:
+                gw.template = template
+                gw.spec = dict(GATEWAY_TEMPLATES.get(template, {}))
+                gw.status = "configured"
+                gw.save()
+
+        flash_res = self.flash_gateway(gw_id, port)
+        prefix = "✅ Шлюз создан и прошивка подготовлена." if created else "✅ Прошивка обновлена."
+        return f"{prefix}\n{flash_res}"
+
     def flash_gateway(self, gw_id: str, port: str = None) -> str:
         gw = self._gateways.get(gw_id)
         if not gw:

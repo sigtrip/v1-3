@@ -103,6 +103,18 @@ class ArgosOrchestrator:
         from src.interface.mobile_ui import ArgosMobileUI
         ArgosMobileUI(core=self.core, admin=self.admin, flasher=self.flasher).run()
 
+    def boot_shell(self):
+        """Интерактивная оболочка Argos (замена bash/cmd)."""
+        log.info("[SHELL] Low-level REPL mode activated.")
+        print("\n--- [ Argos System Shell ] ---\n")
+        # Для шелла не обязательно запускать Telegram сразу, но можно.
+        # self._start_telegram() 
+        from src.interface.argos_shell import ArgosShell
+        try:
+            ArgosShell().cmdloop()
+        except KeyboardInterrupt:
+            print("\nShell terminated.")
+
     def boot_server(self):
         log.info("[SERVER] Headless режим — только Telegram + P2P")
         if "--dashboard" in sys.argv:
@@ -125,8 +137,10 @@ if __name__ == "__main__":
     mode = "desktop"
     if "--no-gui"  in sys.argv: mode = "server"
     if "--mobile"  in sys.argv: mode = "mobile"
+    if "--shell"   in sys.argv: mode = "shell"
 
     argos = ArgosOrchestrator()
     if   mode == "desktop": argos.boot_desktop()
     elif mode == "mobile":  argos.boot_mobile()
+    elif mode == "shell":   argos.boot_shell()
     else:                   argos.boot_server()

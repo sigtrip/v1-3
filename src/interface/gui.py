@@ -29,9 +29,17 @@ class ArgosGUI(ctk.CTk):
                                     text_color="#00FF88", font=("Consolas", 12))
         self.q_label.pack(pady=6)
 
-        self.voice_label = ctk.CTkLabel(self.sidebar, text="🔊 Голос: ВКЛ",
+        self.voice_label = ctk.CTkLabel(self.sidebar, text=f"🔊 Голос: {'ВКЛ' if self.core.voice_on else 'ВЫКЛ'}",
                                         text_color="#88FF00", font=("Consolas", 11))
         self.voice_label.pack(pady=2)
+
+        self.voice_toggle_btn = ctk.CTkButton(
+            self.sidebar,
+            text=("🔇 Отключить голос" if self.core.voice_on else "🔊 Включить голос"),
+            height=30,
+            command=self._toggle_voice_mode,
+        )
+        self.voice_toggle_btn.pack(fill="x", padx=10, pady=4)
 
         ctk.CTkLabel(self.sidebar, text="─" * 28, text_color="#333").pack(pady=8)
 
@@ -43,10 +51,27 @@ class ArgosGUI(ctk.CTk):
             ("📰 AI Дайджест",       "дайджест"),
             ("🔍 Сканируй порты",    "сканируй порты"),
             ("💾 Создать копию",     "репликация"),
+            ("📡 IoT статус",        "iot статус"),
+            ("🏭 IoT протоколы",     "iot протоколы"),
+            ("🧩 Шаблоны шлюзов",    "шаблоны шлюзов"),
         ]:
             btn = ctk.CTkButton(self.sidebar, text=label, height=32,
                                 command=lambda c=cmd: self._send_text(c))
             btn.pack(fill="x", padx=10, pady=3)
+
+        ctk.CTkButton(
+            self.sidebar,
+            text="📟 Статус устройства",
+            height=32,
+            command=self._prompt_device_status,
+        ).pack(fill="x", padx=10, pady=3)
+
+        ctk.CTkButton(
+            self.sidebar,
+            text="🛠 Создай прошивку",
+            height=32,
+            command=self._prompt_create_firmware,
+        ).pack(fill="x", padx=10, pady=3)
 
         ctk.CTkLabel(self.sidebar, text="─" * 28, text_color="#333").pack(pady=8)
 
@@ -92,6 +117,9 @@ class ArgosGUI(ctk.CTk):
         # Голос — уже вызывается внутри core.process_logic через self.say()
         v = "ВКЛ" if self.core.voice_on else "ВЫКЛ"
         self.voice_label.configure(text=f"🔊 Голос: {v}")
+        self.voice_toggle_btn.configure(
+            text=("🔇 Отключить голос" if self.core.voice_on else "🔊 Включить голос")
+        )
 
     # ── ГОЛОСОВОЙ ВВОД ────────────────────────────────────
     def _toggle_listen(self):
@@ -100,6 +128,15 @@ class ArgosGUI(ctk.CTk):
         self._listening = True
         self.voice_btn.configure(text="🔴 Слушаю...", fg_color="#4a1a1a")
         threading.Thread(target=self._listen_loop, daemon=True).start()
+
+    def _toggle_voice_mode(self):
+        self.core.voice_on = not self.core.voice_on
+        v = "ВКЛ" if self.core.voice_on else "ВЫКЛ"
+        self.voice_label.configure(text=f"🔊 Голос: {v}")
+        self.voice_toggle_btn.configure(
+            text=("🔇 Отключить голос" if self.core.voice_on else "🔊 Включить голос")
+        )
+        self._append(f"🔈 Голосовой режим: {v}\n", "#88ff88")
 
     def _listen_loop(self):
         text = self.core.listen()
@@ -112,6 +149,21 @@ class ArgosGUI(ctk.CTk):
             self._send_text(text)
         else:
             self._append("👂 Не распознано. Попробуй снова.\n", "#ff8800")
+
+    def _prompt_device_status(self):
+        dlg = ctk.CTkInputDialog(text="ID устройства", title="Статус устройства")
+        dev_id = (dlg.get_input() or "").strip()
+        if dev_id:
+            self._send_text(f"статус устройства {dev_id}")
+
+    def _prompt_create_firmware(self):
+        dlg = ctk.CTkInputDialog(
+            text="Формат: id шаблон [порт]\nПример: gw1 esp32_lora /dev/ttyUSB0",
+            title="Создай прошивку"
+        )
+        args = (dlg.get_input() or "").strip()
+        if args:
+            self._send_text(f"создай прошивку {args}")
 
     # ── ВЫВОД В ЧАТ ───────────────────────────────────────
     def _append(self, text: str, color: str = "#ffffff"):

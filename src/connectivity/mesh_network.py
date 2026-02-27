@@ -7,9 +7,15 @@ mesh_network.py — Mesh-сеть: Zigbee, LoRa, WiFi Mesh
 """
 import os
 import json
-import serial
 import threading
 import time
+from typing import Any
+
+try:
+    import serial
+except ImportError:
+    serial = None
+
 from src.argos_logger import get_logger
 from src.connectivity.event_bus import bus, EventType
 
@@ -177,7 +183,6 @@ class MeshNetwork:
 
 # ── BRIDGES ───────────────────────────────────────────────
 
-from typing import Any  # noqa
 
 class ZigbeeBridge:
     """Zigbee через serial (CC2531/CC2652/sonoff dongle)."""
