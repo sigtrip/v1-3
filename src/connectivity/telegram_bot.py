@@ -267,6 +267,18 @@ class ArgosTelegram:
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
         )
 
+        try:
+            loop.run_until_complete(self.app.bot.get_me())
+        except InvalidToken:
+            print("[TG-BRIDGE]: Telegram-мост отключён: токен отклонён сервером.")
+            return
+        except TelegramError as e:
+            print(f"[TG-BRIDGE]: Telegram preflight error: {e}")
+            return
+        except Exception as e:
+            print(f"[TG-BRIDGE]: Telegram preflight unexpected error: {e}")
+            return
+
         print(f"[TG-BRIDGE]: Мост активен. USER_ID={self.user_id}")
         try:
             self.app.run_polling(close_loop=False)
