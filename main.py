@@ -89,7 +89,7 @@ class ArgosOrchestrator:
             f"Создатель: Всеволод\n"
             f"Гео:       {self.location}\n"
             f"Права:     {'ROOT ✅' if self.root.is_root else 'User ⚠️'}\n"
-            f"ИИ:        {'Gemini ✅' if self.core.model else 'Ollama'}\n"
+            f"ИИ:        {self.core.ai_mode_label()}\n"
             f"Память:    {'✅' if self.core.memory else '❌'}\n"
             f"Vision:    {'✅' if self.core.vision else '❌'}\n"
             f"Алерты:    {'✅' if self.core.alerts else '❌'}\n"

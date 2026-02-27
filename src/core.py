@@ -118,6 +118,7 @@ class ArgosCore:
         self.context    = DialogContext(max_turns=10)
         self.agent      = ArgosAgent(self)
         self.ollama_url = "http://localhost:11434/api/generate"
+        self.ai_mode    = self._normalize_ai_mode(os.getenv("ARGOS_AI_MODE", "auto"))
         self.voice_on   = os.getenv("ARGOS_VOICE_DEFAULT", "off").strip().lower() in (
             "1", "true", "on", "yes", "да", "вкл"
         )
@@ -405,6 +406,25 @@ class ArgosCore:
     # ═══════════════════════════════════════════════════════
     # ИИ
     # ═══════════════════════════════════════════════════════
+    def _normalize_ai_mode(self, mode: str) -> str:
+        value = (mode or "auto").strip().lower()
+        if value in {"gemini", "google", "g"}:
+            return "gemini"
+        if value in {"ollama", "local", "o"}:
+            return "ollama"
+        return "auto"
+
+    def set_ai_mode(self, mode: str) -> str:
+        self.ai_mode = self._normalize_ai_mode(mode)
+        return f"🤖 Режим ИИ: {self.ai_mode_label()}"
+
+    def ai_mode_label(self) -> str:
+        if self.ai_mode == "gemini":
+            return "Gemini"
+        if self.ai_mode == "ollama":
+            return "Ollama"
+        return "Auto"
+
     def _setup_ai(self):
         key = os.getenv("GEMINI_API_KEY", "")
         if GEMINI_OK and key and key != "your_key_here":
@@ -521,15 +541,29 @@ class ArgosCore:
             if rag_ctx:
                 context += f"\n\n{rag_ctx}"
 
-        answer = self._ask_gemini(context, user_text)
+        answer = None
         engine = q_data['name']
 
-        if not answer:
+        if self.ai_mode == "gemini":
+            answer = self._ask_gemini(context, user_text)
+            engine = f"{q_data['name']} (Gemini)"
+        elif self.ai_mode == "ollama":
             answer = self._ask_ollama(context, user_text)
             engine = f"{q_data['name']} (Ollama)"
+        else:
+            answer = self._ask_gemini(context, user_text)
+            engine = f"{q_data['name']} (Gemini)"
+            if not answer:
+                answer = self._ask_ollama(context, user_text)
+                engine = f"{q_data['name']} (Ollama)"
 
         if not answer:
-            answer = "Связь с ядрами ИИ разорвана. Режим оффлайн."
+            if self.ai_mode == "gemini":
+                answer = "Gemini недоступен в текущем режиме. Переключите режим ИИ на Auto или Ollama."
+            elif self.ai_mode == "ollama":
+                answer = "Ollama недоступен в текущем режиме. Проверьте локальный сервер Ollama или переключите режим ИИ."
+            else:
+                answer = "Связь с ядрами ИИ разорвана. Режим оффлайн."
             engine = "Offline"
 
         # Сохраняем в контекст и БД
@@ -671,6 +705,14 @@ class ArgosCore:
             self.voice_on = True; return "🔊 Голосовой модуль активирован."
         if any(k in t for k in ["голос выкл", "выключи голос"]):
             self.voice_on = False; return "🔇 Голосовой модуль отключён."
+        if any(k in t for k in ["режим ии авто", "модель авто", "ai mode auto"]):
+            return self.set_ai_mode("auto")
+        if any(k in t for k in ["режим ии gemini", "модель gemini", "ai mode gemini"]):
+            return self.set_ai_mode("gemini")
+        if any(k in t for k in ["режим ии ollama", "модель ollama", "ai mode ollama"]):
+            return self.set_ai_mode("ollama")
+        if any(k in t for k in ["текущий режим ии", "какая модель", "ai mode"]):
+            return f"🤖 Текущий режим ИИ: {self.ai_mode_label()}"
         if any(k in t for k in ["включи wake word", "wake word вкл"]):
             return self.start_wake_word(admin, flasher)
 

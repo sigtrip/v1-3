@@ -41,6 +41,25 @@ class ArgosGUI(ctk.CTk):
         )
         self.voice_toggle_btn.pack(fill="x", padx=10, pady=4)
 
+        ctk.CTkLabel(self.sidebar, text="🤖 Модель ИИ",
+                     font=("Consolas", 11), text_color="#bbbbbb").pack(pady=(8, 2))
+        self.ai_mode_var = ctk.StringVar(value=self._ai_mode_to_ui(self.core.ai_mode))
+        self.ai_mode_menu = ctk.CTkOptionMenu(
+            self.sidebar,
+            values=["Auto", "Gemini", "Ollama"],
+            variable=self.ai_mode_var,
+            command=self._on_ai_mode_changed,
+        )
+        self.ai_mode_menu.pack(fill="x", padx=10, pady=3)
+
+        self.ai_mode_label = ctk.CTkLabel(
+            self.sidebar,
+            text=f"Режим ИИ: {self.core.ai_mode_label()}",
+            text_color="#88c0ff",
+            font=("Consolas", 11),
+        )
+        self.ai_mode_label.pack(pady=2)
+
         ctk.CTkLabel(self.sidebar, text="─" * 28, text_color="#333").pack(pady=8)
 
         # Быстрые кнопки
@@ -137,6 +156,28 @@ class ArgosGUI(ctk.CTk):
             text=("🔇 Отключить голос" if self.core.voice_on else "🔊 Включить голос")
         )
         self._append(f"🔈 Голосовой режим: {v}\n", "#88ff88")
+
+    def _ai_mode_to_ui(self, mode: str) -> str:
+        value = (mode or "auto").strip().lower()
+        if value == "gemini":
+            return "Gemini"
+        if value == "ollama":
+            return "Ollama"
+        return "Auto"
+
+    def _ui_to_ai_mode(self, mode: str) -> str:
+        value = (mode or "Auto").strip().lower()
+        if value == "gemini":
+            return "gemini"
+        if value == "ollama":
+            return "ollama"
+        return "auto"
+
+    def _on_ai_mode_changed(self, selected: str):
+        mode = self._ui_to_ai_mode(selected)
+        msg = self.core.set_ai_mode(mode)
+        self.ai_mode_label.configure(text=f"Режим ИИ: {self.core.ai_mode_label()}")
+        self._append(f"{msg}\n", "#88c0ff")
 
     def _listen_loop(self):
         text = self.core.listen()
