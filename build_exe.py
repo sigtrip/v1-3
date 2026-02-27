@@ -23,6 +23,7 @@ ICON_ARG  = f"--icon={ICON_PATH}" if os.path.exists(ICON_PATH) else ""
 HIDDEN = [
     "customtkinter",
     "google.genai",
+  "ollama",
     "pyttsx3",
     "speech_recognition",
     "cryptography.fernet",

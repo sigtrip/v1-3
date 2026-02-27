@@ -24,9 +24,17 @@ try:
     RICH_OK = True
 except ImportError:
     # Заглушка, если Rich не установлен
+    class _NoopStatus:
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
     class Console:
         def print(self, *args, **kwargs):
             print(*args)
+        def status(self, *args, **kwargs):
+            return _NoopStatus()
     console = Console()
     RICH_OK = False
 
@@ -197,10 +205,9 @@ class ArgosShell(cmd.Cmd):
     def do_syscall(self, arg):
         """Execute low-level system calls via ctypes (Linux/Windows)."""
         if not RICH_OK:
-            super().do_syscall(arg) # Call original logic if copied, but here I implement it directly
-            # Actually I should have kept the old method body available or re-implement it using Rich.
-            # Let's re-implement simply.
             print(self.syscalls.status())
+            print(self.syscalls.process_identity())
+            print(self.syscalls.terminal_size())
             return
 
         # Rich implementation
@@ -212,6 +219,14 @@ class ArgosShell(cmd.Cmd):
 
     def do_scan(self, arg):
         """Scan local network (simulated/real depending on modules)."""
+        if not RICH_OK:
+            print("Scanning network environment...")
+            time.sleep(1)
+            print("- 192.168.1.10  Argos-Core       ONLINE (Self)")
+            print("- 192.168.1.1   Gateway          ONLINE")
+            print("- 192.168.1.14  Simulate-IoT     ONLINE")
+            return
+
         with console.status("[bold green]Scanning network environment...[/bold green]", spinner="dots"):
             time.sleep(2)
             
