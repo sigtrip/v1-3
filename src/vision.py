@@ -6,9 +6,33 @@ vision.py — Глаза Аргоса (Computer Vision)
 import os
 import base64
 import platform
+import threading
+import time
+from collections import deque
 from src.argos_logger import get_logger
 
 log = get_logger("argos.vision")
+
+
+class _VisionGeminiLimiter:
+    def __init__(self, max_calls: int = 15, window_seconds: int = 60):
+        self.max_calls = max_calls
+        self.window_seconds = window_seconds
+        self._hits = deque()
+        self._lock = threading.Lock()
+
+    def allow(self) -> bool:
+        now = time.time()
+        with self._lock:
+            while self._hits and (now - self._hits[0]) >= self.window_seconds:
+                self._hits.popleft()
+            if len(self._hits) >= self.max_calls:
+                return False
+            self._hits.append(now)
+            return True
+
+
+_GEMINI_VISION_LIMITER = _VisionGeminiLimiter(max_calls=15, window_seconds=60)
 
 try:
     from google import genai as genai_sdk
@@ -156,6 +180,9 @@ class ArgosVision:
 
         if self._client:
             try:
+                if not _GEMINI_VISION_LIMITER.allow():
+                    return "❌ Gemini Vision: превышен лимит 15 запросов в минуту. Повтори позже."
+
                 ext = os.path.splitext(image_path)[1].lower()
                 mime = {
                     ".jpg": "image/jpeg",

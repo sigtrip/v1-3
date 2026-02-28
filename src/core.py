@@ -6,6 +6,10 @@ core.py — ArgosCore FINAL v2.0
 """
 import os, threading, requests, asyncio, tempfile
 import json
+import time
+import base64
+import uuid
+from collections import deque
 
 # ── Graceful imports ──────────────────────────────────────
 try:
@@ -39,6 +43,24 @@ from dotenv import load_dotenv
 load_dotenv()
 
 log = get_logger("argos.core")
+
+
+class _SlidingWindowRateLimiter:
+    def __init__(self, max_calls: int, window_seconds: int):
+        self.max_calls = max_calls
+        self.window_seconds = window_seconds
+        self._hits = deque()
+        self._lock = threading.Lock()
+
+    def allow(self) -> bool:
+        now = time.time()
+        with self._lock:
+            while self._hits and (now - self._hits[0]) >= self.window_seconds:
+                self._hits.popleft()
+            if len(self._hits) >= self.max_calls:
+                return False
+            self._hits.append(now)
+            return True
 
 
 class _GeminiResponse:
@@ -145,6 +167,13 @@ class ArgosCore:
         self.module_loader = None
         self.ha = None
         self.tool_calling = None
+        self.gemini_rpm_limit = 15
+        self._gemini_limiter = _SlidingWindowRateLimiter(max_calls=self.gemini_rpm_limit, window_seconds=60)
+        self._last_gemini_rate_limited = False
+        self._gigachat_access_token = (os.getenv("GIGACHAT_ACCESS_TOKEN", "") or "").strip() or None
+        self._gigachat_token_expires_at = 0.0
+        self.auto_collab_enabled = os.getenv("ARGOS_AUTO_COLLAB", "on").strip().lower() not in {"0", "false", "off", "no", "нет"}
+        self.auto_collab_max_models = max(2, min(int(os.getenv("ARGOS_AUTO_COLLAB_MAX_MODELS", "4") or "4"), 4))
 
         self._init_voice()
         self._setup_ai()
@@ -429,6 +458,10 @@ class ArgosCore:
         value = (mode or "auto").strip().lower()
         if value in {"gemini", "google", "g"}:
             return "gemini"
+        if value in {"gigachat", "giga", "sber", "gc"}:
+            return "gigachat"
+        if value in {"yandexgpt", "yandex", "ya", "yg"}:
+            return "yandexgpt"
         if value in {"ollama", "local", "o"}:
             return "ollama"
         return "auto"
@@ -440,6 +473,10 @@ class ArgosCore:
     def ai_mode_label(self) -> str:
         if self.ai_mode == "gemini":
             return "Gemini"
+        if self.ai_mode == "gigachat":
+            return "GigaChat"
+        if self.ai_mode == "yandexgpt":
+            return "YandexGPT"
         if self.ai_mode == "ollama":
             return "Ollama"
         return "Auto"
@@ -453,8 +490,85 @@ class ArgosCore:
             self.model = None
             log.info("Gemini недоступен — используется Ollama")
 
+        if self._has_gigachat_config():
+            log.info("GigaChat: конфигурация обнаружена")
+        else:
+            log.info("GigaChat недоступен — нет credentials")
+
+        if self._has_yandexgpt_config():
+            log.info("YandexGPT: конфигурация обнаружена")
+        else:
+            log.info("YandexGPT недоступен — нет IAM/FOLDER")
+
+    def _gemini_rate_limit_text(self) -> str:
+        return f"Gemini: превышен лимит {self.gemini_rpm_limit} запросов в минуту. Повтори чуть позже или переключи режим ИИ."
+
+    def _has_gigachat_config(self) -> bool:
+        if self._gigachat_access_token:
+            return True
+        client_id = (os.getenv("GIGACHAT_CLIENT_ID", "") or "").strip()
+        client_secret = (os.getenv("GIGACHAT_CLIENT_SECRET", "") or "").strip()
+        return bool(client_id and client_secret)
+
+    def _has_yandexgpt_config(self) -> bool:
+        iam = (os.getenv("YANDEX_IAM_TOKEN", "") or "").strip()
+        folder = (os.getenv("YANDEX_FOLDER_ID", "") or "").strip()
+        return bool(iam and folder)
+
+    def _get_gigachat_token(self) -> str | None:
+        if self._gigachat_access_token and self._gigachat_token_expires_at <= 0:
+            return self._gigachat_access_token
+
+        if self._gigachat_access_token and time.time() < self._gigachat_token_expires_at - 30:
+            return self._gigachat_access_token
+
+        client_id = (os.getenv("GIGACHAT_CLIENT_ID", "") or "").strip()
+        client_secret = (os.getenv("GIGACHAT_CLIENT_SECRET", "") or "").strip()
+        if not (client_id and client_secret):
+            return self._gigachat_access_token
+
+        try:
+            basic = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("utf-8")
+            headers = {
+                "Authorization": f"Basic {basic}",
+                "RqUID": str(uuid.uuid4()),
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+            }
+            response = requests.post(
+                "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
+                headers=headers,
+                data={"scope": "GIGACHAT_API_PERS"},
+                timeout=20,
+            )
+            if not response.ok:
+                log.error("GigaChat auth: HTTP %s %s", response.status_code, response.text[:400])
+                return None
+
+            payload = response.json()
+            token = (payload.get("access_token") or "").strip()
+            if not token:
+                return None
+
+            expires_at_ms = payload.get("expires_at")
+            if isinstance(expires_at_ms, (int, float)):
+                self._gigachat_token_expires_at = float(expires_at_ms) / 1000.0
+            else:
+                self._gigachat_token_expires_at = time.time() + 1800
+
+            self._gigachat_access_token = token
+            return token
+        except Exception as e:
+            log.error("GigaChat auth error: %s", e)
+            return None
+
     def _ask_gemini(self, context: str, user_text: str) -> str | None:
+        self._last_gemini_rate_limited = False
         if not self.model:
+            return None
+        if not self._gemini_limiter.allow():
+            self._last_gemini_rate_limited = True
+            log.warning(self._gemini_rate_limit_text())
             return None
         try:
             hist = self.context.get_prompt_context()
@@ -463,6 +577,100 @@ class ArgosCore:
             return res.text
         except Exception as e:
             log.error("Gemini: %s", e)
+            return None
+
+    def _ask_gigachat(self, context: str, user_text: str) -> str | None:
+        token = self._get_gigachat_token()
+        if not token:
+            return None
+        try:
+            hist = self.context.get_prompt_context()
+            payload = {
+                "model": (os.getenv("GIGACHAT_MODEL", "GigaChat-2") or "GigaChat-2").strip(),
+                "messages": [
+                    {"role": "system", "content": context},
+                    {"role": "user", "content": f"{hist}\n\n{user_text}"},
+                ],
+                "temperature": 0.4,
+                "max_tokens": 1200,
+            }
+            response = requests.post(
+                "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                    "Accept": "application/json",
+                },
+                json=payload,
+                timeout=25,
+            )
+            if not response.ok:
+                log.error("GigaChat: HTTP %s %s", response.status_code, response.text[:400])
+                return None
+
+            data = response.json()
+            choices = data.get("choices") or []
+            if not choices:
+                return None
+            message = choices[0].get("message") or {}
+            content = message.get("content")
+            if isinstance(content, str):
+                return content.strip()
+            return None
+        except Exception as e:
+            log.error("GigaChat: %s", e)
+            return None
+
+    def _ask_yandexgpt(self, context: str, user_text: str) -> str | None:
+        iam = (os.getenv("YANDEX_IAM_TOKEN", "") or "").strip()
+        folder = (os.getenv("YANDEX_FOLDER_ID", "") or "").strip()
+        if not (iam and folder):
+            return None
+
+        model_uri = (os.getenv("YANDEXGPT_MODEL_URI", "") or "").strip()
+        if not model_uri:
+            model_uri = f"gpt://{folder}/yandexgpt-lite/latest"
+
+        try:
+            hist = self.context.get_prompt_context()
+            payload = {
+                "modelUri": model_uri,
+                "completionOptions": {
+                    "stream": False,
+                    "temperature": 0.4,
+                    "maxTokens": "1200",
+                },
+                "messages": [
+                    {"role": "system", "text": context},
+                    {"role": "user", "text": f"{hist}\n\n{user_text}"},
+                ],
+            }
+            response = requests.post(
+                "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
+                headers={
+                    "Authorization": f"Bearer {iam}",
+                    "x-folder-id": folder,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=25,
+            )
+            if not response.ok:
+                log.error("YandexGPT: HTTP %s %s", response.status_code, response.text[:400])
+                return None
+
+            data = response.json()
+            result = data.get("result") or {}
+            alternatives = result.get("alternatives") or []
+            if not alternatives:
+                return None
+            message = alternatives[0].get("message") or {}
+            text = message.get("text")
+            if isinstance(text, str):
+                return text.strip()
+            return None
+        except Exception as e:
+            log.error("YandexGPT: %s", e)
             return None
 
     def _ask_ollama(self, context: str, user_text: str) -> str | None:
@@ -479,6 +687,69 @@ class ArgosCore:
         except Exception as e:
             log.error("Ollama: %s", e)
             return None
+
+    def _auto_providers(self) -> list[tuple[str, callable]]:
+        providers = []
+        if self.model:
+            providers.append(("Gemini", self._ask_gemini))
+        if self._has_gigachat_config():
+            providers.append(("GigaChat", self._ask_gigachat))
+        if self._has_yandexgpt_config():
+            providers.append(("YandexGPT", self._ask_yandexgpt))
+        providers.append(("Ollama", self._ask_ollama))
+        return providers[:self.auto_collab_max_models]
+
+    def _ask_auto_consensus(self, context: str, user_text: str) -> tuple[str | None, str | None]:
+        providers = self._auto_providers()
+        if not providers:
+            return None, None
+
+        if not self.auto_collab_enabled:
+            for provider_name, fn in providers:
+                answer = fn(context, user_text)
+                if answer:
+                    return answer, provider_name
+            return None, None
+
+        collected: list[tuple[str, str]] = []
+        for provider_name, fn in providers:
+            peer_block = ""
+            if collected:
+                peer_opinions = "\n".join(
+                    f"- {name}: {text}" for name, text in collected
+                )
+                peer_block = (
+                    "\n\nНиже ответы других ИИ-моделей. Учти их, исправь слабые места, "
+                    "но не повторяй дословно и не упоминай названия моделей в финальном тексте:\n"
+                    f"{peer_opinions}"
+                )
+            answer = fn(context + peer_block, user_text)
+            if answer and answer.strip():
+                collected.append((provider_name, answer.strip()))
+
+        if not collected:
+            return None, None
+        if len(collected) == 1:
+            return collected[0][1], collected[0][0]
+
+        synthesis_prompt = (
+            "Сделай единый, согласованный ответ пользователю на русском.\n"
+            "Правила: по делу, без воды, без упоминания моделей, устранить противоречия, "
+            "если есть неопределённость — явно это обозначить.\n\n"
+            f"Запрос пользователя: {user_text}\n\n"
+            "Черновики разных моделей:\n"
+            + "\n".join(f"- {name}: {text}" for name, text in collected)
+        )
+
+        for provider_name, fn in providers:
+            final_answer = fn(context, synthesis_prompt)
+            if final_answer and final_answer.strip():
+                used = "+".join(name for name, _ in collected)
+                return final_answer.strip(), f"Auto-Consensus:{used}→{provider_name}"
+
+        used = "+".join(name for name, _ in collected)
+        merged = "\n\n".join(f"{name}: {text}" for name, text in collected)
+        return merged, f"Auto-Consensus:{used}"
 
     # ═══════════════════════════════════════════════════════
     # ОСНОВНАЯ ЛОГИКА
@@ -566,19 +837,30 @@ class ArgosCore:
         if self.ai_mode == "gemini":
             answer = self._ask_gemini(context, user_text)
             engine = f"{q_data['name']} (Gemini)"
+        elif self.ai_mode == "gigachat":
+            answer = self._ask_gigachat(context, user_text)
+            engine = f"{q_data['name']} (GigaChat)"
+        elif self.ai_mode == "yandexgpt":
+            answer = self._ask_yandexgpt(context, user_text)
+            engine = f"{q_data['name']} (YandexGPT)"
         elif self.ai_mode == "ollama":
             answer = self._ask_ollama(context, user_text)
             engine = f"{q_data['name']} (Ollama)"
         else:
-            answer = self._ask_gemini(context, user_text)
-            engine = f"{q_data['name']} (Gemini)"
-            if not answer:
-                answer = self._ask_ollama(context, user_text)
-                engine = f"{q_data['name']} (Ollama)"
+            answer, auto_engine = self._ask_auto_consensus(context, user_text)
+            if auto_engine:
+                engine = f"{q_data['name']} ({auto_engine})"
 
         if not answer:
             if self.ai_mode == "gemini":
-                answer = "Gemini недоступен в текущем режиме. Переключите режим ИИ на Auto или Ollama."
+                if self._last_gemini_rate_limited:
+                    answer = self._gemini_rate_limit_text()
+                else:
+                    answer = "Gemini недоступен в текущем режиме. Переключите режим ИИ на Auto, GigaChat, YandexGPT или Ollama."
+            elif self.ai_mode == "gigachat":
+                answer = "GigaChat недоступен в текущем режиме. Проверьте токен/credentials или переключите режим ИИ."
+            elif self.ai_mode == "yandexgpt":
+                answer = "YandexGPT недоступен в текущем режиме. Проверьте IAM_TOKEN/FOLDER_ID или переключите режим ИИ."
             elif self.ai_mode == "ollama":
                 answer = "Ollama недоступен в текущем режиме. Проверьте локальный сервер Ollama или переключите режим ИИ."
             else:
@@ -728,6 +1010,10 @@ class ArgosCore:
             return self.set_ai_mode("auto")
         if any(k in t for k in ["режим ии gemini", "модель gemini", "ai mode gemini"]):
             return self.set_ai_mode("gemini")
+        if any(k in t for k in ["режим ии gigachat", "модель gigachat", "ai mode gigachat", "режим ии гигачат"]):
+            return self.set_ai_mode("gigachat")
+        if any(k in t for k in ["режим ии yandexgpt", "модель yandexgpt", "ai mode yandexgpt", "режим ии яндекс"]):
+            return self.set_ai_mode("yandexgpt")
         if any(k in t for k in ["режим ии ollama", "модель ollama", "ai mode ollama"]):
             return self.set_ai_mode("ollama")
         if any(k in t for k in ["текущий режим ии", "какая модель", "ai mode"]):

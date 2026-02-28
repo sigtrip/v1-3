@@ -248,21 +248,17 @@ class ArgosToolCallingEngine:
         return "\n".join(lines)
 
     def _ask_model_text(self, prompt: str) -> str | None:
-        if getattr(self.core, "model", None) is not None:
-            try:
-                res = self.core.model.generate_content(prompt)
-                text = getattr(res, "text", None)
-                if text:
-                    return text
-                parts = []
-                for cand in getattr(res, "candidates", []) or []:
-                    for part in getattr(getattr(cand, "content", None), "parts", []) or []:
-                        if hasattr(part, "text") and part.text:
-                            parts.append(part.text)
-                if parts:
-                    return "\n".join(parts)
-            except Exception:
-                pass
+        answer = self.core._ask_gemini("Ты planner/синтезатор ответов Аргоса. Отвечай строго по задаче.", prompt)
+        if answer:
+            return answer
+
+        answer = self.core._ask_gigachat("Ты planner/синтезатор ответов Аргоса. Отвечай строго по задаче.", prompt)
+        if answer:
+            return answer
+
+        answer = self.core._ask_yandexgpt("Ты planner/синтезатор ответов Аргоса. Отвечай строго по задаче.", prompt)
+        if answer:
+            return answer
 
         try:
             response = requests.post(

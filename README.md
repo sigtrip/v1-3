@@ -12,7 +12,7 @@
 
 | Слой | Что умеет |
 |------|-----------|
-| 🧠 **Интеллект** | Gemini 1.5 Flash → Ollama/Llama3, multi-turn + Tool Calling по JSON-схемам |
+| 🧠 **Интеллект** | Gemini / GigaChat / YandexGPT → Ollama/Llama3, multi-turn + Tool Calling по JSON-схемам |
 | 🗣️ **Голос** | TTS (pyttsx3) + STT (SpeechRecognition) + Wake Word «Аргос» |
 | 🤖 **Агент** | Цепочки задач: «скан сети → запиши → отправь в Telegram» |
 | 👁️ **Vision** | Анализ экрана / камеры / файлов через Gemini Vision |
@@ -134,6 +134,13 @@ pip install PyAudio SpeechRecognition
 
 ```env
 GEMINI_API_KEY=ключ_от_ai.google.dev
+GIGACHAT_ACCESS_TOKEN=токен_gigachat_если_есть
+# либо пара client credentials для авто-обновления токена:
+# GIGACHAT_CLIENT_ID=...
+# GIGACHAT_CLIENT_SECRET=...
+YANDEX_IAM_TOKEN=iam_токен_yandex_cloud
+YANDEX_FOLDER_ID=folder_id_yandex_cloud
+# опционально: YANDEXGPT_MODEL_URI=gpt://<folder>/yandexgpt-lite/latest
 TELEGRAM_BOT_TOKEN=токен_от_@BotFather
 USER_ID=твой_telegram_id
 ARGOS_NETWORK_SECRET=секрет_p2p
@@ -146,6 +153,14 @@ WHISPER_MODEL=small
 WHISPER_DEVICE=cpu
 WHISPER_COMPUTE_TYPE=int8
 ```
+
+Примечание по лимитам:
+- Для Gemini включён лимит: 15 запросов в минуту (включая Tool Calling и Vision).
+- Лимит применяется только к Gemini; GigaChat, YandexGPT и Ollama не ограничиваются этим правилом.
+
+Примечание по Auto-режиму:
+- По умолчанию включён Auto-Consensus: модели отвечают по очереди с учётом предыдущих ответов, затем формируется единый итог.
+- Управление через ENV: `ARGOS_AUTO_COLLAB=on|off`, `ARGOS_AUTO_COLLAB_MAX_MODELS=2..4`.
 
 ### 3. Первый запуск
 
