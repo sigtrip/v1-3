@@ -1503,6 +1503,24 @@ class ArgosCore:
         # ── P2P ───────────────────────────────────────────
         if any(k in t for k in ["статус сети", "p2p статус", "сеть нод"]):
             return self.p2p.network_status() if self.p2p else "P2P не запущен. Команда: запусти p2p"
+        if any(k in t for k in ["p2p телеметрия", "телеметрия p2p", "p2p telemetry"]):
+            return self.p2p.network_telemetry() if self.p2p else "P2P не запущен. Команда: запусти p2p"
+        if any(k in t for k in ["p2p tuning", "p2p тюнинг", "p2p веса", "p2p веса"]):
+            return self.p2p.routing_tuning_report() if self.p2p else "P2P не запущен. Команда: запусти p2p"
+        if t.startswith("p2p вес "):
+            if not self.p2p:
+                return "P2P не запущен. Команда: запусти p2p"
+            parts = text.split()
+            if len(parts) < 4:
+                return "Формат: p2p вес [name] [value]"
+            return self.p2p.set_routing_weight(parts[2], parts[3])
+        if t.startswith("p2p failover"):
+            if not self.p2p:
+                return "P2P не запущен. Команда: запусти p2p"
+            parts = text.split()
+            if len(parts) < 3:
+                return "Формат: p2p failover [1..5]"
+            return self.p2p.set_failover_limit(parts[2])
         if any(k in t for k in ["протокол p2p", "p2p протокол", "libp2p", "zkp"]):
             return p2p_protocol_roadmap()
         if "запусти p2p" in t:
@@ -1857,6 +1875,8 @@ class ArgosCore:
 
 🌐 P2P СЕТЬ
   статус сети · синхронизируй навыки
+    p2p телеметрия · p2p tuning
+    p2p вес [name] [value] · p2p failover [1..5]
   подключись к [IP] · распредели задачу [вопрос]
     p2p протокол · libp2p · zkp
 

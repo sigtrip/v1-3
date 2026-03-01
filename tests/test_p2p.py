@@ -198,7 +198,10 @@ class TestArgosBridge(unittest.TestCase):
     def test_has_required_methods(self):
         from src.connectivity.p2p_bridge import ArgosBridge
         bridge = ArgosBridge(core=None)
-        for method in ["start", "network_status", "sync_skills_from_network", "route_query"]:
+        for method in [
+            "start", "network_status", "sync_skills_from_network", "route_query",
+            "network_telemetry", "routing_tuning_report", "set_routing_weight", "set_failover_limit"
+        ]:
             self.assertTrue(hasattr(bridge, method),
                             f"ArgosBridge должен иметь метод '{method}'")
 
@@ -214,6 +217,27 @@ class TestArgosBridge(unittest.TestCase):
         bridge = ArgosBridge(core=None)
         result = bridge.route_query("тест")
         self.assertIsInstance(result, str)
+
+    def test_p2p_tuning_commands(self):
+        from src.connectivity.p2p_bridge import ArgosBridge
+        bridge = ArgosBridge(core=None)
+        report = bridge.routing_tuning_report()
+        self.assertIn("P2P ROUTING TUNING", report)
+
+        ok = bridge.set_routing_weight("auth", 0.61)
+        self.assertIn("✅", ok)
+
+        fail = bridge.set_routing_weight("unknown_weight", 1.0)
+        self.assertIn("❌", fail)
+
+        lim = bridge.set_failover_limit(4)
+        self.assertIn("✅", lim)
+
+    def test_p2p_telemetry_string(self):
+        from src.connectivity.p2p_bridge import ArgosBridge
+        bridge = ArgosBridge(core=None)
+        text = bridge.network_telemetry()
+        self.assertIn("P2P TELEMETRY", text)
 
 
 class TestP2PPacketEncoding(unittest.TestCase):

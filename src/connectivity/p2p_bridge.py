@@ -248,6 +248,40 @@ class TaskDistributor:
         self.registry = registry
         self.me = self_profile
         self.bridge = bridge
+        self.weights = {
+            "auth": float(os.getenv("ARGOS_P2P_WEIGHT_AUTH", "0.5") or "0.5"),
+            "power": float(os.getenv("ARGOS_P2P_WEIGHT_POWER", "0.5") or "0.5"),
+            "heavy_auth": float(os.getenv("ARGOS_P2P_WEIGHT_HEAVY_AUTH", "0.55") or "0.55"),
+            "heavy_power": float(os.getenv("ARGOS_P2P_WEIGHT_HEAVY_POWER", "0.45") or "0.45"),
+            "heavy_ram": float(os.getenv("ARGOS_P2P_WEIGHT_HEAVY_RAM", "0.4") or "0.4"),
+            "queue_penalty": float(os.getenv("ARGOS_P2P_WEIGHT_QUEUE_PENALTY", "2.5") or "2.5"),
+            "inflight_penalty": float(os.getenv("ARGOS_P2P_WEIGHT_INFLIGHT_PENALTY", "1.5") or "1.5"),
+            "rtt_penalty": float(os.getenv("ARGOS_P2P_WEIGHT_RTT_PENALTY", "0.04") or "0.04"),
+            "error_penalty": float(os.getenv("ARGOS_P2P_WEIGHT_ERROR_PENALTY", "50") or "50"),
+            "stale_penalty": float(os.getenv("ARGOS_P2P_WEIGHT_STALE_PENALTY", "0.166") or "0.166"),
+        }
+        self.failover_limit = max(1, min(int(os.getenv("ARGOS_P2P_FAILOVER_LIMIT", "3") or "3"), 5))
+
+    def update_weight(self, name: str, value: float) -> tuple[bool, str]:
+        key = (name or "").strip().lower()
+        if key not in self.weights:
+            return False, f"Неизвестный вес: {key}"
+        try:
+            self.weights[key] = float(value)
+            return True, f"✅ Вес '{key}' = {self.weights[key]:.3f}"
+        except Exception:
+            return False, "Некорректное значение веса"
+
+    def set_failover_limit(self, value: int) -> str:
+        self.failover_limit = max(1, min(int(value), 5))
+        return f"✅ P2P failover limit = {self.failover_limit}"
+
+    def tuning_report(self) -> str:
+        lines = ["⚙️ P2P ROUTING TUNING:"]
+        lines.append(f"  failover_limit: {self.failover_limit}")
+        for key in sorted(self.weights.keys()):
+            lines.append(f"  {key}: {self.weights[key]:.3f}")
+        return "\n".join(lines)
 
     def _infer_task_type(self, prompt: str) -> str:
         low = (prompt or "").lower()
@@ -266,21 +300,27 @@ class TaskDistributor:
         error_rate = float(node.get("error_rate", 0.0) or 0.0)
         freshness_sec = max(0.0, time.time() - float(node.get("state_ts", node.get("last_seen", time.time()))))
 
-        queue_penalty = min(queue_depth * 2.5, 35.0)
-        inflight_penalty = min(inflight * 1.5, 18.0)
-        rtt_penalty = min(rtt_ms / 25.0, 18.0)
-        error_penalty = min(error_rate * 50.0, 40.0)
-        stale_penalty = min(freshness_sec / 6.0, 15.0)
+        queue_penalty = min(queue_depth * self.weights["queue_penalty"], 35.0)
+        inflight_penalty = min(inflight * self.weights["inflight_penalty"], 18.0)
+        rtt_penalty = min(rtt_ms * self.weights["rtt_penalty"], 18.0)
+        error_penalty = min(error_rate * self.weights["error_penalty"], 40.0)
+        stale_penalty = min(freshness_sec * self.weights["stale_penalty"], 15.0)
         dynamic_penalty = queue_penalty + inflight_penalty + rtt_penalty + error_penalty + stale_penalty
 
         if task_type == "heavy":
             role_bonus = 22.0 if role == "server" else (8.0 if role == "worker" else -25.0)
-            return (auth * 0.55) + (power * 0.45) + role_bonus + min(ram_gb, 64.0) * 0.4 - dynamic_penalty
+            return (
+                (auth * self.weights["heavy_auth"]) +
+                (power * self.weights["heavy_power"]) +
+                role_bonus +
+                min(ram_gb, 64.0) * self.weights["heavy_ram"] -
+                dynamic_penalty
+            )
 
         if task_type == "old":
             return float(node.get("age_days", 0.0)) * 10.0 + auth - (dynamic_penalty * 0.7)
 
-        return (auth * 0.5) + (power * 0.5) - dynamic_penalty
+        return (auth * self.weights["auth"]) + (power * self.weights["power"]) - dynamic_penalty
 
     def pick_node_for(self, task_type: str = "ai") -> dict:
         """
@@ -369,7 +409,7 @@ class TaskDistributor:
     def route_task(self, prompt: str, core=None, task_type: str = None) -> str:
         """Направляет AI-запрос на оптимальную ноду с failover."""
         resolved_type = task_type or self._infer_task_type(prompt)
-        candidates = self.top_candidates(resolved_type, limit=3)
+        candidates = self.top_candidates(resolved_type, limit=self.failover_limit)
         failures = []
 
         for node in candidates:
@@ -665,6 +705,52 @@ class ArgosBridge:
     # ── ПУБЛИЧНЫЙ API ─────────────────────────────────────
     def network_status(self) -> str:
         return self.registry.report(self.profile.to_dict())
+
+    def routing_tuning_report(self) -> str:
+        return self.distributor.tuning_report()
+
+    def set_routing_weight(self, name: str, value: float) -> str:
+        ok, message = self.distributor.update_weight(name, value)
+        return message if ok else f"❌ {message}"
+
+    def set_failover_limit(self, value: int) -> str:
+        try:
+            return self.distributor.set_failover_limit(int(value))
+        except Exception:
+            return "❌ Формат: p2p failover [1..5]"
+
+    def network_telemetry(self) -> str:
+        me = self.profile.to_dict()
+        me.update(self._runtime_status())
+        nodes = self.registry.all()
+        lines = [
+            "📊 P2P TELEMETRY",
+            f"  Local: {me.get('hostname')} role={me.get('role')} power={me.get('power',{}).get('index',0)}",
+            f"  Local runtime: inflight={me.get('inflight',0)} p95={me.get('p95_ms',0)}ms error_rate={me.get('error_rate',0)}",
+            f"  Known remote nodes: {len(nodes)}",
+            "",
+            "  Scores (ai/heavy):",
+        ]
+
+        all_nodes = [me] + nodes
+        ranked = sorted(
+            all_nodes,
+            key=lambda n: self.distributor._score_node(n, "ai"),
+            reverse=True
+        )
+        for node in ranked[:8]:
+            ai_score = self.distributor._score_node(node, "ai")
+            heavy_score = self.distributor._score_node(node, "heavy")
+            lines.append(
+                f"  - {node.get('hostname','?')}[{node.get('role','worker')}] "
+                f"ai={ai_score:.1f} heavy={heavy_score:.1f} "
+                f"rtt={float(node.get('rtt_ms',0.0) or 0.0):.1f}ms "
+                f"inflight={int(node.get('inflight',0) or 0)} "
+                f"err={float(node.get('error_rate',0.0) or 0.0):.3f}"
+            )
+        lines.append("")
+        lines.append(self.distributor.tuning_report())
+        return "\n".join(lines)
 
     def route_query(self, prompt: str, task_type: str = None) -> str:
         """Отправляет AI-запрос на наиболее мощную ноду в сети."""
