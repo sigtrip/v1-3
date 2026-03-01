@@ -7,11 +7,41 @@ import json
 import os
 import time
 import threading
+import ast
 from src.argos_logger import get_logger
 from src.connectivity.event_bus import bus, EventType
 
 log = get_logger("argos.smart")
 SYSTEMS_DB = "config/smart_systems.json"
+
+
+def _safe_eval_condition(expr: str, variables: dict) -> bool:
+    """Безопасная оценка простых условий правил без доступа к builtins."""
+    tree = ast.parse(expr, mode="eval")
+    allowed_nodes = (
+        ast.Expression,
+        ast.BoolOp,
+        ast.UnaryOp,
+        ast.Compare,
+        ast.Name,
+        ast.Load,
+        ast.Constant,
+        ast.And,
+        ast.Or,
+        ast.Not,
+        ast.Eq,
+        ast.NotEq,
+        ast.Lt,
+        ast.LtE,
+        ast.Gt,
+        ast.GtE,
+    )
+
+    for node in ast.walk(tree):
+        if not isinstance(node, allowed_nodes):
+            raise ValueError(f"Недопустимый элемент в условии: {type(node).__name__}")
+
+    return bool(eval(compile(tree, "<smart-rule>", "eval"), {"__builtins__": {}}, variables))
 
 
 # ── ПАРАМЕТРЫ КАЖДОЙ СИСТЕМЫ ──────────────────────────────
@@ -156,7 +186,7 @@ class SmartSystem:
                 for s, v in self.sensors.items():
                     val = f'"{v}"' if isinstance(v, str) else str(v)
                     expr = expr.replace(s, val)
-                if eval(expr, {"__builtins__": {}}, {"time": time.strftime("%H:%M")}):
+                if _safe_eval_condition(expr, {"time": time.strftime("%H:%M")}):
                     action  = rule["then"]
                     msg     = rule.get("msg", action)
                     act, st = action.split(":") if ":" in action else (action, "on")
@@ -164,10 +194,12 @@ class SmartSystem:
                     bus.publish(EventType.SMART_RULE_FIRE,
                                 {"rule": cond, "action": action, "msg": msg}, "smart")
                     for cb in self._callbacks:
-                        try: cb(msg)
-                        except Exception: pass
-            except Exception:
-                pass
+                        try:
+                            cb(msg)
+                        except Exception as e:
+                            log.warning("Smart callback error (%s): %s", self.id, e)
+            except Exception as e:
+                log.warning("Правило '%s' в системе '%s' пропущено: %s", rule.get("if", "?"), self.id, e)
 
     def status(self) -> str:
         lines = [f"{self.icon} {self.name} [{self.id}]:"]

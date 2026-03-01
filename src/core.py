@@ -382,7 +382,8 @@ class ArgosCore:
             try:
                 self._tts_engine.say(text[:300])
                 self._tts_engine.runAndWait()
-            except Exception: pass
+            except Exception as e:
+                log.warning("TTS runtime error: %s", e)
         threading.Thread(target=_speak, daemon=True).start()
 
     def listen(self) -> str:

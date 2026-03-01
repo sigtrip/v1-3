@@ -297,7 +297,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             b = psutil.sensors_battery()
             if b: bat = f"{b.percent:.0f}% {'🔌' if b.power_plugged else '🔋'}"
-        except Exception: pass
+        except Exception as e:
+          log.debug("Battery metrics unavailable: %s", e)
 
         # P2P
         p2p_nodes = 0
@@ -334,7 +335,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 with open(log_path, encoding="utf-8") as f:
                     all_lines = f.readlines()
                 lines = "".join(all_lines[-50:])  # Последние 50 строк
-        except Exception: pass
+        except Exception as e:
+          log.warning("Dashboard log read error: %s", e)
         return json.dumps({"lines": lines}, ensure_ascii=False).encode()
 
 

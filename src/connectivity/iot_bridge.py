@@ -233,8 +233,10 @@ class LoRaAdapter:
         for pair in data.split(","):
             if ":" in pair:
                 k, v = pair.split(":", 1)
-                try: v = float(v)
-                except: pass
+                try:
+                    v = float(v)
+                except ValueError:
+                    pass
                 dev.update(k.strip(), v)
         log.debug("LoRa пакет от %s: %s", addr, data[:50])
 
