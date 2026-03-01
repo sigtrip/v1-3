@@ -15,6 +15,17 @@ import importlib
 SKILLS_DIR = "src/skills"
 TESTS_GEN_DIR = "tests/generated"
 
+HARD_SKILL_SYSTEM_PROMPT = (
+	"Ты генератор Python-кода для production. "
+	"Запрещено возвращать пояснения, markdown, блоки ``` и любой текст вне Python-кода. "
+	"Выводи только валидный, запускаемый Python-модуль."
+)
+
+HARD_TEST_SYSTEM_PROMPT = (
+	"Ты генератор unit-тестов Python для production. "
+	"Выводи только валидный код unittest без markdown и без пояснений."
+)
+
 
 class ArgosEvolution:
 	def __init__(self, ai_core=None):
@@ -31,9 +42,41 @@ class ArgosEvolution:
 	def _extract_code_only(self, text: str) -> str:
 		payload = (text or "").strip()
 		if payload.startswith("```"):
-			payload = payload.strip("`")
-			payload = payload.replace("python", "", 1).strip()
+			payload = payload.replace("```python", "").replace("```", "").strip()
 		return payload
+
+	def _ensure_executable_skill(self, code: str) -> tuple[bool, str]:
+		text = (code or "").strip()
+		if not text:
+			return False, "пустой код"
+		if "```" in text:
+			return False, "обнаружен markdown fence"
+
+		try:
+			tree = ast.parse(text)
+		except SyntaxError as e:
+			return False, f"syntax error: {e}"
+
+		has_class = any(isinstance(n, ast.ClassDef) for n in tree.body)
+		if not has_class:
+			return False, "в модуле должен быть минимум 1 класс"
+
+		risky_calls = {"eval", "exec", "compile", "__import__"}
+		for node in ast.walk(tree):
+			if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+				if node.func.id in risky_calls:
+					return False, f"обнаружен рискованный вызов: {node.func.id}()"
+		return True, "ok"
+
+	def _repair_to_code(self, broken_payload: str, description: str = "") -> str:
+		prompt = (
+			"Исправь ответ и верни только валидный Python-код модуля. "
+			"Удали комментарии-пояснения и markdown.\n"
+			f"Описание навыка: {description}\n"
+			f"Текущий ответ:\n{broken_payload}"
+		)
+		ans = self._ask_ai(HARD_SKILL_SYSTEM_PROMPT, prompt)
+		return self._extract_code_only(ans or "")
 
 	def _extract_json(self, text: str) -> dict | None:
 		candidate = (text or "").strip()
@@ -92,7 +135,7 @@ class ArgosEvolution:
 			f"Описание навыка: {description}\n"
 			f"Код навыка:\n{code}"
 		)
-		answer = self._ask_ai("Ты инженер по тестированию Python.", prompt)
+		answer = self._ask_ai(HARD_TEST_SYSTEM_PROMPT, prompt)
 		test_code = self._extract_code_only(answer or "")
 		if not test_code:
 			return self._fallback_test_template()
@@ -162,10 +205,9 @@ class ArgosEvolution:
 		"""Проверяет skill+test и записывает навык только после review и passing tests."""
 		filename = self._sanitize_filename(filename)
 		code = self._extract_code_only(code)
-		try:
-			ast.parse(code)
-		except SyntaxError as e:
-			return f"❌ Синтаксическая ошибка: {e}"
+		ok_code, reason = self._ensure_executable_skill(code)
+		if not ok_code:
+			return f"❌ Навык отклонён: {reason}"
 
 		generated_test = test_code or self._generate_unit_test(filename, code, description)
 		generated_test = self._extract_code_only(generated_test)
@@ -215,16 +257,24 @@ class ArgosEvolution:
 			f"- Один класс с __init__ и методами\n"
 			f"- Только стандартные библиотеки + requests + bs4\n"
 			f"- Комментарии на русском\n"
-			f"- Вернуть только код, без markdown\n"
+			f"- Вернуть только код, без markdown и без пояснений\n"
 			f"Имя файла: угадай из описания (snake_case, без .py)"
 		)
 
-		answer = self._ask_ai("Ты Python-программист.", prompt)
+		answer = self._ask_ai(HARD_SKILL_SYSTEM_PROMPT, prompt)
 
 		if not answer:
 			return "❌ ИИ не ответил. Попробуй позже."
 
 		answer = self._extract_code_only(answer)
+		ok_code, reason = self._ensure_executable_skill(answer)
+		if not ok_code:
+			repaired = self._repair_to_code(answer, description)
+			ok_code, reason = self._ensure_executable_skill(repaired)
+			if ok_code:
+				answer = repaired
+			else:
+				return f"❌ ИИ выдал неисполняемый код: {reason}"
 
 		lines = answer.strip().splitlines()
 		filename = "new_skill"

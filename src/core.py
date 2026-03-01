@@ -168,6 +168,7 @@ class ArgosCore:
         self.module_loader = None
         self.ha = None
         self.tool_calling = None
+        self.git_ops = None
         self.gemini_rpm_limit = 15
         self._gemini_limiter = _SlidingWindowRateLimiter(max_calls=self.gemini_rpm_limit, window_seconds=60)
         self._last_gemini_rate_limited = False
@@ -175,10 +176,15 @@ class ArgosCore:
         self._gigachat_token_expires_at = 0.0
         self.auto_collab_enabled = os.getenv("ARGOS_AUTO_COLLAB", "on").strip().lower() not in {"0", "false", "off", "no", "нет"}
         self.auto_collab_max_models = max(2, min(int(os.getenv("ARGOS_AUTO_COLLAB_MAX_MODELS", "4") or "4"), 4))
+        self.homeostasis = None
+        self.curiosity = None
+        self._homeostasis_block_heavy = False
 
         self._init_voice()
         self._setup_ai()
         self._init_memory()
+        self._init_homeostasis()
+        self._init_curiosity()
         self._init_scheduler()
         self._init_alerts()
         self._init_vision()
@@ -190,6 +196,7 @@ class ArgosCore:
         self._init_home_assistant()
         self._init_modules()
         self._init_tool_calling()
+        self._init_git_ops()
         log.info("ArgosCore FINAL v2.0 инициализирован.")
 
     # ═══════════════════════════════════════════════════════
@@ -212,6 +219,26 @@ class ArgosCore:
             log.info("Планировщик: OK")
         except Exception as e:
             log.warning("Планировщик: %s", e)
+
+    def _init_homeostasis(self):
+        try:
+            from src.hardware_guard import HardwareHomeostasisGuard
+            self.homeostasis = HardwareHomeostasisGuard(core=self)
+            if os.getenv("ARGOS_HOMEOSTASIS", "on").strip().lower() not in {"0", "off", "false", "no", "нет"}:
+                self.homeostasis.start()
+            log.info("Homeostasis: OK")
+        except Exception as e:
+            log.warning("Homeostasis: %s", e)
+
+    def _init_curiosity(self):
+        try:
+            from src.curiosity import ArgosCuriosity
+            self.curiosity = ArgosCuriosity(core=self)
+            if os.getenv("ARGOS_CURIOSITY", "on").strip().lower() not in {"0", "off", "false", "no", "нет"}:
+                self.curiosity.start()
+            log.info("Curiosity: OK")
+        except Exception as e:
+            log.warning("Curiosity: %s", e)
 
     def _init_alerts(self):
         try:
@@ -310,6 +337,14 @@ class ArgosCore:
             log.info("Tool Calling: OK")
         except Exception as e:
             log.warning("Tool Calling: %s", e)
+
+    def _init_git_ops(self):
+        try:
+            from src.git_ops import ArgosGitOps
+            self.git_ops = ArgosGitOps(repo_path=".")
+            log.info("GitOps: OK")
+        except Exception as e:
+            log.warning("GitOps: %s", e)
 
     def _on_alert(self, msg: str):
         log.warning("ALERT: %s", msg)
@@ -759,6 +794,10 @@ class ArgosCore:
     # ═══════════════════════════════════════════════════════
     def process_logic(self, user_text: str, admin, flasher) -> dict:
         q_data = self.quantum.generate_state()
+        if self.context:
+            self.context.set_quantum_state(q_data["name"])
+        if self.curiosity:
+            self.curiosity.touch_activity(user_text)
         t = user_text.lower()
 
         # Проверяем напоминания
@@ -892,6 +931,51 @@ class ArgosCore:
     # ═══════════════════════════════════════════════════════
     def execute_intent(self, text: str, admin, flasher) -> str | None:
         t = text.lower()
+
+        if self._homeostasis_block_heavy and any(k in t for k in [
+            "посмотри на экран", "что на экране", "посмотри в камеру", "анализ фото",
+            "проанализируй изображение", "компиля", "compile", "создай прошивку", "прошей шлюз", "прошей gateway"
+        ]):
+            return "🔥 Гомеостаз: тяжёлая операция временно заблокирована (режим Protective/Unstable)."
+
+        if self.homeostasis and any(k in t for k in ["гомеостаз статус", "статус гомеостаза", "homeostasis status"]):
+            return self.homeostasis.status()
+        if self.homeostasis and any(k in t for k in ["гомеостаз вкл", "включи гомеостаз", "homeostasis on"]):
+            return self.homeostasis.start()
+        if self.homeostasis and any(k in t for k in ["гомеостаз выкл", "выключи гомеостаз", "homeostasis off"]):
+            return self.homeostasis.stop()
+
+        if self.curiosity and any(k in t for k in ["любопытство статус", "статус любопытства", "curiosity status"]):
+            return self.curiosity.status()
+        if self.curiosity and any(k in t for k in ["любопытство вкл", "включи любопытство", "curiosity on"]):
+            return self.curiosity.start()
+        if self.curiosity and any(k in t for k in ["любопытство выкл", "выключи любопытство", "curiosity off"]):
+            return self.curiosity.stop()
+        if self.curiosity and any(k in t for k in ["любопытство сейчас", "curiosity now"]):
+            return self.curiosity.ask_now()
+
+        if self.git_ops and any(k in t for k in ["git статус", "гит статус", "git status"]):
+            return self.git_ops.status()
+        if self.git_ops and any(k in t for k in ["git пуш", "гит пуш", "git push"]):
+            return self.git_ops.push()
+        if self.git_ops and any(k in t for k in ["git автокоммит и пуш", "гит автокоммит и пуш", "git auto push", "git commit and push"]):
+            msg = text
+            for marker in ["git автокоммит и пуш", "гит автокоммит и пуш", "git auto push", "git commit and push"]:
+                if marker in msg.lower():
+                    idx = msg.lower().find(marker)
+                    msg = msg[idx + len(marker):].strip()
+                    break
+            if not msg:
+                msg = "chore: argos autonomous update"
+            return self.git_ops.commit_and_push(msg)
+        if self.git_ops and (t.startswith("git коммит ") or t.startswith("гит коммит ") or t.startswith("git commit ")):
+            msg = text
+            for marker in ["git коммит", "гит коммит", "git commit"]:
+                if marker in msg.lower():
+                    idx = msg.lower().find(marker)
+                    msg = msg[idx + len(marker):].strip()
+                    break
+            return self.git_ops.commit(msg)
 
         if hasattr(admin, "set_alert_callback"):
             admin.set_alert_callback(self._on_alert)
@@ -1030,6 +1114,20 @@ class ArgosCore:
             return self.replicator.create_replica()
         if "сканируй порты" in t:
             return f"Порты: {flasher.scan_ports()}"
+        if any(k in t for k in ["найди usb чипы", "usb чипы", "смарт прошивка usb", "smart flasher usb"]):
+            if hasattr(flasher, "detect_usb_chips_report"):
+                return flasher.detect_usb_chips_report()
+            return "❌ Smart Flasher недоступен в текущем flasher-модуле."
+        if any(k in t for k in ["умная прошивка", "smart flash", "смарт прошивка"]):
+            if hasattr(flasher, "smart_flash"):
+                parts = text.split()
+                port = None
+                for p in parts:
+                    if p.startswith("/dev/") or p.upper().startswith("COM"):
+                        port = p
+                        break
+                return flasher.smart_flash(port=port)
+            return "❌ Smart Flasher недоступен в текущем flasher-модуле."
 
         # ── Голос ─────────────────────────────────────────
         if any(k in t for k in ["голос вкл", "включи голос"]):
@@ -1190,7 +1288,8 @@ class ArgosCore:
         if any(k in t for k in ["распредели задачу", "общая мощность"]):
             if self.p2p:
                 q = text.replace("распредели задачу","").replace("общая мощность","").strip()
-                return self.p2p.route_query(q or "Статус сети Аргоса.")
+                route_type = "heavy" if any(k in q.lower() for k in ["vision", "камер", "компиля", "compile", "прошив"]) else None
+                return self.p2p.route_query(q or "Статус сети Аргоса.", task_type=route_type)
             return "P2P не запущен."
 
         # ── DAG ───────────────────────────────────────────
@@ -1503,6 +1602,9 @@ class ArgosCore:
   консоль [команда] · убей процесс [имя]
   репликация · загрузчик · обнови grub
   установи автозапуск · веб-панель
+    гомеостаз статус · гомеостаз вкл/выкл
+    любопытство статус · любопытство вкл/выкл · любопытство сейчас
+        git статус · git коммит [msg] · git пуш · git автокоммит и пуш [msg]
 
 👁️ VISION (нужен Gemini API)
   посмотри на экран · что на экране
@@ -1547,6 +1649,7 @@ class ArgosCore:
   запусти wifi mesh [SSID]
   добавь mesh устройство [id] [протокол] [адрес]
   mesh broadcast [протокол] [команда]
+    найди usb чипы · умная прошивка [порт]
     Протоколы: BACnet, Modbus RTU/ASCII/TCP, KNX, LonWorks, M-Bus, OPC UA, MQTT
     Сети: Zigbee mesh, LoRa (SX1276), WiFi mesh
 

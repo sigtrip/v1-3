@@ -58,6 +58,7 @@ class NodeProfile:
         self.version    = VERSION
         self.os_type    = platform.system()
         self.hostname   = socket.gethostname()
+        self.role       = self._resolve_role()
 
     def _load_or_create_id(self) -> str:
         path = "config/node_id"
@@ -113,6 +114,18 @@ class NodeProfile:
         power = self.get_power()["index"]
         return int(power * math.log(age + 2))
 
+    def _resolve_role(self) -> str:
+        env_role = (os.getenv("ARGOS_NODE_ROLE", "") or "").strip().lower()
+        if env_role in {"gateway", "worker", "server"}:
+            return env_role
+
+        power = self.get_power()
+        if power.get("cpu_cores", 1) <= 2 or power.get("ram_gb", 1.0) < 2.5:
+            return "gateway"
+        if power.get("cpu_cores", 1) >= 8 and power.get("ram_gb", 0.0) >= 16:
+            return "server"
+        return "worker"
+
     def get_skills(self) -> list:
         try:
             return [f[:-3] for f in os.listdir("src/skills")
@@ -130,6 +143,7 @@ class NodeProfile:
             "version":   self.version,
             "os":        self.os_type,
             "hostname":  self.hostname,
+            "role":      self.role,
             "power":     power,
             "skills":    self.get_skills(),
         }
@@ -224,9 +238,35 @@ class NodeRegistry:
 class TaskDistributor:
     """Выбирает лучшую ноду для выполнения задачи."""
 
+    HEAVY_KEYWORDS = (
+        "vision", "камер", "изображ", "скрин", "compile", "компиля",
+        "build", "прошив", "firmware", "video", "render", "train"
+    )
+
     def __init__(self, registry: NodeRegistry, self_profile: NodeProfile):
         self.registry = registry
         self.me = self_profile
+
+    def _infer_task_type(self, prompt: str) -> str:
+        low = (prompt or "").lower()
+        if any(k in low for k in self.HEAVY_KEYWORDS):
+            return "heavy"
+        return "ai"
+
+    def _score_node(self, node: dict, task_type: str) -> float:
+        power = float(node.get("power", {}).get("index", 0.0))
+        auth = float(node.get("authority", 0.0))
+        ram_gb = float(node.get("power", {}).get("ram_gb", 0.0))
+        role = str(node.get("role", "worker"))
+
+        if task_type == "heavy":
+            role_bonus = 22.0 if role == "server" else (8.0 if role == "worker" else -25.0)
+            return (auth * 0.55) + (power * 0.45) + role_bonus + min(ram_gb, 64.0) * 0.4
+
+        if task_type == "old":
+            return float(node.get("age_days", 0.0)) * 10.0 + auth
+
+        return (auth * 0.5) + (power * 0.5)
 
     def pick_node_for(self, task_type: str = "ai") -> dict:
         """
@@ -239,19 +279,30 @@ class TaskDistributor:
         me    = self.me.to_dict()
         all_  = [me] + nodes
 
-        if task_type == "ai":
-            best = max(all_, key=lambda n: n.get("power", {}).get("index", 0))
+        if task_type == "heavy":
+            candidates = [
+                n for n in all_
+                if n.get("role", "worker") != "gateway"
+                and n.get("power", {}).get("index", 0) >= 45
+                and n.get("power", {}).get("ram_gb", 0) >= 4
+            ]
+            if not candidates:
+                candidates = all_
+            best = max(candidates, key=lambda n: self._score_node(n, "heavy"))
+        elif task_type == "ai":
+            best = max(all_, key=lambda n: self._score_node(n, "ai"))
         elif task_type == "old":
             best = max(all_, key=lambda n: n.get("age_days", 0))
         else:
-            best = max(all_, key=lambda n: n.get("authority", 0))
+            best = max(all_, key=lambda n: self._score_node(n, task_type))
 
         is_me = best["node_id"] == me["node_id"]
-        return {"node": best, "is_local": is_me}
+        return {"node": best, "is_local": is_me, "task_type": task_type}
 
-    def route_task(self, prompt: str, core=None) -> str:
+    def route_task(self, prompt: str, core=None, task_type: str = None) -> str:
         """Направляет AI-запрос на лучшую ноду. Если локальная — выполняет сам."""
-        decision = self.pick_node_for("ai")
+        resolved_type = task_type or self._infer_task_type(prompt)
+        decision = self.pick_node_for(resolved_type)
         node = decision["node"]
 
         if decision["is_local"]:
@@ -259,20 +310,26 @@ class TaskDistributor:
                 res = core._ask_gemini("Ты Аргос.", prompt) or \
                       core._ask_ollama("Ты Аргос.", prompt) or \
                       "Нет ответа от ИИ."
-                return f"[LOCAL] {res}"
+                return f"[LOCAL:{resolved_type}] {res}"
             return "[LOCAL] Ядро не подключено."
 
-        # Запрос к удалённой ноде
+        # Запрос к удалённой ноде через TCP JSON протокол
         addr = node.get("addr", "")
         try:
-            resp = requests.post(
-                f"http://{addr}:{P2P_PORT}/query",
-                json={"prompt": prompt, "secret": NETWORK_SECRET},
-                timeout=20,
-            )
-            if resp.ok:
-                return f"[{node['hostname']}] {resp.json().get('answer', 'Нет ответа')}"
-            return f"[REMOTE ERROR] {resp.status_code}"
+            sock = socket.socket()
+            sock.settimeout(20)
+            sock.connect((addr, P2P_PORT))
+            sock.sendall(json.dumps({
+                "action": "query",
+                "prompt": prompt,
+                "task_type": resolved_type,
+                "secret": NETWORK_SECRET,
+            }).encode())
+            raw = sock.recv(65536)
+            sock.close()
+            data = json.loads(raw.decode() or "{}")
+            answer = data.get("answer", "Нет ответа")
+            return f"[{node['hostname']}:{resolved_type}] {answer}"
         except Exception as e:
             return f"[ROUTE FAIL] {e}"
 
@@ -452,9 +509,9 @@ class ArgosBridge:
     def network_status(self) -> str:
         return self.registry.report(self.profile.to_dict())
 
-    def route_query(self, prompt: str) -> str:
+    def route_query(self, prompt: str, task_type: str = None) -> str:
         """Отправляет AI-запрос на наиболее мощную ноду в сети."""
-        return self.distributor.route_task(prompt, self.core)
+        return self.distributor.route_task(prompt, self.core, task_type=task_type)
 
     def sync_skills_from_network(self) -> str:
         """Загружает навыки от всех нод в сети."""

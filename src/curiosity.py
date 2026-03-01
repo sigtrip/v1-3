@@ -7,6 +7,7 @@ curiosity.py — Автономное любопытство Аргоса
 import random
 import time
 import datetime
+import os
 import threading
 from src.argos_logger import get_logger
 
@@ -99,6 +100,12 @@ class ArgosCuriosity:
         self.max_interval = 25 * 60
         self._last_asked  = 0
         self._asked_count = 0
+        self.idle_threshold_sec = max(120, int(os.getenv("ARGOS_CURIOSITY_IDLE_SEC", "600") or "600"))
+        self.research_interval_sec = max(180, int(os.getenv("ARGOS_CURIOSITY_RESEARCH_SEC", "900") or "900"))
+        self._last_activity_ts = time.time()
+        self._last_research_ts = 0.0
+        self._research_count = 0
+        self._next_voice_ask_ts = 0.0
 
     def start(self) -> str:
         if self._running:
@@ -115,15 +122,95 @@ class ArgosCuriosity:
 
     def _loop(self):
         # Первый вопрос — через 3-7 минут после запуска
-        time.sleep(random.randint(3 * 60, 7 * 60))
-
+        self._next_voice_ask_ts = time.time() + random.randint(3 * 60, 7 * 60)
         while self._running:
-            if self.core.voice_on:
+            now = time.time()
+            if self.core.voice_on and now >= self._next_voice_ask_ts:
                 self._ask_question()
-            # Следующий вопрос — случайный интервал
-            interval = random.randint(self.min_interval, self.max_interval)
-            log.debug("Следующий вопрос через %d мин", interval // 60)
-            time.sleep(interval)
+                interval = random.randint(self.min_interval, self.max_interval)
+                self._next_voice_ask_ts = time.time() + interval
+                log.debug("Следующий вопрос через %d мин", interval // 60)
+
+            if self._is_idle(now) and (now - self._last_research_ts >= self.research_interval_sec):
+                self._run_research_cycle()
+
+            time.sleep(10)
+
+    def touch_activity(self, user_text: str = ""):
+        self._last_activity_ts = time.time()
+
+    def _is_idle(self, now: float) -> bool:
+        return (now - self._last_activity_ts) >= self.idle_threshold_sec
+
+    def _pick_memory_fact(self):
+        if not self.core.memory:
+            return None
+        try:
+            facts = self.core.memory.get_all_facts()
+            if not facts:
+                return None
+            sample = random.choice(facts[:40])
+            cat, key, val, _ = sample
+            return {"category": cat, "key": key, "value": val}
+        except Exception as e:
+            log.warning("Curiosity memory pick: %s", e)
+            return None
+
+    def _synthesize_insight(self, fact: dict, web_data: str) -> str:
+        if not self.core:
+            return ""
+        key = fact.get("key", "факт")
+        value = fact.get("value", "")
+        prompt = (
+            "Ты модуль автономного развития Аргоса.\n"
+            "Задача: выдай 3 кратких прикладных инсайта на русском.\n"
+            "Формат строго:\n"
+            "1) ...\n2) ...\n3) ...\n"
+            "Без вступлений и без markdown.\n\n"
+            f"Факт из памяти: {key} = {value}\n"
+            f"Свежие данные из сети: {web_data}"
+        )
+        try:
+            return (
+                self.core._ask_gemini("Ты системный исследователь.", prompt)
+                or self.core._ask_ollama("Ты системный исследователь.", prompt)
+                or ""
+            ).strip()
+        except Exception as e:
+            log.warning("Curiosity synthesis: %s", e)
+            return ""
+
+    def _run_research_cycle(self):
+        fact = self._pick_memory_fact()
+        if not fact:
+            return
+
+        try:
+            query = f"{fact['key']} {fact['value']} тренды 2026"
+            web_data = self.core.scrapper.quick_search(query)
+            insight = self._synthesize_insight(fact, web_data)
+            if not insight:
+                return
+
+            stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+            title = f"insight:{fact['key']}:{stamp}"
+
+            if self.core.memory:
+                self.core.memory.add_note(title, insight)
+                self.core.memory.remember(
+                    key=f"insight_{fact['key']}_{int(time.time())}",
+                    value=insight[:800],
+                    category="insight",
+                )
+
+            if self.core.db:
+                self.core.db.log_chat("argos", f"[Curiosity] {title}\n{insight}", "Curiosity")
+
+            self._last_research_ts = time.time()
+            self._research_count += 1
+            log.info("Curiosity insight #%d: %s", self._research_count, title)
+        except Exception as e:
+            log.warning("Curiosity cycle: %s", e)
 
     def _ask_question(self):
         question = self._pick_question()
@@ -207,10 +294,13 @@ class ArgosCuriosity:
         if self._last_asked:
             mins = int((time.time() - self._last_asked) / 60)
             last = f"  Последний вопрос: {mins} мин назад\n"
+        idle_for = int((time.time() - self._last_activity_ts) / 60)
         return (
             f"👁️ АВТОНОМНОЕ ЛЮБОПЫТСТВО:\n"
             f"  Статус:   {'🟢 Активно' if self._running else '🔴 Отключено'}\n"
             f"  Задано вопросов: {self._asked_count}\n"
+            f"  Инсайтов создано: {self._research_count}\n"
+            f"  Idle: {idle_for} мин | Порог: {self.idle_threshold_sec//60} мин\n"
             f"{last}"
             f"  Интервал: {self.min_interval//60}–{self.max_interval//60} мин"
         )
