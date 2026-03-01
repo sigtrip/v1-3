@@ -198,6 +198,51 @@ ARGOS_P2P_FAILOVER_LIMIT=3
 - В текущей версии для `data/memory.db` включаются `WAL`, `busy_timeout=5000` и `synchronous=NORMAL`.
 - Это снижает конкуренцию блокировок при высоком количестве параллельных операций записи.
 
+### Production tuning presets
+
+Ниже готовые профили для разных нагрузок. Выбирай один и копируй в `.env`.
+
+#### Low load (1–2 ноды, домашний контур)
+```env
+ARGOS_TASK_WORKERS=2
+ARGOS_TASK_RETRIES=1
+ARGOS_TASK_DEADLINE_SEC=120
+ARGOS_TASK_BACKOFF_MS=500
+ARGOS_TASK_RPS_SYSTEM=8
+ARGOS_TASK_RPS_IOT=6
+ARGOS_TASK_RPS_AI=3
+ARGOS_TASK_RPS_HEAVY=1
+ARGOS_P2P_FAILOVER_LIMIT=2
+```
+
+#### Medium load (3–8 нод, смешанный IoT+AI)
+```env
+ARGOS_TASK_WORKERS=4
+ARGOS_TASK_RETRIES=2
+ARGOS_TASK_DEADLINE_SEC=180
+ARGOS_TASK_BACKOFF_MS=600
+ARGOS_TASK_RPS_SYSTEM=12
+ARGOS_TASK_RPS_IOT=8
+ARGOS_TASK_RPS_AI=5
+ARGOS_TASK_RPS_HEAVY=2
+ARGOS_P2P_FAILOVER_LIMIT=3
+```
+
+#### High load (9+ нод, тяжёлые пайплайны)
+```env
+ARGOS_TASK_WORKERS=8
+ARGOS_TASK_RETRIES=3
+ARGOS_TASK_DEADLINE_SEC=240
+ARGOS_TASK_BACKOFF_MS=700
+ARGOS_TASK_RPS_SYSTEM=16
+ARGOS_TASK_RPS_IOT=12
+ARGOS_TASK_RPS_AI=8
+ARGOS_TASK_RPS_HEAVY=3
+ARGOS_P2P_FAILOVER_LIMIT=4
+```
+
+Совет: при росте `error_rate` и `p95` в `p2p телеметрия` сначала уменьши `ARGOS_TASK_RPS_HEAVY` и `ARGOS_P2P_FAILOVER_LIMIT`, затем постепенно поднимай обратно.
+
 ### 3. Первый запуск
 
 ```bash
