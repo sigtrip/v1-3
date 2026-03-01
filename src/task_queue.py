@@ -64,6 +64,7 @@ class TaskQueueManager:
         self._failed = 0
         self._retried = 0
         self._expired = 0
+        self._offloaded = 0
         self._durations_ms: deque[float] = deque(maxlen=300)
         self._results: deque[dict] = deque(maxlen=100)
         self._class_dispatch_ts: dict[str, deque[float]] = {
@@ -84,10 +85,22 @@ class TaskQueueManager:
         env_workers = int(os.getenv("ARGOS_TASK_WORKERS", str(worker_count)) or str(worker_count))
         self.worker_count = max(1, min(env_workers, 16))
 
+        self._heavy_preemptive_guard: Callable[[TaskEnvelope], bool] | None = None
+        self._heavy_failover_runner: Callable[[TaskEnvelope], tuple[bool, str]] | None = None
+
     def register_runner(self, kind: str, runner: Callable[[TaskEnvelope], Any]):
         if not kind or not callable(runner):
             return
         self._runners[kind] = runner
+
+    def set_heavy_failover(self,
+                           guard: Callable[[TaskEnvelope], bool] | None,
+                           runner: Callable[[TaskEnvelope], tuple[bool, str]] | None) -> str:
+        self._heavy_preemptive_guard = guard if callable(guard) else None
+        self._heavy_failover_runner = runner if callable(runner) else None
+        if self._heavy_preemptive_guard and self._heavy_failover_runner:
+            return "✅ TaskQueue heavy failover подключён."
+        return "ℹ️ TaskQueue heavy failover отключён."
 
     def start(self) -> str:
         if self._running:
@@ -200,6 +213,33 @@ class TaskQueueManager:
             ok = True
             output = ""
             try:
+                if task.task_class == "heavy":
+                    offloaded = self._try_preemptive_offload(task)
+                    if offloaded is not None:
+                        ok, output = offloaded
+                        duration_ms = (time.time() - started) * 1000.0
+                        self._durations_ms.append(duration_ms)
+                        Metrics.observe("taskqueue.duration_ms", duration_ms, tags={"kind": task.kind, "class": task.task_class})
+                        if ok:
+                            self._processed += 1
+                            self._offloaded += 1
+                            Metrics.inc("taskqueue.offloaded", tags={"kind": task.kind, "class": task.task_class})
+                        else:
+                            self._failed += 1
+                            Metrics.inc("taskqueue.failed", tags={"kind": task.kind, "class": task.task_class})
+                        self._results.appendleft({
+                            "id": task.task_id,
+                            "kind": task.kind,
+                            "class": task.task_class,
+                            "ok": ok,
+                            "ms": round(duration_ms, 1),
+                            "attempt": task.attempt,
+                            "output": output[:400],
+                        })
+                        Metrics.gauge("taskqueue.size", float(self._queue.qsize()))
+                        self._queue.task_done()
+                        continue
+
                 runner = self._runners.get(task.kind)
                 if not runner:
                     raise RuntimeError(f"runner not found for kind={task.kind}")
@@ -281,7 +321,7 @@ class TaskQueueManager:
             f"  Queue size: {self._queue.qsize()}\n"
             f"  Classes queued: {class_counts_str}\n"
             f"  Rate limits: {class_rps}\n"
-            f"  Done: {self._processed} | Failed: {self._failed} | Retried: {self._retried} | Expired: {self._expired}\n"
+            f"  Done: {self._processed} | Offloaded: {self._offloaded} | Failed: {self._failed} | Retried: {self._retried} | Expired: {self._expired}\n"
             f"  Avg duration: {avg_ms:.1f} ms"
         )
 
@@ -339,3 +379,30 @@ class TaskQueueManager:
             for item in list(self._queue.queue):
                 counts[item.task_class] = counts.get(item.task_class, 0) + 1
         return counts
+
+    def _try_preemptive_offload(self, task: TaskEnvelope) -> tuple[bool, str] | None:
+        guard = self._heavy_preemptive_guard
+        runner = self._heavy_failover_runner
+        if not guard or not runner:
+            return None
+        try:
+            should_offload = bool(guard(task))
+        except Exception as e:
+            log.warning("TaskQueue preemptive guard error: %s", e)
+            return None
+        if not should_offload:
+            return None
+        try:
+            ok, output = runner(task)
+            if ok:
+                log_event("taskqueue_offloaded", {
+                    "task_id": task.task_id,
+                    "kind": task.kind,
+                    "class": task.task_class,
+                    "attempt": task.attempt,
+                }, source="task_queue")
+                return True, f"[P2P OFFLOAD] {output}"
+            return False, f"[P2P OFFLOAD FAILED] {output}"
+        except Exception as e:
+            log.warning("TaskQueue preemptive offload runner error: %s", e)
+            return None

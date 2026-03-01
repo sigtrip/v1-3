@@ -7,6 +7,7 @@ iot_bridge.py — IoT-мост Аргоса
   инкубатор, аквариум, террариум.
 """
 import json, os, time, threading, socket, struct
+import sqlite3
 from collections import defaultdict
 from src.argos_logger import get_logger
 from src.event_bus import get_bus, Events
@@ -17,6 +18,7 @@ bus = get_bus()
 
 # Реестр всех устройств
 DEVICES_FILE = "data/iot_devices.json"
+IOT_DB_PATH = "data/argos.db"
 
 
 class IoTDevice:
@@ -357,6 +359,212 @@ class MQTTBroker:
             except Exception as e: log.error("MQTT cb: %s", e)
 
 
+class TasmotaDiscoveryBridge:
+    """Zero-config мост для Tasmota discovery через Home Assistant MQTT топики."""
+
+    def __init__(self, registry: IoTRegistry, db_path: str = IOT_DB_PATH):
+        self.registry = registry
+        self.db_path = db_path
+        self._client = None
+        self._connected = False
+        self._lock = threading.Lock()
+        self._discovered_components: dict[str, set[str]] = defaultdict(set)
+        self._ensure_db()
+
+    def _ensure_db(self):
+        try:
+            os.makedirs(os.path.dirname(self.db_path) or "data", exist_ok=True)
+            conn = sqlite3.connect(self.db_path)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS iot_devices (
+                    device_id    TEXT PRIMARY KEY,
+                    name         TEXT,
+                    protocol     TEXT,
+                    dtype        TEXT,
+                    address      TEXT,
+                    source_topic TEXT,
+                    component    TEXT,
+                    payload_json TEXT,
+                    first_seen   REAL,
+                    last_seen    REAL
+                )
+            """)
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            log.warning("TasmotaDiscovery DB init error: %s", e)
+
+    def connect(self, host: str = "localhost", port: int = 1883,
+                topic: str = "homeassistant/#") -> str:
+        try:
+            import paho.mqtt.client as mqtt
+            self._client = mqtt.Client()
+            self._client.on_connect = self._on_connect
+            self._client.on_message = self._on_message
+            self._client.connect(host, port, 60)
+            self._client.subscribe(topic)
+            self._client.loop_start()
+            self._connected = True
+            log.info("Tasmota Discovery bridge: %s:%d %s", host, port, topic)
+            return f"✅ Tasmota Discovery MQTT: {host}:{port} тема {topic}"
+        except ImportError:
+            return "❌ pip install paho-mqtt"
+        except Exception as e:
+            self._connected = False
+            return f"❌ Tasmota Discovery: {e}"
+
+    def _on_connect(self, client, userdata, flags, rc):
+        log.info("Tasmota Discovery MQTT connected rc=%s", rc)
+
+    def _on_message(self, client, userdata, msg):
+        topic = str(msg.topic or "")
+        if not topic.startswith("homeassistant/") or not topic.endswith("/config"):
+            return
+        try:
+            payload = json.loads((msg.payload or b"{}").decode("utf-8", errors="ignore") or "{}")
+        except Exception:
+            return
+        if not isinstance(payload, dict):
+            return
+
+        parsed = self._parse_discovery_topic(topic)
+        if not parsed:
+            return
+        component, unique_id = parsed
+        if not self._looks_like_tasmota(topic, payload):
+            return
+
+        device = payload.get("device", {}) if isinstance(payload.get("device", {}), dict) else {}
+        name = str(payload.get("name") or payload.get("object_id") or unique_id)
+        identifiers = device.get("identifiers") or []
+        if isinstance(identifiers, str):
+            identifiers = [identifiers]
+        base_id = self._normalize_id(unique_id, identifiers)
+        dev_id = f"tasmota_{base_id}"
+
+        dtype = self._infer_dtype(component)
+        address = str(payload.get("state_topic") or payload.get("command_topic") or topic)
+        dev = self.registry.get(dev_id)
+        if not dev:
+            dev = IoTDevice(dev_id, dtype, "mqtt", address, name)
+            self.registry.register(dev)
+        else:
+            dev.name = name or dev.name
+            dev.address = address or dev.address
+            dev.online = True
+            dev.last_seen = time.time()
+            self.registry.save()
+
+        with self._lock:
+            self._discovered_components[dev_id].add(component)
+            known_components = sorted(self._discovered_components[dev_id])
+
+        device_meta = {
+            "component": component,
+            "state_topic": payload.get("state_topic"),
+            "command_topic": payload.get("command_topic"),
+            "manufacturer": device.get("manufacturer") if isinstance(device, dict) else "",
+            "model": device.get("model") if isinstance(device, dict) else "",
+            "sw": payload.get("sw") or (device.get("sw_version") if isinstance(device, dict) else ""),
+            "ha_topic": topic,
+            "components": known_components,
+        }
+        for key, val in device_meta.items():
+            if val is not None and val != "":
+                dev.update(key, val)
+
+        self._upsert_sqlite(dev=dev, component=component, source_topic=topic, payload=payload)
+        log.info("Tasmota discovered: %s component=%s", dev_id, component)
+
+    def _parse_discovery_topic(self, topic: str) -> tuple[str, str] | None:
+        parts = [p for p in topic.split("/") if p]
+        # Формат Home Assistant discovery: homeassistant/<component>/<unique_id>/config
+        if len(parts) < 4:
+            return None
+        component = parts[1]
+        unique_id = parts[-2]
+        if not component or not unique_id:
+            return None
+        return component, unique_id
+
+    def _looks_like_tasmota(self, topic: str, payload: dict) -> bool:
+        low_topic = topic.lower()
+        if "tasmota" in low_topic:
+            return True
+
+        text_fields = []
+        for key in ("state_topic", "command_topic", "name", "uniq_id", "unique_id", "sw"):
+            val = payload.get(key)
+            if isinstance(val, str):
+                text_fields.append(val.lower())
+
+        device = payload.get("device", {}) if isinstance(payload.get("device", {}), dict) else {}
+        for key in ("manufacturer", "model", "name", "sw_version"):
+            val = device.get(key)
+            if isinstance(val, str):
+                text_fields.append(val.lower())
+
+        identifiers = device.get("identifiers") or []
+        if isinstance(identifiers, str):
+            identifiers = [identifiers]
+        text_fields.extend([str(x).lower() for x in identifiers])
+
+        markers = ("tasmota", "sonoff", "tuya")
+        return any(any(m in field for m in markers) for field in text_fields)
+
+    def _normalize_id(self, unique_id: str, identifiers: list[str]) -> str:
+        raw = ""
+        if identifiers:
+            raw = str(identifiers[0])
+        if not raw:
+            raw = str(unique_id or "unknown")
+        return "".join(ch if ch.isalnum() else "_" for ch in raw).strip("_").lower() or "unknown"
+
+    def _infer_dtype(self, component: str) -> str:
+        actuator_components = {"switch", "light", "fan", "cover", "button", "number", "select"}
+        if (component or "").lower() in actuator_components:
+            return "actuator"
+        return "sensor"
+
+    def _upsert_sqlite(self, dev: IoTDevice, component: str, source_topic: str, payload: dict):
+        ts = time.time()
+        try:
+            conn = sqlite3.connect(self.db_path)
+            conn.execute("""
+                INSERT INTO iot_devices (
+                    device_id, name, protocol, dtype, address,
+                    source_topic, component, payload_json, first_seen, last_seen
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(device_id) DO UPDATE SET
+                    name=excluded.name,
+                    protocol=excluded.protocol,
+                    dtype=excluded.dtype,
+                    address=excluded.address,
+                    source_topic=excluded.source_topic,
+                    component=excluded.component,
+                    payload_json=excluded.payload_json,
+                    last_seen=excluded.last_seen
+            """, (
+                dev.id,
+                dev.name,
+                dev.protocol,
+                dev.type,
+                dev.address,
+                source_topic,
+                component,
+                json.dumps(payload, ensure_ascii=False),
+                ts,
+                ts,
+            ))
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            log.warning("TasmotaDiscovery SQLite upsert error: %s", e)
+
+    def status(self) -> str:
+        return "🟢 Tasmota Discovery подключён" if self._connected else "🔴 Tasmota Discovery отключён"
+
+
 # ══════════════════════════════════════════════════════════
 # ГЛАВНЫЙ КЛАСС IoTBridge
 # ══════════════════════════════════════════════════════════
@@ -368,7 +576,28 @@ class IoTBridge:
         self.lora     = LoRaAdapter(self.registry)
         self.mesh     = MeshAdapter(self.registry)
         self.mqtt     = MQTTBroker(self.registry)
+        self.tasmota  = TasmotaDiscoveryBridge(self.registry)
+        self._init_tasmota_discovery()
         log.info("IoTBridge инициализирован. Устройств: %d", len(self.registry.all()))
+
+    def _init_tasmota_discovery(self):
+        enabled = (os.getenv("ARGOS_TASMOTA_DISCOVERY", "on") or "on").strip().lower() not in {
+            "0", "off", "false", "no", "нет"
+        }
+        if not enabled:
+            log.info("Tasmota Discovery: OFF")
+            return
+        host = (os.getenv("ARGOS_TASMOTA_MQTT_HOST", "localhost") or "localhost").strip()
+        try:
+            port = int(os.getenv("ARGOS_TASMOTA_MQTT_PORT", "1883") or "1883")
+        except Exception:
+            port = 1883
+        topic = (os.getenv("ARGOS_TASMOTA_DISCOVERY_TOPIC", "homeassistant/#") or "homeassistant/#").strip()
+        result = self.tasmota.connect(host=host, port=port, topic=topic)
+        if result.startswith("❌"):
+            log.warning("Tasmota Discovery: %s", result)
+        else:
+            log.info("Tasmota Discovery: ON")
 
     def connect_zigbee(self, host="localhost", port=1883) -> str:
         return self.zigbee.connect_mqtt(host, port)
@@ -381,6 +610,9 @@ class IoTBridge:
 
     def connect_mqtt(self, host="localhost", port=1883) -> str:
         return self.mqtt.connect(host, port)
+
+    def connect_tasmota_discovery(self, host="localhost", port=1883, topic="homeassistant/#") -> str:
+        return self.tasmota.connect(host, port, topic)
 
     def register_device(self, dev_id: str, dtype: str, protocol: str,
                         address: str = "", name: str = "") -> str:

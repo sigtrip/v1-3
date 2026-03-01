@@ -5,6 +5,7 @@ hardware_guard.py — Квантовый гомеостаз железа
 import os
 import time
 import threading
+from collections import deque
 import psutil
 
 from src.argos_logger import get_logger
@@ -24,8 +25,11 @@ class HardwareHomeostasisGuard:
             "temp": None,
             "state": "Normal",
             "mitigation": "none",
+            "cpu_trend_per_sec": 0.0,
+            "cpu_pred_5s": 0.0,
             "ts": 0.0,
         }
+        self._cpu_window: deque[tuple[float, float]] = deque(maxlen=64)
 
         self.interval_sec = max(2, int(os.getenv("ARGOS_HOMEOSTASIS_INTERVAL", "8") or "8"))
         self.protect_cpu = float(os.getenv("ARGOS_HOMEOSTASIS_PROTECT_CPU", "78") or "78")
@@ -58,13 +62,15 @@ class HardwareHomeostasisGuard:
             f"  Статус: {'🟢 Активен' if self._running else '🔴 Отключён'}\n"
             f"  Состояние: {snap['state']}\n"
             f"  CPU: {snap['cpu']:.1f}% | RAM: {snap['ram']:.1f}% | TEMP: {temp_str}\n"
+            f"  CPU тренд: {snap.get('cpu_trend_per_sec', 0.0):+.2f}%/с | Прогноз+5с: {snap.get('cpu_pred_5s', 0.0):.1f}%\n"
             f"  Митигация: {snap['mitigation']}"
         )
 
     def _loop(self):
         while self._running:
             cpu, ram, temp = self._sample()
-            state = self._decide_state(cpu, ram, temp)
+            trend_per_sec, cpu_pred_5s = self._update_cpu_trend(cpu)
+            state = self._decide_state(cpu, ram, temp, cpu_pred_5s)
             mitigation = self._apply_mitigation(state, cpu, ram, temp)
             with self._lock:
                 self._last = {
@@ -73,9 +79,26 @@ class HardwareHomeostasisGuard:
                     "temp": temp,
                     "state": state,
                     "mitigation": mitigation,
+                    "cpu_trend_per_sec": trend_per_sec,
+                    "cpu_pred_5s": cpu_pred_5s,
                     "ts": time.time(),
                 }
             time.sleep(self.interval_sec)
+
+    def _update_cpu_trend(self, cpu: float) -> tuple[float, float]:
+        now = time.time()
+        self._cpu_window.append((now, float(cpu)))
+        while self._cpu_window and (now - self._cpu_window[0][0]) > 5.0:
+            self._cpu_window.popleft()
+
+        if len(self._cpu_window) < 2:
+            return 0.0, float(cpu)
+
+        oldest_ts, oldest_cpu = self._cpu_window[0]
+        dt = max(0.001, now - oldest_ts)
+        slope = (float(cpu) - oldest_cpu) / dt
+        predicted = max(0.0, min(100.0, float(cpu) + slope * 5.0))
+        return slope, predicted
 
     def _sample(self) -> tuple[float, float, float | None]:
         cpu = psutil.cpu_percent(interval=0.25)
@@ -95,7 +118,7 @@ class HardwareHomeostasisGuard:
             temp = None
         return float(cpu), float(ram), temp
 
-    def _decide_state(self, cpu: float, ram: float, temp: float | None) -> str:
+    def _decide_state(self, cpu: float, ram: float, temp: float | None, cpu_pred_5s: float) -> str:
         temp_val = temp if temp is not None else 0.0
         unstable = (
             cpu >= self.unstable_cpu or
@@ -104,6 +127,13 @@ class HardwareHomeostasisGuard:
         )
         if unstable:
             return "Unstable"
+
+        predictive = (
+            cpu < self.unstable_cpu and
+            cpu_pred_5s >= self.unstable_cpu
+        )
+        if predictive:
+            return "Predictive"
 
         protective = (
             cpu >= self.protect_cpu or
@@ -123,6 +153,7 @@ class HardwareHomeostasisGuard:
 
         if state == "Unstable":
             self.core._homeostasis_block_heavy = True
+            self.core._homeostasis_preemptive_heavy = False
             self.core.auto_collab_enabled = False
             self.core.auto_collab_max_models = 2
             if hasattr(self.core, "context") and self.core.context:
@@ -133,6 +164,7 @@ class HardwareHomeostasisGuard:
 
         if state == "Protective":
             self.core._homeostasis_block_heavy = True
+            self.core._homeostasis_preemptive_heavy = False
             self.core.auto_collab_enabled = False
             self.core.auto_collab_max_models = 2
             if hasattr(self.core, "context") and self.core.context:
@@ -141,7 +173,19 @@ class HardwareHomeostasisGuard:
                 self.core.quantum.force_state("Protective", ttl_seconds=max(15, self.interval_sec * 2))
             return "heavy_tasks=throttled, auto_collab=off"
 
+        if state == "Predictive":
+            self.core._homeostasis_block_heavy = False
+            self.core._homeostasis_preemptive_heavy = True
+            self.core.auto_collab_enabled = False
+            self.core.auto_collab_max_models = 2
+            if hasattr(self.core, "context") and self.core.context:
+                self.core.context.set_quantum_state("Protective")
+            if hasattr(self.core, "quantum") and self.core.quantum:
+                self.core.quantum.force_state("Protective", ttl_seconds=max(10, self.interval_sec * 2))
+            return "heavy_tasks=preemptive_offload, auto_collab=off"
+
         self.core._homeostasis_block_heavy = False
+        self.core._homeostasis_preemptive_heavy = False
         if hasattr(self.core, "context") and self.core.context:
             self.core.context.set_quantum_state("Analytic")
         return "none"

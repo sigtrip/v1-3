@@ -16,6 +16,7 @@ import psutil
 import datetime
 import requests
 from collections import deque
+from types import SimpleNamespace
 from typing import Optional
 
 # ── КОНСТАНТЫ ─────────────────────────────────────────────
@@ -445,6 +446,81 @@ class ArgosBridge:
         self._latency_ms = deque(maxlen=200)
         self._request_cache: dict[str, tuple[float, str]] = {}
         self._request_cache_lock = threading.Lock()
+        self._bind_task_queue_failover()
+
+    def _bind_task_queue_failover(self):
+        if not self.core or not getattr(self.core, "task_queue", None):
+            return
+        try:
+            msg = self.core.task_queue.set_heavy_failover(
+                guard=self._should_preempt_heavy,
+                runner=self._offload_heavy_task,
+            )
+            print(f"[P2P QUEUE]: {msg}")
+        except Exception as e:
+            print(f"[P2P QUEUE]: bind failover error: {e}")
+
+    def _should_preempt_heavy(self, task) -> bool:
+        if not self._running:
+            return False
+        if not self.core:
+            return False
+        if not self.registry.all():
+            return False
+        predictive = bool(getattr(self.core, "_homeostasis_preemptive_heavy", False))
+        blocked = bool(getattr(self.core, "_homeostasis_block_heavy", False))
+        return predictive or blocked
+
+    def _offload_heavy_task(self, task) -> tuple[bool, str]:
+        if not self._running:
+            return False, "P2P bridge is not running"
+
+        candidates = self.distributor.top_candidates("heavy", limit=self.distributor.failover_limit)
+        failures = []
+        task_data = {
+            "kind": str(getattr(task, "kind", "") or ""),
+            "payload": dict(getattr(task, "payload", {}) or {}),
+            "task_class": str(getattr(task, "task_class", "heavy") or "heavy"),
+            "task_id": int(getattr(task, "task_id", 0) or 0),
+        }
+
+        for node in candidates:
+            if node.get("node_id") == self.profile.node_id:
+                continue
+            ok, response = self._exec_remote_task(node, task_data)
+            if ok:
+                return True, response
+            failures.append(f"{node.get('hostname', 'remote')}: {response}")
+
+        return False, " | ".join(failures[:3]) if failures else "no remote candidates"
+
+    def _exec_remote_task(self, node: dict, task_data: dict) -> tuple[bool, str]:
+        addr = node.get("addr", "")
+        if not addr:
+            return False, "missing addr"
+        req_id = str(uuid.uuid4())
+        started = time.time()
+        try:
+            sock = socket.socket()
+            sock.settimeout(10)
+            sock.connect((addr, P2P_PORT))
+            sock.sendall(json.dumps({
+                "action": "run_task",
+                "task": task_data,
+                "request_id": req_id,
+                "secret": NETWORK_SECRET,
+            }).encode())
+            raw = sock.recv(65536)
+            sock.close()
+            data = json.loads(raw.decode() or "{}")
+            elapsed = (time.time() - started) * 1000.0
+            self.registry.update({**node, "rtt_ms": round(elapsed, 1), "state_ts": time.time()}, addr)
+
+            if data.get("ok"):
+                return True, str(data.get("output", "remote task done"))
+            return False, str(data.get("error") or "remote task failed")
+        except Exception as e:
+            return False, str(e)
 
     def _get_local_ip(self) -> str:
         try:
@@ -677,6 +753,50 @@ class ArgosBridge:
                 profile = self.profile.to_dict()
                 profile.update(self._runtime_status())
                 conn.sendall(json.dumps(profile).encode())
+
+            elif action == "run_task":
+                task_data = msg.get("task", {}) if isinstance(msg.get("task", {}), dict) else {}
+                kind = str(task_data.get("kind", "logic.command") or "logic.command")
+                payload = task_data.get("payload", {}) if isinstance(task_data.get("payload", {}), dict) else {}
+                task_class = str(task_data.get("task_class", "heavy") or "heavy")
+
+                if not self.core or not getattr(self.core, "task_queue", None):
+                    conn.sendall(json.dumps({"ok": False, "error": "task queue unavailable"}).encode())
+                    return
+
+                runner = self.core.task_queue._runners.get(kind)
+                if not runner:
+                    conn.sendall(json.dumps({"ok": False, "error": f"runner not found for kind={kind}"}).encode())
+                    return
+
+                with self._metrics_lock:
+                    self._inflight += 1
+                started = time.time()
+                try:
+                    task_stub = SimpleNamespace(
+                        task_id=int(task_data.get("task_id", 0) or 0),
+                        kind=kind,
+                        payload=payload,
+                        task_class=task_class,
+                        attempt=0,
+                        max_retries=0,
+                    )
+                    result = runner(task_stub)
+                    output = str(result) if result is not None else ""
+                    elapsed = (time.time() - started) * 1000.0
+                    self.record_local_query(elapsed, ok=True)
+                    with self._metrics_lock:
+                        self._inflight = max(0, self._inflight - 1)
+                    conn.sendall(json.dumps({
+                        "ok": True,
+                        "output": output,
+                        "runtime": self._runtime_status(),
+                    }).encode())
+                except Exception as e:
+                    with self._metrics_lock:
+                        self._errors += 1
+                        self._inflight = max(0, self._inflight - 1)
+                    conn.sendall(json.dumps({"ok": False, "error": str(e)}).encode())
 
         except Exception as e:
             with self._metrics_lock:
