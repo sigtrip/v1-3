@@ -373,6 +373,28 @@ class ArgosCore:
             return str(result.get("answer", ""))
         return str(result)
 
+    def _classify_queue_command(self, command: str) -> str:
+        cmd = (command or "").lower()
+        heavy_markers = [
+            "посмотри на экран", "что на экране", "посмотри в камеру", "анализ фото",
+            "проанализируй изображение", "компиля", "compile", "создай прошивку", "прошей",
+        ]
+        iot_markers = [
+            "шлюз", "gateway", "датчик", "sensor", "mqtt", "zigbee", "lora", "mesh", "ha ",
+            "home assistant", "iot",
+        ]
+        system_markers = [
+            "git ", "гит ", "очередь ", "queue ", "статус системы", "чек-ап", "список процессов",
+            "файлы", "прочитай файл", "создай файл", "удали файл", "консоль ", "оператор ",
+        ]
+        if any(marker in cmd for marker in heavy_markers):
+            return "heavy"
+        if any(marker in cmd for marker in iot_markers):
+            return "iot"
+        if any(marker in cmd for marker in system_markers):
+            return "system"
+        return "ai"
+
     def _on_alert(self, msg: str):
         log.warning("ALERT: %s", msg)
         self.say(msg)
@@ -1094,6 +1116,7 @@ class ArgosCore:
             retries = self.task_queue.default_retries
             deadline = self.task_queue.default_deadline_sec
             backoff_ms = self.task_queue.default_backoff_ms
+            task_class = ""
             clean_parts = []
             for item in parts:
                 lower = item.lower()
@@ -1121,21 +1144,30 @@ class ArgosCore:
                     except Exception:
                         pass
                     continue
+                if lower.startswith("class="):
+                    try:
+                        task_class = lower.split("=", 1)[1].strip().lower()
+                    except Exception:
+                        task_class = ""
+                    continue
                 clean_parts.append(item)
             normalized_cmd = " ".join(clean_parts).strip()
             if not normalized_cmd:
-                return "Формат: в очередь [команда] [priority=1..10 retries=N deadline=sec backoff=ms]"
+                return "Формат: в очередь [команда] [class=system|iot|ai|heavy priority=1..10 retries=N deadline=sec backoff=ms]"
+            if not task_class:
+                task_class = self._classify_queue_command(normalized_cmd)
             task_id = self.task_queue.submit_ex(
                 "logic.command",
                 {"command": normalized_cmd},
                 priority=priority,
+                task_class=task_class,
                 max_retries=retries,
                 deadline_sec=deadline,
                 backoff_ms=backoff_ms,
             )
             return (
                 f"📥 Команда поставлена в очередь: #{task_id} "
-                f"(priority={priority}, retries={retries}, deadline={deadline}s, backoff={backoff_ms}ms)"
+                f"(class={task_class}, priority={priority}, retries={retries}, deadline={deadline}s, backoff={backoff_ms}ms)"
             )
         if self.task_queue and (t.startswith("очередь воркеры ") or t.startswith("queue workers ")):
             try:
@@ -1801,7 +1833,7 @@ class ArgosCore:
     любопытство статус · любопытство вкл/выкл · любопытство сейчас
         git статус · git коммит [msg] · git пуш · git автокоммит и пуш [msg]
         очередь статус · очередь результаты · очередь метрики
-        в очередь [команда] [priority=1..10 retries=N deadline=sec backoff=ms]
+        в очередь [команда] [class=system|iot|ai|heavy priority=1..10 retries=N deadline=sec backoff=ms]
         очередь воркеры [n]
 
 👁️ VISION (нужен Gemini API)

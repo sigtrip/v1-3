@@ -42,6 +42,7 @@ class TaskEnvelope:
     task_id: int = field(compare=False)
     kind: str = field(compare=False)
     payload: dict = field(compare=False)
+    task_class: str = field(compare=False, default="ai")
     attempt: int = field(compare=False, default=0)
     max_retries: int = field(compare=False, default=0)
     deadline_ts: float = field(compare=False, default=0.0)
@@ -49,6 +50,8 @@ class TaskEnvelope:
 
 
 class TaskQueueManager:
+    TASK_CLASSES = ("system", "iot", "ai", "heavy")
+
     def __init__(self, worker_count: int = 2):
         self._queue: queue.PriorityQueue[TaskEnvelope] = queue.PriorityQueue()
         self._lock = threading.Lock()
@@ -63,6 +66,16 @@ class TaskQueueManager:
         self._expired = 0
         self._durations_ms: deque[float] = deque(maxlen=300)
         self._results: deque[dict] = deque(maxlen=100)
+        self._class_dispatch_ts: dict[str, deque[float]] = {
+            name: deque(maxlen=512) for name in self.TASK_CLASSES
+        }
+
+        self._class_rps: dict[str, int] = {
+            "system": max(1, min(int(os.getenv("ARGOS_TASK_RPS_SYSTEM", "8") or "8"), 100)),
+            "iot": max(1, min(int(os.getenv("ARGOS_TASK_RPS_IOT", "6") or "6"), 100)),
+            "ai": max(1, min(int(os.getenv("ARGOS_TASK_RPS_AI", "3") or "3"), 100)),
+            "heavy": max(1, min(int(os.getenv("ARGOS_TASK_RPS_HEAVY", "1") or "1"), 100)),
+        }
 
         self.default_retries = max(0, min(int(os.getenv("ARGOS_TASK_RETRIES", "1") or "1"), 10))
         self.default_deadline_sec = max(0, min(int(os.getenv("ARGOS_TASK_DEADLINE_SEC", "120") or "120"), 3600))
@@ -96,12 +109,13 @@ class TaskQueueManager:
             kind=kind,
             payload=payload,
             priority=priority,
+            task_class="ai",
             max_retries=self.default_retries,
             deadline_sec=self.default_deadline_sec,
             backoff_ms=self.default_backoff_ms,
         )
 
-    def submit_ex(self, kind: str, payload: dict, priority: int = 5,
+    def submit_ex(self, kind: str, payload: dict, priority: int = 5, task_class: str = "ai",
                   max_retries: int = 1, deadline_sec: int = 120, backoff_ms: int = 500) -> int:
         with self._lock:
             task_id = self._next_id
@@ -110,12 +124,14 @@ class TaskQueueManager:
         retries = max(0, min(int(max_retries), 10))
         ttl = max(0, min(int(deadline_sec), 3600))
         backoff = max(50, min(int(backoff_ms), 15000))
+        normalized_class = self._normalize_class(task_class)
         env = TaskEnvelope(
-            priority=max(1, min(int(priority), 10)),
+            priority=self._priority_with_class_bias(int(priority), normalized_class),
             next_run_at=now,
             created_at=now,
             task_id=task_id,
             kind=kind,
+            task_class=normalized_class,
             payload=payload or {},
             attempt=0,
             max_retries=retries,
@@ -123,11 +139,12 @@ class TaskQueueManager:
             backoff_ms=backoff,
         )
         self._queue.put(env)
-        Metrics.inc("taskqueue.submitted", tags={"kind": kind})
+        Metrics.inc("taskqueue.submitted", tags={"kind": kind, "class": normalized_class})
         Metrics.gauge("taskqueue.size", float(self._queue.qsize()))
         log_event("taskqueue_submitted", {
             "task_id": task_id,
             "kind": kind,
+            "class": normalized_class,
             "priority": env.priority,
             "max_retries": retries,
             "deadline_sec": ttl,
@@ -148,21 +165,32 @@ class TaskQueueManager:
                 time.sleep(min(task.next_run_at - now, 0.2))
                 continue
 
+            wait_sec = self._rate_wait_seconds(task.task_class, now)
+            if wait_sec > 0:
+                task.next_run_at = now + wait_sec
+                self._queue.put(task)
+                self._queue.task_done()
+                time.sleep(min(wait_sec, 0.2))
+                continue
+            self._mark_dispatched(task.task_class, now)
+
             if task.deadline_ts > 0 and now > task.deadline_ts:
                 self._expired += 1
                 self._results.appendleft({
                     "id": task.task_id,
                     "kind": task.kind,
+                    "class": task.task_class,
                     "ok": False,
                     "ms": 0.0,
                     "attempt": task.attempt,
                     "output": "deadline exceeded",
                 })
-                Metrics.inc("taskqueue.expired", tags={"kind": task.kind})
+                Metrics.inc("taskqueue.expired", tags={"kind": task.kind, "class": task.task_class})
                 Metrics.gauge("taskqueue.size", float(self._queue.qsize()))
                 log_event("taskqueue_expired", {
                     "task_id": task.task_id,
                     "kind": task.kind,
+                    "class": task.task_class,
                     "attempt": task.attempt,
                 }, source="task_queue")
                 self._queue.task_done()
@@ -184,10 +212,10 @@ class TaskQueueManager:
 
             duration_ms = (time.time() - started) * 1000.0
             self._durations_ms.append(duration_ms)
-            Metrics.observe("taskqueue.duration_ms", duration_ms, tags={"kind": task.kind})
+            Metrics.observe("taskqueue.duration_ms", duration_ms, tags={"kind": task.kind, "class": task.task_class})
             if ok:
                 self._processed += 1
-                Metrics.inc("taskqueue.done", tags={"kind": task.kind})
+                Metrics.inc("taskqueue.done", tags={"kind": task.kind, "class": task.task_class})
             else:
                 if task.attempt < task.max_retries:
                     task.attempt += 1
@@ -195,10 +223,11 @@ class TaskQueueManager:
                     backoff = (task.backoff_ms / 1000.0) * (2 ** (task.attempt - 1))
                     task.next_run_at = time.time() + min(backoff, 30.0)
                     self._queue.put(task)
-                    Metrics.inc("taskqueue.retried", tags={"kind": task.kind})
+                    Metrics.inc("taskqueue.retried", tags={"kind": task.kind, "class": task.task_class})
                     log_event("taskqueue_retried", {
                         "task_id": task.task_id,
                         "kind": task.kind,
+                        "class": task.task_class,
                         "attempt": task.attempt,
                         "next_in_sec": round(min(backoff, 30.0), 2),
                     }, source="task_queue")
@@ -206,11 +235,12 @@ class TaskQueueManager:
                     continue
 
                 self._failed += 1
-                Metrics.inc("taskqueue.failed", tags={"kind": task.kind})
+                Metrics.inc("taskqueue.failed", tags={"kind": task.kind, "class": task.task_class})
 
             self._results.appendleft({
                 "id": task.task_id,
                 "kind": task.kind,
+                "class": task.task_class,
                 "ok": ok,
                 "ms": round(duration_ms, 1),
                 "attempt": task.attempt,
@@ -241,11 +271,16 @@ class TaskQueueManager:
     def status(self) -> str:
         avg_ms = (sum(self._durations_ms) / len(self._durations_ms)) if self._durations_ms else 0.0
         Metrics.gauge("taskqueue.size", float(self._queue.qsize()))
+        class_counts = self._queue_class_counts()
+        class_counts_str = ", ".join([f"{k}:{class_counts.get(k, 0)}" for k in self.TASK_CLASSES])
+        class_rps = ", ".join([f"{k}:{self._class_rps.get(k, 1)}/s" for k in self.TASK_CLASSES])
         return (
             "🧵 TASK QUEUE STATUS\n"
             f"  Running: {'yes' if self._running else 'no'}\n"
             f"  Workers(active/target): {len(self._workers)}/{self.worker_count}\n"
             f"  Queue size: {self._queue.qsize()}\n"
+            f"  Classes queued: {class_counts_str}\n"
+            f"  Rate limits: {class_rps}\n"
             f"  Done: {self._processed} | Failed: {self._failed} | Retried: {self._retried} | Expired: {self._expired}\n"
             f"  Avg duration: {avg_ms:.1f} ms"
         )
@@ -257,7 +292,50 @@ class TaskQueueManager:
         lines = [f"📦 TASK RESULTS ({len(rows)}):"]
         for row in rows:
             icon = "✅" if row["ok"] else "❌"
-            lines.append(f"  {icon} #{row['id']} {row['kind']} {row['ms']}ms attempt={row.get('attempt', 0)}")
+            lines.append(
+                f"  {icon} #{row['id']} {row['kind']}[{row.get('class', 'ai')}] "
+                f"{row['ms']}ms attempt={row.get('attempt', 0)}"
+            )
             if row["output"]:
                 lines.append(f"     → {row['output'][:180]}")
         return "\n".join(lines)
+
+    def _normalize_class(self, value: str) -> str:
+        task_class = (value or "").strip().lower()
+        if task_class not in self.TASK_CLASSES:
+            return "ai"
+        return task_class
+
+    def _priority_with_class_bias(self, base_priority: int, task_class: str) -> int:
+        clamped = max(1, min(int(base_priority), 10))
+        bias = {
+            "system": -2,
+            "iot": -1,
+            "ai": 0,
+            "heavy": 2,
+        }.get(task_class, 0)
+        return max(1, min(clamped + bias, 10))
+
+    def _rate_wait_seconds(self, task_class: str, now: float) -> float:
+        bucket = self._class_dispatch_ts.get(task_class)
+        if bucket is None:
+            return 0.0
+        while bucket and (now - bucket[0]) > 1.0:
+            bucket.popleft()
+        rps = self._class_rps.get(task_class, 1)
+        if len(bucket) < rps:
+            return 0.0
+        return max(0.01, (bucket[0] + 1.0) - now)
+
+    def _mark_dispatched(self, task_class: str, now: float):
+        bucket = self._class_dispatch_ts.get(task_class)
+        if bucket is None:
+            return
+        bucket.append(now)
+
+    def _queue_class_counts(self) -> dict[str, int]:
+        counts = {name: 0 for name in self.TASK_CLASSES}
+        with self._queue.mutex:
+            for item in list(self._queue.queue):
+                counts[item.task_class] = counts.get(item.task_class, 0) + 1
+        return counts
