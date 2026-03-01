@@ -14,14 +14,38 @@ from src.argos_logger import get_logger
 
 log = get_logger("argos.taskqueue")
 
+try:
+    from src.observability import Metrics, log_event
+except Exception:  # pragma: no cover
+    class Metrics:  # type: ignore
+        @classmethod
+        def inc(cls, name: str, value: int = 1, tags: dict = None):
+            return None
+
+        @classmethod
+        def gauge(cls, name: str, value: float, tags: dict = None):
+            return None
+
+        @classmethod
+        def observe(cls, name: str, value: float, tags: dict = None):
+            return None
+
+    def log_event(event_type: str, data: dict, source: str = "argos"):
+        return None
+
 
 @dataclass(order=True)
 class TaskEnvelope:
     priority: int
+    next_run_at: float
     created_at: float
     task_id: int = field(compare=False)
     kind: str = field(compare=False)
     payload: dict = field(compare=False)
+    attempt: int = field(compare=False, default=0)
+    max_retries: int = field(compare=False, default=0)
+    deadline_ts: float = field(compare=False, default=0.0)
+    backoff_ms: int = field(compare=False, default=500)
 
 
 class TaskQueueManager:
@@ -35,8 +59,14 @@ class TaskQueueManager:
 
         self._processed = 0
         self._failed = 0
+        self._retried = 0
+        self._expired = 0
         self._durations_ms: deque[float] = deque(maxlen=300)
         self._results: deque[dict] = deque(maxlen=100)
+
+        self.default_retries = max(0, min(int(os.getenv("ARGOS_TASK_RETRIES", "1") or "1"), 10))
+        self.default_deadline_sec = max(0, min(int(os.getenv("ARGOS_TASK_DEADLINE_SEC", "120") or "120"), 3600))
+        self.default_backoff_ms = max(50, min(int(os.getenv("ARGOS_TASK_BACKOFF_MS", "500") or "500"), 15000))
 
         env_workers = int(os.getenv("ARGOS_TASK_WORKERS", str(worker_count)) or str(worker_count))
         self.worker_count = max(1, min(env_workers, 16))
@@ -62,17 +92,46 @@ class TaskQueueManager:
         return "🧵 TaskQueue остановлена."
 
     def submit(self, kind: str, payload: dict, priority: int = 5) -> int:
+        return self.submit_ex(
+            kind=kind,
+            payload=payload,
+            priority=priority,
+            max_retries=self.default_retries,
+            deadline_sec=self.default_deadline_sec,
+            backoff_ms=self.default_backoff_ms,
+        )
+
+    def submit_ex(self, kind: str, payload: dict, priority: int = 5,
+                  max_retries: int = 1, deadline_sec: int = 120, backoff_ms: int = 500) -> int:
         with self._lock:
             task_id = self._next_id
             self._next_id += 1
+        now = time.time()
+        retries = max(0, min(int(max_retries), 10))
+        ttl = max(0, min(int(deadline_sec), 3600))
+        backoff = max(50, min(int(backoff_ms), 15000))
         env = TaskEnvelope(
             priority=max(1, min(int(priority), 10)),
-            created_at=time.time(),
+            next_run_at=now,
+            created_at=now,
             task_id=task_id,
             kind=kind,
             payload=payload or {},
+            attempt=0,
+            max_retries=retries,
+            deadline_ts=(now + ttl) if ttl > 0 else 0.0,
+            backoff_ms=backoff,
         )
         self._queue.put(env)
+        Metrics.inc("taskqueue.submitted", tags={"kind": kind})
+        Metrics.gauge("taskqueue.size", float(self._queue.qsize()))
+        log_event("taskqueue_submitted", {
+            "task_id": task_id,
+            "kind": kind,
+            "priority": env.priority,
+            "max_retries": retries,
+            "deadline_sec": ttl,
+        }, source="task_queue")
         return task_id
 
     def _worker_loop(self, worker_id: int):
@@ -80,6 +139,33 @@ class TaskQueueManager:
             try:
                 task = self._queue.get(timeout=1)
             except queue.Empty:
+                continue
+
+            now = time.time()
+            if task.next_run_at > now:
+                self._queue.put(task)
+                self._queue.task_done()
+                time.sleep(min(task.next_run_at - now, 0.2))
+                continue
+
+            if task.deadline_ts > 0 and now > task.deadline_ts:
+                self._expired += 1
+                self._results.appendleft({
+                    "id": task.task_id,
+                    "kind": task.kind,
+                    "ok": False,
+                    "ms": 0.0,
+                    "attempt": task.attempt,
+                    "output": "deadline exceeded",
+                })
+                Metrics.inc("taskqueue.expired", tags={"kind": task.kind})
+                Metrics.gauge("taskqueue.size", float(self._queue.qsize()))
+                log_event("taskqueue_expired", {
+                    "task_id": task.task_id,
+                    "kind": task.kind,
+                    "attempt": task.attempt,
+                }, source="task_queue")
+                self._queue.task_done()
                 continue
 
             started = time.time()
@@ -98,18 +184,39 @@ class TaskQueueManager:
 
             duration_ms = (time.time() - started) * 1000.0
             self._durations_ms.append(duration_ms)
+            Metrics.observe("taskqueue.duration_ms", duration_ms, tags={"kind": task.kind})
             if ok:
                 self._processed += 1
+                Metrics.inc("taskqueue.done", tags={"kind": task.kind})
             else:
+                if task.attempt < task.max_retries:
+                    task.attempt += 1
+                    self._retried += 1
+                    backoff = (task.backoff_ms / 1000.0) * (2 ** (task.attempt - 1))
+                    task.next_run_at = time.time() + min(backoff, 30.0)
+                    self._queue.put(task)
+                    Metrics.inc("taskqueue.retried", tags={"kind": task.kind})
+                    log_event("taskqueue_retried", {
+                        "task_id": task.task_id,
+                        "kind": task.kind,
+                        "attempt": task.attempt,
+                        "next_in_sec": round(min(backoff, 30.0), 2),
+                    }, source="task_queue")
+                    self._queue.task_done()
+                    continue
+
                 self._failed += 1
+                Metrics.inc("taskqueue.failed", tags={"kind": task.kind})
 
             self._results.appendleft({
                 "id": task.task_id,
                 "kind": task.kind,
                 "ok": ok,
                 "ms": round(duration_ms, 1),
+                "attempt": task.attempt,
                 "output": output[:400],
             })
+            Metrics.gauge("taskqueue.size", float(self._queue.qsize()))
             self._queue.task_done()
 
     def set_workers(self, count: int) -> str:
@@ -133,12 +240,13 @@ class TaskQueueManager:
 
     def status(self) -> str:
         avg_ms = (sum(self._durations_ms) / len(self._durations_ms)) if self._durations_ms else 0.0
+        Metrics.gauge("taskqueue.size", float(self._queue.qsize()))
         return (
             "🧵 TASK QUEUE STATUS\n"
             f"  Running: {'yes' if self._running else 'no'}\n"
             f"  Workers(active/target): {len(self._workers)}/{self.worker_count}\n"
             f"  Queue size: {self._queue.qsize()}\n"
-            f"  Done: {self._processed} | Failed: {self._failed}\n"
+            f"  Done: {self._processed} | Failed: {self._failed} | Retried: {self._retried} | Expired: {self._expired}\n"
             f"  Avg duration: {avg_ms:.1f} ms"
         )
 
@@ -149,7 +257,7 @@ class TaskQueueManager:
         lines = [f"📦 TASK RESULTS ({len(rows)}):"]
         for row in rows:
             icon = "✅" if row["ok"] else "❌"
-            lines.append(f"  {icon} #{row['id']} {row['kind']} {row['ms']}ms")
+            lines.append(f"  {icon} #{row['id']} {row['kind']} {row['ms']}ms attempt={row.get('attempt', 0)}")
             if row["output"]:
                 lines.append(f"     → {row['output'][:180]}")
         return "\n".join(lines)

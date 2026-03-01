@@ -1075,6 +1075,12 @@ class ArgosCore:
             return self.task_queue.status()
         if self.task_queue and any(k in t for k in ["очередь результаты", "queue results"]):
             return self.task_queue.last_results()
+        if any(k in t for k in ["очередь метрики", "queue metrics"]):
+            try:
+                from src.observability import Metrics
+                return Metrics.report()
+            except Exception as e:
+                return f"❌ Метрики недоступны: {e}"
         if self.task_queue and (t.startswith("в очередь ") or t.startswith("queue run ")):
             cmd = text
             if t.startswith("в очередь "):
@@ -1083,9 +1089,54 @@ class ArgosCore:
                 cmd = text[len("queue run "):].strip()
             if not cmd:
                 return "Формат: в очередь [команда]"
-            prio = 1 if any(k in cmd.lower() for k in ["срочно", "critical", "urgent"]) else 5
-            task_id = self.task_queue.submit("logic.command", {"command": cmd}, priority=prio)
-            return f"📥 Команда поставлена в очередь: #{task_id} (priority={prio})"
+            parts = cmd.split()
+            priority = 1 if any(k in cmd.lower() for k in ["срочно", "critical", "urgent"]) else 5
+            retries = self.task_queue.default_retries
+            deadline = self.task_queue.default_deadline_sec
+            backoff_ms = self.task_queue.default_backoff_ms
+            clean_parts = []
+            for item in parts:
+                lower = item.lower()
+                if lower.startswith("priority="):
+                    try:
+                        priority = int(lower.split("=", 1)[1])
+                    except Exception:
+                        pass
+                    continue
+                if lower.startswith("retries="):
+                    try:
+                        retries = int(lower.split("=", 1)[1])
+                    except Exception:
+                        pass
+                    continue
+                if lower.startswith("deadline="):
+                    try:
+                        deadline = int(lower.split("=", 1)[1])
+                    except Exception:
+                        pass
+                    continue
+                if lower.startswith("backoff="):
+                    try:
+                        backoff_ms = int(lower.split("=", 1)[1])
+                    except Exception:
+                        pass
+                    continue
+                clean_parts.append(item)
+            normalized_cmd = " ".join(clean_parts).strip()
+            if not normalized_cmd:
+                return "Формат: в очередь [команда] [priority=1..10 retries=N deadline=sec backoff=ms]"
+            task_id = self.task_queue.submit_ex(
+                "logic.command",
+                {"command": normalized_cmd},
+                priority=priority,
+                max_retries=retries,
+                deadline_sec=deadline,
+                backoff_ms=backoff_ms,
+            )
+            return (
+                f"📥 Команда поставлена в очередь: #{task_id} "
+                f"(priority={priority}, retries={retries}, deadline={deadline}s, backoff={backoff_ms}ms)"
+            )
         if self.task_queue and (t.startswith("очередь воркеры ") or t.startswith("queue workers ")):
             try:
                 count = int(text.split()[-1])
@@ -1749,7 +1800,9 @@ class ArgosCore:
     гомеостаз статус · гомеостаз вкл/выкл
     любопытство статус · любопытство вкл/выкл · любопытство сейчас
         git статус · git коммит [msg] · git пуш · git автокоммит и пуш [msg]
-                очередь статус · очередь результаты · в очередь [команда] · очередь воркеры [n]
+        очередь статус · очередь результаты · очередь метрики
+        в очередь [команда] [priority=1..10 retries=N deadline=sec backoff=ms]
+        очередь воркеры [n]
 
 👁️ VISION (нужен Gemini API)
   посмотри на экран · что на экране
