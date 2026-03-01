@@ -397,6 +397,7 @@ p2p протокол          libp2p          zkp
 репликация      веб-панель
 голос вкл/выкл  включи wake word
 режим ии авто|gemini|gigachat|yandexgpt|lmstudio|ollama
+lmstudio статус
 контекст диалога  сброс контекста
 история         помощь
 список модулей

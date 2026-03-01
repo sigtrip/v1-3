@@ -568,6 +568,37 @@ class ArgosCore:
     def _has_lmstudio_config(self) -> bool:
         return bool((self.lmstudio_url or "").strip())
 
+    def _lmstudio_status(self) -> str:
+        if not self._has_lmstudio_config():
+            return "❌ LM Studio не настроен. Укажи LMSTUDIO_BASE_URL и LMSTUDIO_MODEL в .env"
+        try:
+            payload = {
+                "model": self.lmstudio_model,
+                "messages": [{"role": "user", "content": "ping"}],
+                "temperature": 0.0,
+                "max_tokens": 4,
+                "stream": False,
+            }
+            response = requests.post(self.lmstudio_url, json=payload, timeout=8)
+            if response.ok:
+                return (
+                    "🧪 LM Studio: ONLINE\n"
+                    f"  URL: {self.lmstudio_url}\n"
+                    f"  Model: {self.lmstudio_model}"
+                )
+            return (
+                "⚠️ LM Studio: OFFLINE/ERROR\n"
+                f"  URL: {self.lmstudio_url}\n"
+                f"  HTTP: {response.status_code}\n"
+                f"  Body: {(response.text or '')[:180]}"
+            )
+        except Exception as e:
+            return (
+                "⚠️ LM Studio: недоступен\n"
+                f"  URL: {self.lmstudio_url}\n"
+                f"  Error: {e}"
+            )
+
     def _get_gigachat_token(self) -> str | None:
         if self._gigachat_access_token and self._gigachat_token_expires_at <= 0:
             return self._gigachat_access_token
@@ -1012,6 +1043,9 @@ class ArgosCore:
             return self.curiosity.stop()
         if self.curiosity and any(k in t for k in ["любопытство сейчас", "curiosity now"]):
             return self.curiosity.ask_now()
+
+        if any(k in t for k in ["lmstudio статус", "lm studio статус", "lmstudio status", "lm studio status"]):
+            return self._lmstudio_status()
 
         if self.git_ops and any(k in t for k in ["git статус", "гит статус", "git status"]):
             return self.git_ops.status()
@@ -1731,6 +1765,9 @@ class ArgosCore:
 
 🧩 МОДУЛИ
     список модулей
+
+🧠 LM STUDIO
+    lmstudio статус
 
 �🎤 ГОЛОС
   голос вкл/выкл · включи wake word
