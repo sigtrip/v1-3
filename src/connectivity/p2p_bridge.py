@@ -15,6 +15,7 @@ import platform
 import psutil
 import datetime
 import requests
+from collections import deque
 from typing import Optional
 
 # ── КОНСТАНТЫ ─────────────────────────────────────────────
@@ -243,9 +244,10 @@ class TaskDistributor:
         "build", "прошив", "firmware", "video", "render", "train"
     )
 
-    def __init__(self, registry: NodeRegistry, self_profile: NodeProfile):
+    def __init__(self, registry: NodeRegistry, self_profile: NodeProfile, bridge=None):
         self.registry = registry
         self.me = self_profile
+        self.bridge = bridge
 
     def _infer_task_type(self, prompt: str) -> str:
         low = (prompt or "").lower()
@@ -258,15 +260,27 @@ class TaskDistributor:
         auth = float(node.get("authority", 0.0))
         ram_gb = float(node.get("power", {}).get("ram_gb", 0.0))
         role = str(node.get("role", "worker"))
+        queue_depth = float(node.get("queue_depth", 0.0))
+        inflight = float(node.get("inflight", 0.0))
+        rtt_ms = float(node.get("rtt_ms", 80.0) or 80.0)
+        error_rate = float(node.get("error_rate", 0.0) or 0.0)
+        freshness_sec = max(0.0, time.time() - float(node.get("state_ts", node.get("last_seen", time.time()))))
+
+        queue_penalty = min(queue_depth * 2.5, 35.0)
+        inflight_penalty = min(inflight * 1.5, 18.0)
+        rtt_penalty = min(rtt_ms / 25.0, 18.0)
+        error_penalty = min(error_rate * 50.0, 40.0)
+        stale_penalty = min(freshness_sec / 6.0, 15.0)
+        dynamic_penalty = queue_penalty + inflight_penalty + rtt_penalty + error_penalty + stale_penalty
 
         if task_type == "heavy":
             role_bonus = 22.0 if role == "server" else (8.0 if role == "worker" else -25.0)
-            return (auth * 0.55) + (power * 0.45) + role_bonus + min(ram_gb, 64.0) * 0.4
+            return (auth * 0.55) + (power * 0.45) + role_bonus + min(ram_gb, 64.0) * 0.4 - dynamic_penalty
 
         if task_type == "old":
-            return float(node.get("age_days", 0.0)) * 10.0 + auth
+            return float(node.get("age_days", 0.0)) * 10.0 + auth - (dynamic_penalty * 0.7)
 
-        return (auth * 0.5) + (power * 0.5)
+        return (auth * 0.5) + (power * 0.5) - dynamic_penalty
 
     def pick_node_for(self, task_type: str = "ai") -> dict:
         """
@@ -299,39 +313,78 @@ class TaskDistributor:
         is_me = best["node_id"] == me["node_id"]
         return {"node": best, "is_local": is_me, "task_type": task_type}
 
-    def route_task(self, prompt: str, core=None, task_type: str = None) -> str:
-        """Направляет AI-запрос на лучшую ноду. Если локальная — выполняет сам."""
-        resolved_type = task_type or self._infer_task_type(prompt)
-        decision = self.pick_node_for(resolved_type)
-        node = decision["node"]
+    def top_candidates(self, task_type: str = "ai", limit: int = 2) -> list[dict]:
+        nodes = self.registry.all()
+        me = self.me.to_dict()
+        all_nodes = [me] + nodes
+        ranked = sorted(all_nodes, key=lambda n: self._score_node(n, task_type), reverse=True)
+        return ranked[:max(1, min(limit, 5))]
 
-        if decision["is_local"]:
-            if core:
-                res = core._ask_gemini("Ты Аргос.", prompt) or \
-                      core._ask_ollama("Ты Аргос.", prompt) or \
-                      "Нет ответа от ИИ."
-                return f"[LOCAL:{resolved_type}] {res}"
+    def _exec_local(self, prompt: str, resolved_type: str, core=None) -> str:
+        if not core:
             return "[LOCAL] Ядро не подключено."
+        started = time.time()
+        try:
+            res = core._ask_gemini("Ты Аргос.", prompt) or \
+                  core._ask_ollama("Ты Аргос.", prompt) or \
+                  "Нет ответа от ИИ."
+            if self.bridge:
+                self.bridge.record_local_query((time.time() - started) * 1000.0, ok=True)
+            return f"[LOCAL:{resolved_type}] {res}"
+        except Exception as e:
+            if self.bridge:
+                self.bridge.record_local_query((time.time() - started) * 1000.0, ok=False)
+            return f"[LOCAL FAIL:{resolved_type}] {e}"
 
-        # Запрос к удалённой ноде через TCP JSON протокол
+    def _exec_remote(self, node: dict, prompt: str, resolved_type: str) -> tuple[bool, str]:
         addr = node.get("addr", "")
+        if not addr:
+            return False, "missing addr"
+        req_id = str(uuid.uuid4())
+        started = time.time()
         try:
             sock = socket.socket()
-            sock.settimeout(20)
+            sock.settimeout(8)
             sock.connect((addr, P2P_PORT))
             sock.sendall(json.dumps({
                 "action": "query",
                 "prompt": prompt,
                 "task_type": resolved_type,
+                "request_id": req_id,
                 "secret": NETWORK_SECRET,
             }).encode())
             raw = sock.recv(65536)
             sock.close()
             data = json.loads(raw.decode() or "{}")
+            elapsed = (time.time() - started) * 1000.0
+            if self.bridge:
+                self.bridge.registry.update({**node, "rtt_ms": round(elapsed, 1), "state_ts": time.time()}, addr)
+            if data.get("error"):
+                return False, str(data.get("error"))
             answer = data.get("answer", "Нет ответа")
-            return f"[{node['hostname']}:{resolved_type}] {answer}"
+            return True, f"[{node.get('hostname', 'remote')}:{resolved_type}] {answer}"
         except Exception as e:
-            return f"[ROUTE FAIL] {e}"
+            return False, str(e)
+
+    def route_task(self, prompt: str, core=None, task_type: str = None) -> str:
+        """Направляет AI-запрос на оптимальную ноду с failover."""
+        resolved_type = task_type or self._infer_task_type(prompt)
+        candidates = self.top_candidates(resolved_type, limit=3)
+        failures = []
+
+        for node in candidates:
+            if node.get("node_id") == self.me.node_id:
+                return self._exec_local(prompt, resolved_type, core=core)
+
+            ok, response = self._exec_remote(node, prompt, resolved_type)
+            if ok:
+                return response
+            failures.append(f"{node.get('hostname', 'remote')}: {response}")
+
+        local_fallback = self._exec_local(prompt, resolved_type, core=core)
+        if not failures:
+            return local_fallback
+        return f"{local_fallback}\n[ROUTE FAILOVER] " + " | ".join(failures[:3])
 
 
 # ═══════════════════════════════════════════════════════════
@@ -342,9 +395,16 @@ class ArgosBridge:
         self.core        = core
         self.profile     = NodeProfile()
         self.registry    = NodeRegistry()
-        self.distributor = TaskDistributor(self.registry, self.profile)
+        self.distributor = TaskDistributor(self.registry, self.profile, bridge=self)
         self._running    = False
         self._local_ip   = self._get_local_ip()
+        self._metrics_lock = threading.Lock()
+        self._inflight = 0
+        self._done = 0
+        self._errors = 0
+        self._latency_ms = deque(maxlen=200)
+        self._request_cache: dict[str, tuple[float, str]] = {}
+        self._request_cache_lock = threading.Lock()
 
     def _get_local_ip(self) -> str:
         try:
@@ -374,6 +434,70 @@ class ArgosBridge:
             f"   Мощность: {self.profile.get_power()['index']}/100\n"
             f"   Авторитет:{self.profile.get_authority()}"
         )
+
+    def _cache_get(self, req_id: str) -> Optional[str]:
+        if not req_id:
+            return None
+        now = time.time()
+        with self._request_cache_lock:
+            hit = self._request_cache.get(req_id)
+            if not hit:
+                return None
+            ts, answer = hit
+            if now - ts > 120:
+                self._request_cache.pop(req_id, None)
+                return None
+            return answer
+
+    def _cache_put(self, req_id: str, answer: str):
+        if not req_id:
+            return
+        now = time.time()
+        with self._request_cache_lock:
+            self._request_cache[req_id] = (now, answer)
+            stale = [k for k, (ts, _) in self._request_cache.items() if now - ts > 120]
+            for key in stale:
+                self._request_cache.pop(key, None)
+
+    def _runtime_status(self) -> dict:
+        with self._metrics_lock:
+            p95 = 0.0
+            if self._latency_ms:
+                sorted_lat = sorted(self._latency_ms)
+                idx = int(0.95 * (len(sorted_lat) - 1))
+                p95 = float(sorted_lat[idx])
+            total = self._done + self._errors
+            err_rate = (self._errors / total) if total > 0 else 0.0
+            return {
+                "queue_depth": 0,
+                "inflight": self._inflight,
+                "p95_ms": round(p95, 1),
+                "error_rate": round(err_rate, 3),
+                "state_ts": time.time(),
+            }
+
+    def record_local_query(self, duration_ms: float, ok: bool = True):
+        with self._metrics_lock:
+            self._latency_ms.append(max(0.0, float(duration_ms)))
+            if ok:
+                self._done += 1
+            else:
+                self._errors += 1
+
+    def _remote_status(self, addr: str) -> Optional[dict]:
+        try:
+            started = time.time()
+            sock = socket.socket()
+            sock.settimeout(4)
+            sock.connect((addr, P2P_PORT))
+            sock.sendall(json.dumps({"action": "status", "secret": NETWORK_SECRET}).encode())
+            data = json.loads(sock.recv(65536).decode() or "{}")
+            sock.close()
+            data["rtt_ms"] = round((time.time() - started) * 1000.0, 1)
+            data["state_ts"] = time.time()
+            return data
+        except Exception:
+            return None
 
     def stop(self):
         self._running = False
@@ -461,16 +585,37 @@ class ArgosBridge:
 
             if action == "query":
                 prompt = msg.get("prompt", "")
+                req_id = str(msg.get("request_id", "") or "").strip()
+                cached = self._cache_get(req_id)
+                if cached is not None:
+                    conn.sendall(json.dumps({
+                        "answer": cached,
+                        "cached": True,
+                        "node_id": self.profile.node_id,
+                        "host": self.profile.hostname,
+                    }).encode())
+                    return
+
+                with self._metrics_lock:
+                    self._inflight += 1
+                started = time.time()
                 if self.core:
                     answer = (self.core._ask_gemini("Ты Аргос.", prompt) or
                               self.core._ask_ollama("Ты Аргос.", prompt) or
                               "Нет ответа от ИИ.")
                 else:
                     answer = "Ядро не подключено на этой ноде."
+
+                elapsed = (time.time() - started) * 1000.0
+                self.record_local_query(elapsed, ok=True)
+                with self._metrics_lock:
+                    self._inflight = max(0, self._inflight - 1)
+                self._cache_put(req_id, answer)
                 conn.sendall(json.dumps({
                     "answer":  answer,
                     "node_id": self.profile.node_id,
                     "host":    self.profile.hostname,
+                    "runtime": self._runtime_status(),
                 }).encode())
 
             elif action == "sync_skills":
@@ -489,9 +634,14 @@ class ArgosBridge:
                     conn.sendall(json.dumps({"error": "Skill not found"}).encode())
 
             elif action == "status":
-                conn.sendall(json.dumps(self.profile.to_dict()).encode())
+                profile = self.profile.to_dict()
+                profile.update(self._runtime_status())
+                conn.sendall(json.dumps(profile).encode())
 
         except Exception as e:
+            with self._metrics_lock:
+                self._errors += 1
+                self._inflight = max(0, self._inflight - 1)
             try:
                 conn.sendall(json.dumps({"error": str(e)}).encode())
             except Exception:
@@ -504,6 +654,13 @@ class ArgosBridge:
         while self._running:
             time.sleep(HEARTBEAT_SEC)
             self.registry.remove_dead()
+            for node in self.registry.all():
+                addr = node.get("addr")
+                if not addr:
+                    continue
+                snap = self._remote_status(addr)
+                if snap and snap.get("node_id"):
+                    self.registry.update(snap, addr)
 
     # ── ПУБЛИЧНЫЙ API ─────────────────────────────────────
     def network_status(self) -> str:
