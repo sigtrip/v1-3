@@ -1336,6 +1336,45 @@ class ArgosCore:
                 return self.gateway_mgr.list_gateways()
             if any(k in t for k in ["шаблоны шлюзов", "типы шлюзов"]):
                 return self.gateway_mgr.list_templates()
+            if any(k in t for k in ["изучи протокол", "выучи протокол", "научи протокол"]):
+                tail = text
+                for marker in ("изучи протокол", "выучи протокол", "научи протокол"):
+                    if marker in t:
+                        tail = text.split(marker, 1)[-1].strip()
+                        break
+                parts = tail.split()
+                if len(parts) >= 2:
+                    template = parts[0]
+                    protocol = parts[1]
+                    firmware = parts[2] if len(parts) > 2 else ""
+                    description = " ".join(parts[3:]) if len(parts) > 3 else f"Автошаблон для {protocol}"
+                    return self.gateway_mgr.register_template(
+                        name=template,
+                        description=description,
+                        protocol=protocol,
+                        firmware=firmware,
+                    )
+                return ("Формат: изучи протокол [шаблон] [протокол] [прошивка?] [описание?]\n"
+                        "Пример: изучи протокол bt_gateway bluetooth custom_bridge BLE шлюз")
+            if any(k in t for k in ["изучи устройство", "выучи устройство", "изучи устроц", "выучи устроц"]):
+                tail = text
+                for marker in ("изучи устройство", "выучи устройство", "изучи устроц", "выучи устроц"):
+                    if marker in t:
+                        tail = text.split(marker, 1)[-1].strip()
+                        break
+                parts = tail.split()
+                if len(parts) >= 2:
+                    template = parts[0]
+                    protocol = parts[1]
+                    hardware = " ".join(parts[2:]) if len(parts) > 2 else "Generic gateway"
+                    return self.gateway_mgr.register_template(
+                        name=template,
+                        description=f"Шаблон устройства: {hardware}",
+                        protocol=protocol,
+                        hardware=hardware,
+                    )
+                return ("Формат: изучи устройство [шаблон] [протокол] [hardware?]\n"
+                        "Пример: изучи устройство rtu_bridge modbus USB-RS485 адаптер")
             if "создай прошивку" in t or "собери прошивку" in t:
                 # создай прошивку [id] [шаблон] [порт?]
                 tail = text.split("прошивку", 1)[-1].strip().split()
@@ -1434,6 +1473,8 @@ class ArgosCore:
   список шлюзов · шаблоны шлюзов
   создай шлюз [id] [шаблон]
     создай прошивку [id] [шаблон] [порт]
+    изучи протокол [шаблон] [протокол] [прошивка] [описание]
+    изучи устройство [шаблон] [протокол] [hardware]
   прошей шлюз [id] [порт] · прошей gateway [порт] [прошивка]
   конфиг шлюза [id]
     MCU: STM32H503, ESP8266, RP2040
@@ -1471,7 +1512,9 @@ class ArgosCore:
 
 🔧 Прошивка устройств:
     • STM32H503, ESP8266, RP2040
-    • Команда: создай прошивку [id] [шаблон] [порт]"""
+    • Команды: создай прошивку [id] [шаблон] [порт]
+                изучи протокол [шаблон] [протокол] [прошивка] [описание]
+                изучи устройство [шаблон] [протокол] [hardware]"""
 
     def _start_smart_create_wizard(self) -> str:
         if not self.smart_sys:

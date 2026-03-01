@@ -94,7 +94,7 @@ class ArgosGUI(ctk.CTk):
 
         ctk.CTkLabel(self.sidebar, text="─" * 28, text_color="#333").pack(pady=8)
 
-        self.voice_btn = ctk.CTkButton(self.sidebar, text="🎤 Слушать",
+        self.voice_btn = ctk.CTkButton(self.sidebar, text="🎙 Слушай меня",
                                        height=40, fg_color="#1a4a1a",
                                        hover_color="#2a6a2a",
                                        command=self._toggle_listen)
@@ -146,6 +146,7 @@ class ArgosGUI(ctk.CTk):
             return
         self._listening = True
         self.voice_btn.configure(text="🔴 Слушаю...", fg_color="#4a1a1a")
+        self._append("🎙 Слушаю тебя... Говори команду.\n", "#88ff88")
         threading.Thread(target=self._listen_loop, daemon=True).start()
 
     def _toggle_voice_mode(self):
@@ -193,7 +194,7 @@ class ArgosGUI(ctk.CTk):
 
     def _after_listen(self, text: str):
         self._listening = False
-        self.voice_btn.configure(text="🎤 Слушать", fg_color="#1a4a1a")
+        self.voice_btn.configure(text="🎙 Слушай меня", fg_color="#1a4a1a")
         if text:
             self._send_text(text)
         else:

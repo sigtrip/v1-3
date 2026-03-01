@@ -14,6 +14,7 @@ bus = get_bus()
 
 GATEWAY_DIR = "config/gateways"
 FIRMWARE_DIR= "assets/firmware"
+CUSTOM_TEMPLATES_FILE = "config/gateway_templates.custom.json"
 os.makedirs(GATEWAY_DIR, exist_ok=True)
 os.makedirs(FIRMWARE_DIR, exist_ok=True)
 
@@ -85,6 +86,25 @@ GATEWAY_TEMPLATES = {
 }
 
 
+def _load_custom_templates() -> dict:
+    if not os.path.exists(CUSTOM_TEMPLATES_FILE):
+        return {}
+    try:
+        payload = json.load(open(CUSTOM_TEMPLATES_FILE, encoding="utf-8"))
+        if isinstance(payload, dict):
+            return payload
+        return {}
+    except Exception as e:
+        log.warning("Custom templates load error: %s", e)
+        return {}
+
+
+def _save_custom_templates(custom_templates: dict):
+    os.makedirs("config", exist_ok=True)
+    json.dump(custom_templates, open(CUSTOM_TEMPLATES_FILE, "w", encoding="utf-8"),
+              indent=2, ensure_ascii=False)
+
+
 class GatewayConfig:
     def __init__(self, gw_id: str, template: str, overrides: dict = None):
         self.id       = gw_id
@@ -120,6 +140,8 @@ class GatewayManager:
     def __init__(self, iot_bridge=None):
         self.iot      = iot_bridge
         self._gateways: dict[str, GatewayConfig] = {}
+        self._templates: dict[str, dict] = dict(GATEWAY_TEMPLATES)
+        self._templates.update(_load_custom_templates())
         self._load()
 
     def _load(self):
@@ -135,19 +157,33 @@ class GatewayManager:
                     log.error("Gateway load %s: %s", f, e)
         log.info("Шлюзы загружены: %d", len(self._gateways))
 
+    @staticmethod
+    def _suggest_firmware(protocol: str) -> str:
+        protocol_name = (protocol or "").strip().lower()
+        return {
+            "zigbee": "zigbee2mqtt",
+            "lora": "arduino_lora_gw",
+            "lorawan": "packet_forwarder",
+            "modbus": "modbus_bridge",
+            "mesh": "argos_mesh_gw",
+        }.get(protocol_name, "custom_bridge")
+
     def create_gateway(self, gw_id: str, template: str,
                        overrides: dict = None) -> str:
-        if template not in GATEWAY_TEMPLATES:
-            avail = ", ".join(GATEWAY_TEMPLATES.keys())
+        if template not in self._templates:
+            avail = ", ".join(self._templates.keys())
             return f"❌ Шаблон не найден. Доступные: {avail}"
         gw   = GatewayConfig(gw_id, template, overrides)
+        gw.spec = dict(self._templates.get(template, gw.spec))
+        if overrides:
+            gw._deep_merge(gw.spec.get("config", {}), overrides)
         path = gw.save()
         self._gateways[gw_id] = gw
         bus.emit("gateway.created", {"id": gw_id, "template": template}, "gateway_manager")
         log.info("Шлюз создан: %s (%s) → %s", gw_id, template, path)
         return (f"✅ Шлюз '{gw_id}' создан:\n"
                 f"   Шаблон: {template}\n"
-                f"   Описание: {GATEWAY_TEMPLATES[template]['description']}\n"
+                f"   Описание: {self._templates[template].get('description', 'custom gateway template')}\n"
                 f"   Конфиг: {path}")
 
     def prepare_firmware(self, gw_id: str, template: str, port: str = None) -> str:
@@ -164,7 +200,7 @@ class GatewayManager:
             gw = self._gateways[gw_id]
             if gw.template != template:
                 gw.template = template
-                gw.spec = dict(GATEWAY_TEMPLATES.get(template, {}))
+                gw.spec = dict(self._templates.get(template, {}))
                 gw.status = "configured"
                 gw.save()
 
@@ -310,7 +346,7 @@ void loop() {{
         if not self._gateways:
             return ("📡 Шлюзов нет.\n"
                     f"Создай: создай шлюз [id] [шаблон]\n"
-                    f"Шаблоны: {', '.join(GATEWAY_TEMPLATES.keys())}")
+                    f"Шаблоны: {', '.join(self._templates.keys())}")
         lines = ["📡 IoT ШЛЮЗЫ:"]
         for gw in self._gateways.values():
             lines.append(f"  • {gw.id} [{gw.template}] статус={gw.status}")
@@ -318,9 +354,49 @@ void loop() {{
 
     def list_templates(self) -> str:
         lines = ["📋 ШАБЛОНЫ ШЛЮЗОВ:"]
-        for name, tmpl in GATEWAY_TEMPLATES.items():
+        for name, tmpl in self._templates.items():
             lines.append(f"  • {name}: {tmpl['description']}")
         return "\n".join(lines)
+
+    def register_template(self, name: str, description: str, protocol: str,
+                          firmware: str = "custom_bridge", hardware: str = "Generic gateway",
+                          config: dict | None = None) -> str:
+        safe_name = (name or "").strip().lower().replace(" ", "_")
+        protocol_name = (protocol or "").strip().lower()
+        if not safe_name:
+            return "❌ Имя шаблона пустое."
+        if not protocol_name:
+            return "❌ Протокол не указан."
+        if safe_name in GATEWAY_TEMPLATES:
+            return f"❌ Шаблон '{safe_name}' зарезервирован системно. Используй другое имя."
+
+        existed = safe_name in self._templates
+        selected_firmware = (firmware or "").strip() or self._suggest_firmware(protocol_name)
+
+        template_data = {
+            "description": description or f"Custom template for {protocol_name}",
+            "hardware": hardware,
+            "protocol": protocol_name,
+            "firmware": selected_firmware,
+            "config": config or {
+                "transport": "serial",
+                "baudrate": 115200,
+                "notes": "auto-learned template",
+            },
+        }
+        self._templates[safe_name] = template_data
+
+        custom = {
+            k: v for k, v in self._templates.items()
+            if k not in GATEWAY_TEMPLATES
+        }
+        _save_custom_templates(custom)
+        status = "обновлён" if existed else "зарегистрирован"
+        return (f"✅ Шаблон {status}: {safe_name} [{protocol_name}]\n"
+            f"   Прошивка: {selected_firmware}")
+
+    def templates(self) -> dict:
+        return dict(self._templates)
 
     def get_config(self, gw_id: str) -> str:
         gw = self._gateways.get(gw_id)

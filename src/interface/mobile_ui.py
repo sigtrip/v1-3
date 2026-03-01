@@ -31,6 +31,7 @@ class ArgosMobileUI(App):
         self.core    = core
         self.admin   = admin
         self.flasher = flasher
+        self._listening = False
 
     def build(self):
         root = BoxLayout(orientation='vertical', padding=12, spacing=8)
@@ -92,6 +93,13 @@ class ArgosMobileUI(App):
             iot_grid.add_widget(btn)
         root.add_widget(iot_grid)
 
+        voice_grid = BoxLayout(size_hint_y=None, height=44, spacing=6)
+        listen_btn = Button(text="🎙 Слушай меня", font_size='13sp',
+                            background_color=(0.1, 0.4, 0.1, 1))
+        listen_btn.bind(on_press=lambda _: self._start_listen())
+        voice_grid.add_widget(listen_btn)
+        root.add_widget(voice_grid)
+
         # ── Чат ───────────────────────────────────────────
         scroll = ScrollView()
         self.chat = Label(
@@ -120,8 +128,7 @@ class ArgosMobileUI(App):
 
         mic_btn = Button(text="🎤", size_hint_x=None, width=50,
                          font_size='16sp', background_color=(0.1, 0.4, 0.1, 1))
-        mic_btn.bind(on_press=lambda _: threading.Thread(
-            target=self._listen, daemon=True).start())
+        mic_btn.bind(on_press=lambda _: self._start_listen())
         inp.add_widget(mic_btn)
         root.add_widget(inp)
 
@@ -152,11 +159,25 @@ class ArgosMobileUI(App):
         self._append(f"[color=00d4ff]👁 АРГОС [{res['state']}]:[/color]\n{res['answer']}\n\n")
 
     # ── ГОЛОСОВОЙ ВВОД ────────────────────────────────────
+    def _start_listen(self):
+        if self._listening:
+            return
+        self._listening = True
+        self._append("[color=88ff88]🎙 Слушаю тебя...[/color]\n")
+        threading.Thread(target=self._listen, daemon=True).start()
+
     def _listen(self):
+        text = ""
         if self.core:
-            text = self.core.listen()
-            if text:
-                Clock.schedule_once(lambda dt: self._send(text))
+            text = self.core.listen() or ""
+        Clock.schedule_once(lambda dt: self._after_listen(text))
+
+    def _after_listen(self, text: str):
+        self._listening = False
+        if text:
+            self._send(text)
+        else:
+            self._append("[color=ff8800]👂 Не распознано. Попробуй снова.[/color]\n")
 
     def _append(self, text: str):
         self.chat.text += text
