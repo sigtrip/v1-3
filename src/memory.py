@@ -8,6 +8,7 @@ import sqlite3
 import time
 import re
 import hashlib
+import threading
 from src.argos_logger import get_logger
 from src.knowledge.vector_store import ArgosVectorStore
 
@@ -18,13 +19,26 @@ DB_PATH = "data/memory.db"
 class ArgosMemory:
     def __init__(self):
         os.makedirs("data", exist_ok=True)
+        self._db_lock = threading.RLock()
         self.conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        self._configure_sqlite()
         self.vector = ArgosVectorStore(path="data/chroma")
         self._init_db()
         self._warmup_vector_index()
 
+    def _configure_sqlite(self):
+        try:
+            self.conn.execute("PRAGMA journal_mode=WAL;")
+            self.conn.execute("PRAGMA synchronous=NORMAL;")
+            self.conn.execute("PRAGMA busy_timeout=5000;")
+            self.conn.execute("PRAGMA temp_store=MEMORY;")
+            self.conn.execute("PRAGMA foreign_keys=ON;")
+        except Exception as e:
+            log.warning("SQLite PRAGMA setup: %s", e)
+
     def _init_db(self):
-        self.conn.executescript("""
+        with self._db_lock:
+            self.conn.executescript("""
             CREATE TABLE IF NOT EXISTS facts (
                 id        INTEGER PRIMARY KEY AUTOINCREMENT,
                 category  TEXT NOT NULL DEFAULT 'general',
@@ -57,8 +71,8 @@ class ArgosMemory:
                 UNIQUE(subject, predicate, object)
             );
         """)
-        self._ensure_fact_columns()
-        self.conn.commit()
+            self._ensure_fact_columns()
+            self.conn.commit()
         log.debug("Memory DB инициализирована.")
 
     def _ensure_fact_columns(self):
@@ -69,11 +83,12 @@ class ArgosMemory:
             "ALTER TABLE facts ADD COLUMN last_accessed REAL DEFAULT 0",
             "ALTER TABLE facts ADD COLUMN fingerprint TEXT DEFAULT ''",
         ]
-        for sql in migrations:
-            try:
-                self.conn.execute(sql)
-            except Exception:
-                pass
+        with self._db_lock:
+            for sql in migrations:
+                try:
+                    self.conn.execute(sql)
+                except Exception:
+                    pass
 
     @staticmethod
     def _normalize_text(text: str) -> str:
@@ -101,11 +116,12 @@ class ArgosMemory:
     def _cleanup_noise(self, ttl_seconds: int = 72 * 3600):
         try:
             threshold = time.time() - ttl_seconds
-            self.conn.execute(
-                "DELETE FROM facts WHERE category='noise' AND ((expires_at > 0 AND expires_at <= ?) OR (expires_at = 0 AND strftime('%s', ts) <= ?))",
-                (time.time(), threshold),
-            )
-            self.conn.commit()
+            with self._db_lock:
+                self.conn.execute(
+                    "DELETE FROM facts WHERE category='noise' AND ((expires_at > 0 AND expires_at <= ?) OR (expires_at = 0 AND strftime('%s', ts) <= ?))",
+                    (time.time(), threshold),
+                )
+                self.conn.commit()
         except Exception as e:
             log.warning("Memory noise cleanup: %s", e)
 
@@ -147,28 +163,31 @@ class ArgosMemory:
         fp = self._fingerprint(category, key, value)
         self._cleanup_noise()
 
-        dup = self.conn.execute(
-            "SELECT id, value FROM facts WHERE category=? AND key=?",
-            (category, key),
-        ).fetchone()
+        with self._db_lock:
+            dup = self.conn.execute(
+                "SELECT id, value FROM facts WHERE category=? AND key=?",
+                (category, key),
+            ).fetchone()
         if dup and self._normalize_text(dup[1]) == norm_val:
-            self.conn.execute(
-                "UPDATE facts SET access_count=access_count+1, last_accessed=? WHERE id=?",
-                (time.time(), dup[0]),
-            )
-            self.conn.commit()
+            with self._db_lock:
+                self.conn.execute(
+                    "UPDATE facts SET access_count=access_count+1, last_accessed=? WHERE id=?",
+                    (time.time(), dup[0]),
+                )
+                self.conn.commit()
             return f"ℹ️ Уже в памяти: {key} → {value}"
 
         expires_at = float(time.time() + ttl_sec) if ttl_sec and ttl_sec > 0 else 0.0
         signal = self._default_signal(category, key, value)
-        self.conn.execute(
-            "INSERT INTO facts (category, key, value, utility_signal, expires_at, access_count, last_accessed, fingerprint) VALUES (?,?,?,?,?,?,?,?) "
-            "ON CONFLICT(category,key) DO UPDATE SET "
-            "value=excluded.value, ts=datetime('now','localtime'), utility_signal=excluded.utility_signal, "
-            "expires_at=excluded.expires_at, access_count=facts.access_count+1, last_accessed=excluded.last_accessed, fingerprint=excluded.fingerprint",
-            (category, key, value, signal, expires_at, 1, time.time(), fp)
-        )
-        self.conn.commit()
+        with self._db_lock:
+            self.conn.execute(
+                "INSERT INTO facts (category, key, value, utility_signal, expires_at, access_count, last_accessed, fingerprint) VALUES (?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(category,key) DO UPDATE SET "
+                "value=excluded.value, ts=datetime('now','localtime'), utility_signal=excluded.utility_signal, "
+                "expires_at=excluded.expires_at, access_count=facts.access_count+1, last_accessed=excluded.last_accessed, fingerprint=excluded.fingerprint",
+                (category, key, value, signal, expires_at, 1, time.time(), fp)
+            )
+            self.conn.commit()
         self._index_text(
             f"[{category}] {key}: {value}",
             metadata={"kind": "fact", "category": category, "key": key},
@@ -179,21 +198,24 @@ class ArgosMemory:
         return f"✅ Запомнил: {key} → {value}"
 
     def recall(self, key: str, category: str = "user") -> str | None:
-        row = self.conn.execute(
-            "SELECT id, value FROM facts WHERE category=? AND key=?", (category, key)
-        ).fetchone()
+        with self._db_lock:
+            row = self.conn.execute(
+                "SELECT id, value FROM facts WHERE category=? AND key=?", (category, key)
+            ).fetchone()
         if not row:
             return None
-        self.conn.execute(
-            "UPDATE facts SET access_count=access_count+1, utility_signal=utility_signal+0.1, last_accessed=? WHERE id=?",
-            (time.time(), row[0]),
-        )
-        self.conn.commit()
+        with self._db_lock:
+            self.conn.execute(
+                "UPDATE facts SET access_count=access_count+1, utility_signal=utility_signal+0.1, last_accessed=? WHERE id=?",
+                (time.time(), row[0]),
+            )
+            self.conn.commit()
         return row[1]
 
     def forget(self, key: str, category: str = "user") -> str:
-        self.conn.execute("DELETE FROM facts WHERE category=? AND key=?", (category, key))
-        self.conn.commit()
+        with self._db_lock:
+            self.conn.execute("DELETE FROM facts WHERE category=? AND key=?", (category, key))
+            self.conn.commit()
         return f"🗑️ Удалено из памяти: {key}"
 
     def search_semantic(self, query: str, top_k: int = 5) -> list[dict]:
@@ -272,12 +294,13 @@ class ArgosMemory:
 
     # ── ЗАМЕТКИ ────────────────────────────────────────────
     def add_note(self, title: str, body: str) -> str:
-        self.conn.execute(
-            "INSERT INTO notes (title, body) VALUES (?,?)", (title, body)
-        )
-        self.conn.commit()
-        row = self.conn.execute("SELECT last_insert_rowid()")
-        note_id = row.fetchone()[0]
+        with self._db_lock:
+            self.conn.execute(
+                "INSERT INTO notes (title, body) VALUES (?,?)", (title, body)
+            )
+            self.conn.commit()
+            row = self.conn.execute("SELECT last_insert_rowid()")
+            note_id = row.fetchone()[0]
         self._index_text(
             f"Заметка: {title}\n{body}",
             metadata={"kind": "note", "note_id": note_id, "title": title},
@@ -306,17 +329,19 @@ class ArgosMemory:
         return f"📝 #{note_id} [{ts[:16]}] {title}\n\n{body}"
 
     def delete_note(self, note_id: int) -> str:
-        self.conn.execute("DELETE FROM notes WHERE id=?", (note_id,))
-        self.conn.commit()
+        with self._db_lock:
+            self.conn.execute("DELETE FROM notes WHERE id=?", (note_id,))
+            self.conn.commit()
         return f"🗑️ Заметка #{note_id} удалена."
 
     # ── НАПОМИНАНИЯ ────────────────────────────────────────
     def add_reminder(self, text: str, seconds_from_now: int) -> str:
         remind_at = time.time() + seconds_from_now
-        self.conn.execute(
-            "INSERT INTO reminders (text, remind_at) VALUES (?,?)", (text, remind_at)
-        )
-        self.conn.commit()
+        with self._db_lock:
+            self.conn.execute(
+                "INSERT INTO reminders (text, remind_at) VALUES (?,?)", (text, remind_at)
+            )
+            self.conn.commit()
         import datetime
         dt = datetime.datetime.fromtimestamp(remind_at).strftime("%H:%M %d.%m")
         return f"⏰ Напоминание установлено на {dt}: {text}"
