@@ -171,6 +171,9 @@ class ArgosCore:
         self.ha = None
         self.tool_calling = None
         self.git_ops = None
+        self.task_queue = None
+        self._runtime_admin = None
+        self._runtime_flasher = None
         self.gemini_rpm_limit = 15
         self._gemini_limiter = _SlidingWindowRateLimiter(max_calls=self.gemini_rpm_limit, window_seconds=60)
         self._last_gemini_rate_limited = False
@@ -199,6 +202,7 @@ class ArgosCore:
         self._init_modules()
         self._init_tool_calling()
         self._init_git_ops()
+        self._init_task_queue()
         log.info("ArgosCore FINAL v2.0 инициализирован.")
 
     # ═══════════════════════════════════════════════════════
@@ -347,6 +351,27 @@ class ArgosCore:
             log.info("GitOps: OK")
         except Exception as e:
             log.warning("GitOps: %s", e)
+
+    def _init_task_queue(self):
+        try:
+            from src.task_queue import TaskQueueManager
+            self.task_queue = TaskQueueManager(worker_count=2)
+            self.task_queue.register_runner("logic.command", self._queue_run_logic)
+            self.task_queue.start()
+            log.info("TaskQueue: OK")
+        except Exception as e:
+            log.warning("TaskQueue: %s", e)
+
+    def _queue_run_logic(self, task) -> str:
+        command = str(task.payload.get("command", "") or "").strip()
+        if not command:
+            return "Пустая queued-команда"
+        if not self._runtime_admin or not self._runtime_flasher:
+            return "Runtime контекст недоступен для очереди (admin/flasher не инициализированы)."
+        result = self.process_logic(command, self._runtime_admin, self._runtime_flasher)
+        if isinstance(result, dict):
+            return str(result.get("answer", ""))
+        return str(result)
 
     def _on_alert(self, msg: str):
         log.warning("ALERT: %s", msg)
@@ -878,6 +903,8 @@ class ArgosCore:
     # ОСНОВНАЯ ЛОГИКА
     # ═══════════════════════════════════════════════════════
     def process_logic(self, user_text: str, admin, flasher) -> dict:
+        self._runtime_admin = admin
+        self._runtime_flasher = flasher
         q_data = self.quantum.generate_state()
         if self.context:
             self.context.set_quantum_state(q_data["name"])
@@ -1043,6 +1070,28 @@ class ArgosCore:
             return self.curiosity.stop()
         if self.curiosity and any(k in t for k in ["любопытство сейчас", "curiosity now"]):
             return self.curiosity.ask_now()
+
+        if self.task_queue and any(k in t for k in ["очередь статус", "queue status"]):
+            return self.task_queue.status()
+        if self.task_queue and any(k in t for k in ["очередь результаты", "queue results"]):
+            return self.task_queue.last_results()
+        if self.task_queue and (t.startswith("в очередь ") or t.startswith("queue run ")):
+            cmd = text
+            if t.startswith("в очередь "):
+                cmd = text[len("в очередь "):].strip()
+            elif t.startswith("queue run "):
+                cmd = text[len("queue run "):].strip()
+            if not cmd:
+                return "Формат: в очередь [команда]"
+            prio = 1 if any(k in cmd.lower() for k in ["срочно", "critical", "urgent"]) else 5
+            task_id = self.task_queue.submit("logic.command", {"command": cmd}, priority=prio)
+            return f"📥 Команда поставлена в очередь: #{task_id} (priority={prio})"
+        if self.task_queue and (t.startswith("очередь воркеры ") or t.startswith("queue workers ")):
+            try:
+                count = int(text.split()[-1])
+                return self.task_queue.set_workers(count)
+            except Exception:
+                return "Формат: очередь воркеры [число]"
 
         if any(k in t for k in ["lmstudio статус", "lm studio статус", "lmstudio status", "lm studio status"]):
             return self._lmstudio_status()
@@ -1700,6 +1749,7 @@ class ArgosCore:
     гомеостаз статус · гомеостаз вкл/выкл
     любопытство статус · любопытство вкл/выкл · любопытство сейчас
         git статус · git коммит [msg] · git пуш · git автокоммит и пуш [msg]
+                очередь статус · очередь результаты · в очередь [команда] · очередь воркеры [n]
 
 👁️ VISION (нужен Gemini API)
   посмотри на экран · что на экране
