@@ -170,6 +170,9 @@ class ArgosCore:
         self.operator_mode = False
         self.module_loader = None
         self.ha = None
+        self.nfc = None
+        self.usb_diag = None
+        self.bt_scanner = None
         self.tool_calling = None
         self.git_ops = None
         self.task_queue = None
@@ -205,6 +208,9 @@ class ArgosCore:
         self._init_iot()
         self._init_smart_systems()
         self._init_home_assistant()
+        self._init_nfc()
+        self._init_usb_diagnostics()
+        self._init_bluetooth()
         self._init_modules()
         self._init_tool_calling()
         self._init_git_ops()
@@ -341,6 +347,33 @@ class ArgosCore:
             log.info("Home Assistant bridge: %s", "ON" if self.ha.enabled else "OFF")
         except Exception as e:
             log.warning("Home Assistant bridge: %s", e)
+
+    def _init_nfc(self):
+        """NFC Manager — мониторинг собственных NFC-меток."""
+        try:
+            from src.connectivity.nfc_manager import NFCManager
+            self.nfc = NFCManager(android_mode=False)
+            log.info("NFC Manager: OK (%d меток)", len(self.nfc.list_tags()))
+        except Exception as e:
+            log.warning("NFC Manager: %s", e)
+
+    def _init_usb_diagnostics(self):
+        """USB Diagnostics — диагностика авторизованных устройств."""
+        try:
+            from src.connectivity.usb_diagnostics import USBDiagnostics
+            self.usb_diag = USBDiagnostics(android_mode=False)
+            log.info("USB Diagnostics: OK (%d авториз.)", len(self.usb_diag.list_authorized()))
+        except Exception as e:
+            log.warning("USB Diagnostics: %s", e)
+
+    def _init_bluetooth(self):
+        """Bluetooth Scanner — инвентаризация IoT."""
+        try:
+            from src.connectivity.bluetooth_scanner import ArgosBluetoothScanner
+            self.bt_scanner = ArgosBluetoothScanner()
+            log.info("BT Scanner: OK (%d в инвентаре)", len(self.bt_scanner.devices))
+        except Exception as e:
+            log.warning("BT Scanner: %s", e)
 
     def _init_tool_calling(self):
         try:
@@ -1856,6 +1889,110 @@ class ArgosCore:
                     return self.gateway_mgr.get_config(gw_id)
                 return "Формат: конфиг шлюза [id]"
 
+        # ══════════════════════════════════════════════════
+        # NFC МЕТКИ
+        # ══════════════════════════════════════════════════
+        if self.nfc:
+            if any(k in t for k in ["nfc статус", "статус nfc", "nfc status"]):
+                return json.dumps(self.nfc.get_status(), ensure_ascii=False, indent=2)
+            if any(k in t for k in ["nfc метки", "список меток", "nfc tags"]):
+                tags = self.nfc.list_tags()
+                if not tags:
+                    return "📡 NFC: Нет зарегистрированных меток."
+                lines = ["📡 NFC МЕТКИ:"]
+                for tag in tags:
+                    lines.append(f"  • {tag.name} (UID: {tag.uid}) — {tag.action} [{tag.location}]")
+                return "\n".join(lines)
+            if any(k in t for k in ["nfc скан", "nfc сканирование", "сканируй nfc"]):
+                result = self.nfc.scan_single(timeout=10)
+                if result:
+                    return f"📡 NFC: найдена метка — UID: {result.get('uid', '?')}, тип: {result.get('type', '?')}"
+                return "📡 NFC: метка не обнаружена (таймаут 10с)"
+            if "nfc регистрация" in t or "зарегистрируй метку" in t:
+                # nfc регистрация [uid] [имя] [действие] [данные]
+                tail = text.split("регистрация" if "регистрация" in t else "метку", 1)[-1].strip().split()
+                if len(tail) >= 3:
+                    from src.connectivity.nfc_manager import TagAction
+                    uid, name = tail[0], tail[1]
+                    action_str = tail[2] if len(tail) > 2 else "log_event"
+                    action = TagAction.LOG_EVENT
+                    for a in TagAction:
+                        if a.value == action_str:
+                            action = a
+                            break
+                    data = {"payload": " ".join(tail[3:])} if len(tail) > 3 else {}
+                    tag = self.nfc.register_tag(uid, name, action, data)
+                    return f"📡 NFC: метка '{tag.name}' зарегистрирована (UID: {tag.uid})"
+                return "Формат: nfc регистрация [uid] [имя] [действие] [данные...]"
+            if "nfc удали" in t or "удали метку" in t:
+                tail = text.split("удали", 1)[-1].strip().split()
+                if tail:
+                    ok = self.nfc.unregister_tag(tail[0])
+                    return f"📡 NFC: метка {'удалена' if ok else 'не найдена'}"
+                return "Формат: nfc удали [uid]"
+
+        # ══════════════════════════════════════════════════
+        # USB ДИАГНОСТИКА
+        # ══════════════════════════════════════════════════
+        if self.usb_diag:
+            if any(k in t for k in ["usb статус", "статус usb", "usb status"]):
+                return json.dumps(self.usb_diag.get_status(), ensure_ascii=False, indent=2)
+            if any(k in t for k in ["usb скан", "usb устройства", "usb scan", "usb devices"]):
+                devices = self.usb_diag.scan_devices()
+                if not devices:
+                    return "🔌 USB: устройства не обнаружены."
+                lines = ["🔌 USB УСТРОЙСТВА:"]
+                for d in devices:
+                    auth = "✓" if d.get("authorized") else "✗"
+                    lines.append(f"  [{auth}] {d.get('port', '?')}: {d.get('description', '?')} "
+                                 f"({d.get('vid', '')}:{d.get('pid', '')}) — {d.get('device_type', '?')}")
+                return "\n".join(lines)
+            if any(k in t for k in ["usb авторизованные", "usb authorized"]):
+                devs = self.usb_diag.list_authorized()
+                if not devs:
+                    return "🔌 USB: нет авторизованных устройств."
+                lines = ["🔌 АВТОРИЗОВАННЫЕ USB:"]
+                for d in devs:
+                    lines.append(f"  • {d.name} ({d.vid}:{d.pid}) — {d.device_type}")
+                return "\n".join(lines)
+
+        # ══════════════════════════════════════════════════
+        # BLUETOOTH СКАНЕР
+        # ══════════════════════════════════════════════════
+        if self.bt_scanner:
+            if any(k in t for k in ["bt статус", "bluetooth статус", "bt status"]):
+                return json.dumps(self.bt_scanner.get_statistics(), ensure_ascii=False, indent=2)
+            if any(k in t for k in ["bt инвентарь", "bt devices", "bluetooth устройства", "bt устройства"]):
+                inv = self.bt_scanner.get_inventory()
+                if not inv:
+                    return "📶 BT: инвентарь пуст."
+                lines = ["📶 BLUETOOTH ИНВЕНТАРЬ:"]
+                for d in inv[:30]:
+                    name = d.get("name") or d.get("address", "?")
+                    lines.append(f"  • {name} — {d.get('device_type', '?')} (RSSI: {d.get('rssi', '?')})")
+                if len(inv) > 30:
+                    lines.append(f"  ... и ещё {len(inv) - 30}")
+                return "\n".join(lines)
+            if any(k in t for k in ["bt скан", "bluetooth скан", "bt scan"]):
+                duration = 10.0
+                parts = text.split()
+                for p in parts:
+                    try:
+                        duration = float(p)
+                        break
+                    except ValueError:
+                        pass
+                devices = self.bt_scanner.scan_sync(duration)
+                return f"📶 BT: обнаружено {len(devices)} устройств за {duration}с."
+            if any(k in t for k in ["bt iot", "bt iot устройства", "bluetooth iot"]):
+                iot = self.bt_scanner.get_iot_devices()
+                if not iot:
+                    return "📶 BT: IoT-устройства не найдены."
+                lines = ["📶 BT IoT УСТРОЙСТВА:"]
+                for d in iot:
+                    lines.append(f"  • {d.name or d.address} — {d.device_type.value}")
+                return "\n".join(lines)
+
         # ── Помощь ────────────────────────────────────────
         if t.strip() in ("помощь", "команды", "что умеешь", "help", "?"):
             return self._help()
@@ -1976,6 +2113,19 @@ class ArgosCore:
     ha статус · ha состояния
     ha сервис [domain] [service] [key=value]
     ha mqtt [topic] [key=value]
+
+📡 NFC МЕТКИ
+  nfc статус · nfc метки · nfc скан
+  nfc регистрация [uid] [имя] [действие] [данные]
+  nfc удали [uid]
+
+🔌 USB ДИАГНОСТИКА
+  usb статус · usb скан · usb устройства
+  usb авторизованные
+
+📶 BLUETOOTH СКАНЕР
+  bt статус · bt инвентарь · bt скан [сек]
+  bt iot
 
 🧩 МОДУЛИ
     список модулей
