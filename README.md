@@ -29,6 +29,13 @@
 | 📡 **IoT / Mesh** | Zigbee, LoRa, WiFi Mesh, MQTT, Modbus + Zero-Config Tasmota Discovery (Home Assistant топики) |
 | 🏭 **Пром. протоколы** | BACnet, Modbus RTU/ASCII/TCP, KNX, LonWorks, M-Bus, OPC UA, MQTT |
 | 🔧 **Шлюзы/прошивка** | Создание gateway, прошивка ESP8266/RP2040/STM32H503, поддержка LoRa SX1276 |
+| 📡 **NFC** | Мониторинг NFC-меток (NDEF/MIFARE/NTAG), регистрация, чтение/запись NDEF |
+| 🔌 **USB-диагностика** | Авторизация USB-устройств, VID/PID детект (Arduino/ESP/STM32/RP2040), serial/CDC/HID |
+| 📶 **Bluetooth** | BLE + Classic сканер, RSSI-трекинг, MAC-детекция производителя, IoT-инвентаризация |
+| 🎯 **Speculative Consensus v2** | Параллельные Drafter-ы + структурированный Verifier, per-drafter quality tracking |
+| 🧠 **Batch Idle Learning** | Пакетное alignment (до 8 уроков), Active Drafter Calibration с few-shot зондированием |
+| 🔄 **P2P Role Routing** | Автоматическое назначение ролей: weak→Drafter, master→Verifier по ресурсам ноды |
+| 📊 **Acceptance Rate** | Per-drafter метрики приёмки, auto-recovery RPS при отскоке acceptance rate |
 | 🧰 **GitOps** | Встроенные команды `git статус`, `git коммит`, `git пуш`, `git автокоммит и пуш` |
 
 ---
@@ -92,7 +99,10 @@ ArgosUniversal/
     │   ├── mesh_network.py       # ★ Mesh-сеть + прошивка gateway
     │   ├── gateway_manager.py    # ★ Создание и прошивка IoT-шлюзов
     │   ├── event_bus.py          # Шина событий (PriorityQueue)
-    │   └── android_service.py    # Фоновый сервис Android
+    │   ├── nfc_manager.py        # ★ NFC-мониторинг (NDEF/MIFARE/NTAG)
+    │   ├── usb_diagnostics.py    # ★ USB-диагностика авторизованных устройств
+    │   ├── bluetooth_scanner.py  # ★ BLE + Classic сканер, IoT-inventory
+    │   └── android_service.py    # ArgosOmniService — unified background service
     │
     ├── factory/
     │   ├── replicator.py         # ZIP-репликация системы
@@ -182,6 +192,9 @@ ARGOS_TASK_RPS_IOT=6
 ARGOS_TASK_RPS_AI=3
 ARGOS_TASK_RPS_HEAVY=1
 ARGOS_P2P_FAILOVER_LIMIT=3
+ARGOS_ALIGN_BATCH=8
+ARGOS_DRAFTER_CALIBRATION=on
+ARGOS_ACCEPTANCE_FLOOR=0.55
 # опционально: тонкая настройка скоринга P2P
 # ARGOS_P2P_WEIGHT_AUTH=0.5
 # ARGOS_P2P_WEIGHT_POWER=0.5
@@ -491,6 +504,30 @@ git статус | git коммит [сообщение] | git пуш | git ав
 очередь воркеры [n]
 ```
 
+### NFC
+```
+nfc статус                     # состояние NFC-подсистемы
+nfc метки                      # зарегистрированные метки
+nfc скан                       # сканировать одну метку
+nfc регистрация [uid] [имя]    # зарегистрировать метку
+nfc удали [uid]                # удалить метку
+```
+
+### USB-диагностика
+```
+usb статус                     # состояние USB-подсистемы
+usb скан                       # сканировать подключённые устройства
+usb авторизованные             # список авторизованных устройств
+```
+
+### Bluetooth
+```
+bt статус                      # состояние BT-подсистемы
+bt инвентарь                   # полная инвентаризация устройств
+bt скан                        # быстрый BLE-скан
+bt iot                         # только IoT-устройства
+```
+
 ### Home Assistant
 ```
 ha статус
@@ -639,6 +676,15 @@ Zero-Config режим Tasmota:
 - Adaptive routing: при выборе ноды учитываются live-метрики (RTT, inflight, p95 latency,
   error_rate, свежесть состояния), есть failover на топ-кандидатов и локальный fallback
 - Live-тюнинг роутинга доступен командами `p2p tuning`, `p2p вес [name] [value]`, `p2p failover [1..5]`
+- **Speculative Consensus v2**: несколько Drafter-нод генерируют ответы параллельно, Verifier-нода
+  агрегирует с аннотацией `[ERRORS]` / `[FINAL]`, per-drafter quality tracking через observability
+- **Role Routing**: роль назначается автоматически — gateway/weak (≤2 cores, <3 GB RAM) → Drafter,
+  master/мощная нода → Verifier; формула: `max(authority, ram_score)`
+- **Acceptance Rate**: per-drafter метрики приёмки (`observability.get_drafter_acceptance()`),
+  `drafter_quality_report()` с trend-анализом; при падении acceptance ниже floor — backpressure RPS,
+  при отскоке +10% — auto-recovery RPS обратно к baseline
+- **Batch Idle Learning**: в idle-цикле до 8 уроков за пакет (`ARGOS_ALIGN_BATCH`), Active Drafter
+  Calibration — few-shot зондирование drafter-а по exemplar-у verifier-а
 
 Roadmap:
 - Migration target: libp2p (Kademlia/mDNS + gossipsub + request-response)
@@ -671,12 +717,14 @@ Roadmap:
 ## 📊 Аудит v1.0.0-Absolute
 
 ```
-68 файлов Python · 68/68 синтаксис ✅
+71 файл Python · 71/71 синтаксис ✅
 30/30 функциональных тестов ✅
 40+ импортируемых модулей
-80+ голосовых/текстовых команд
+95+ голосовых/текстовых команд
 7 умных систем · 5 IoT-протоколов · 5 шаблонов шлюзов
-~7000 строк кода
+NFC / USB / Bluetooth подсистемы
+Speculative Consensus v2 · Batch Idle Learning · P2P Role Routing
+~9200 строк кода
 ```
 
 ---
