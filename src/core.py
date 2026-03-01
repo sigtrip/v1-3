@@ -140,6 +140,8 @@ class ArgosCore:
         self.context    = DialogContext(max_turns=10)
         self.agent      = ArgosAgent(self)
         self.ollama_url = "http://localhost:11434/api/generate"
+        self.lmstudio_url = (os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1/chat/completions") or "").strip()
+        self.lmstudio_model = (os.getenv("LMSTUDIO_MODEL", "local-model") or "").strip() or "local-model"
         self.ai_mode    = self._normalize_ai_mode(os.getenv("ARGOS_AI_MODE", "auto"))
         self.voice_on   = os.getenv("ARGOS_VOICE_DEFAULT", "off").strip().lower() in (
             "1", "true", "on", "yes", "да", "вкл"
@@ -494,12 +496,15 @@ class ArgosCore:
     # ═══════════════════════════════════════════════════════
     def _normalize_ai_mode(self, mode: str) -> str:
         value = (mode or "auto").strip().lower()
+        canonical = value.replace(" ", "").replace("-", "")
         if value in {"gemini", "google", "g"}:
             return "gemini"
         if value in {"gigachat", "giga", "sber", "gc"}:
             return "gigachat"
         if value in {"yandexgpt", "yandex", "ya", "yg"}:
             return "yandexgpt"
+        if canonical in {"lmstudio", "lm", "lms", "studio"}:
+            return "lmstudio"
         if value in {"ollama", "local", "o"}:
             return "ollama"
         return "auto"
@@ -515,6 +520,8 @@ class ArgosCore:
             return "GigaChat"
         if self.ai_mode == "yandexgpt":
             return "YandexGPT"
+        if self.ai_mode == "lmstudio":
+            return "LM Studio"
         if self.ai_mode == "ollama":
             return "Ollama"
         return "Auto"
@@ -538,6 +545,11 @@ class ArgosCore:
         else:
             log.info("YandexGPT недоступен — нет IAM/FOLDER")
 
+        if self._has_lmstudio_config():
+            log.info("LM Studio: конфигурация обнаружена (%s)", self.lmstudio_url)
+        else:
+            log.info("LM Studio недоступен — нет BASE_URL")
+
     def _gemini_rate_limit_text(self) -> str:
         return f"Gemini: превышен лимит {self.gemini_rpm_limit} запросов в минуту. Повтори чуть позже или переключи режим ИИ."
 
@@ -552,6 +564,9 @@ class ArgosCore:
         iam = (os.getenv("YANDEX_IAM_TOKEN", "") or "").strip()
         folder = (os.getenv("YANDEX_FOLDER_ID", "") or "").strip()
         return bool(iam and folder)
+
+    def _has_lmstudio_config(self) -> bool:
+        return bool((self.lmstudio_url or "").strip())
 
     def _get_gigachat_token(self) -> str | None:
         if self._gigachat_access_token and self._gigachat_token_expires_at <= 0:
@@ -726,6 +741,43 @@ class ArgosCore:
             log.error("Ollama: %s", e)
             return None
 
+    def _ask_lmstudio(self, context: str, user_text: str) -> str | None:
+        if not self._has_lmstudio_config():
+            return None
+        try:
+            hist = self.context.get_prompt_context()
+            payload = {
+                "model": self.lmstudio_model,
+                "messages": [
+                    {"role": "system", "content": context},
+                    {"role": "user", "content": f"{hist}\n\n{user_text}"},
+                ],
+                "temperature": 0.4,
+                "max_tokens": 1200,
+                "stream": False,
+            }
+            response = requests.post(
+                self.lmstudio_url,
+                json=payload,
+                timeout=25,
+            )
+            if not response.ok:
+                log.error("LM Studio: HTTP %s %s", response.status_code, response.text[:400])
+                return None
+
+            data = response.json()
+            choices = data.get("choices") or []
+            if not choices:
+                return None
+            message = choices[0].get("message") or {}
+            content = message.get("content")
+            if isinstance(content, str):
+                return content.strip()
+            return None
+        except Exception as e:
+            log.error("LM Studio: %s", e)
+            return None
+
     def _auto_providers(self) -> list[tuple[str, callable]]:
         providers = []
         if self.model:
@@ -734,6 +786,8 @@ class ArgosCore:
             providers.append(("GigaChat", self._ask_gigachat))
         if self._has_yandexgpt_config():
             providers.append(("YandexGPT", self._ask_yandexgpt))
+        if self._has_lmstudio_config():
+            providers.append(("LMStudio", self._ask_lmstudio))
         providers.append(("Ollama", self._ask_ollama))
         return providers[:self.auto_collab_max_models]
 
@@ -885,6 +939,9 @@ class ArgosCore:
         elif self.ai_mode == "yandexgpt":
             answer = self._ask_yandexgpt(context, user_text)
             engine = f"{q_data['name']} (YandexGPT)"
+        elif self.ai_mode == "lmstudio":
+            answer = self._ask_lmstudio(context, user_text)
+            engine = f"{q_data['name']} (LM Studio)"
         elif self.ai_mode == "ollama":
             answer = self._ask_ollama(context, user_text)
             engine = f"{q_data['name']} (Ollama)"
@@ -898,11 +955,13 @@ class ArgosCore:
                 if self._last_gemini_rate_limited:
                     answer = self._gemini_rate_limit_text()
                 else:
-                    answer = "Gemini недоступен в текущем режиме. Переключите режим ИИ на Auto, GigaChat, YandexGPT или Ollama."
+                    answer = "Gemini недоступен в текущем режиме. Переключите режим ИИ на Auto, GigaChat, YandexGPT, LM Studio или Ollama."
             elif self.ai_mode == "gigachat":
                 answer = "GigaChat недоступен в текущем режиме. Проверьте токен/credentials или переключите режим ИИ."
             elif self.ai_mode == "yandexgpt":
                 answer = "YandexGPT недоступен в текущем режиме. Проверьте IAM_TOKEN/FOLDER_ID или переключите режим ИИ."
+            elif self.ai_mode == "lmstudio":
+                answer = "LM Studio недоступен в текущем режиме. Проверьте LMSTUDIO_BASE_URL/LMSTUDIO_MODEL или переключите режим ИИ."
             elif self.ai_mode == "ollama":
                 answer = "Ollama недоступен в текущем режиме. Проверьте локальный сервер Ollama или переключите режим ИИ."
             else:
@@ -1142,6 +1201,8 @@ class ArgosCore:
             return self.set_ai_mode("gigachat")
         if any(k in t for k in ["режим ии yandexgpt", "модель yandexgpt", "ai mode yandexgpt", "режим ии яндекс"]):
             return self.set_ai_mode("yandexgpt")
+        if any(k in t for k in ["режим ии lmstudio", "модель lmstudio", "ai mode lmstudio", "режим ии lm studio", "модель lm studio"]):
+            return self.set_ai_mode("lmstudio")
         if any(k in t for k in ["режим ии ollama", "модель ollama", "ai mode ollama"]):
             return self.set_ai_mode("ollama")
         if any(k in t for k in ["текущий режим ии", "какая модель", "ai mode"]):
@@ -1673,6 +1734,7 @@ class ArgosCore:
 
 �🎤 ГОЛОС
   голос вкл/выкл · включи wake word
+    режим ии авто/gemini/gigachat/yandexgpt/lmstudio/ollama
 
 💬 ДИАЛОГ
   контекст диалога · сброс контекста

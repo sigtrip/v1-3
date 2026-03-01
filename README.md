@@ -12,7 +12,7 @@
 
 | Слой | Что умеет |
 |------|-----------|
-| 🧠 **Интеллект** | Gemini / GigaChat / YandexGPT → Ollama/Llama3, multi-turn + Tool Calling по JSON-схемам |
+| 🧠 **Интеллект** | Gemini / GigaChat / YandexGPT / LM Studio → Ollama/Llama3, multi-turn + Tool Calling по JSON-схемам |
 | 🗣️ **Голос** | TTS (pyttsx3) + STT (SpeechRecognition) + Wake Word «Аргос» |
 | 🤖 **Агент** | Цепочки задач: «скан сети → запиши → отправь в Telegram» |
 | 👁️ **Vision** | Анализ экрана / камеры / файлов через Gemini Vision |
@@ -157,6 +157,8 @@ HA_MQTT_PORT=1883
 WHISPER_MODEL=small
 WHISPER_DEVICE=cpu
 WHISPER_COMPUTE_TYPE=int8
+LMSTUDIO_BASE_URL=http://127.0.0.1:1234/v1/chat/completions
+LMSTUDIO_MODEL=local-model
 ARGOS_HOMEOSTASIS=on
 ARGOS_HOMEOSTASIS_INTERVAL=8
 ARGOS_HOMEOSTASIS_PROTECT_CPU=78
@@ -168,7 +170,7 @@ ARGOS_CURIOSITY_RESEARCH_SEC=900
 
 Примечание по лимитам:
 - Для Gemini включён лимит: 15 запросов в минуту (включая Tool Calling и Vision).
-- Лимит применяется только к Gemini; GigaChat, YandexGPT и Ollama не ограничиваются этим правилом.
+- Лимит применяется только к Gemini; GigaChat, YandexGPT, LM Studio и Ollama не ограничиваются этим правилом.
 
 Примечание по Auto-режиму:
 - По умолчанию включён Auto-Consensus: модели отвечают по очереди с учётом предыдущих ответов, затем формируется единый итог.
@@ -394,6 +396,7 @@ p2p протокол          libp2p          zkp
 сканируй сеть   список навыков  напиши навык [описание]
 репликация      веб-панель
 голос вкл/выкл  включи wake word
+режим ии авто|gemini|gigachat|yandexgpt|lmstudio|ollama
 контекст диалога  сброс контекста
 история         помощь
 список модулей
