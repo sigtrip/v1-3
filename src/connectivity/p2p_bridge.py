@@ -301,10 +301,34 @@ class TaskDistributor:
         return "ai"
 
     def _consensus_role(self, node: dict, all_nodes: list[dict]) -> str:
+        """
+        Ролевая маршрутизация по формуле авторитета.
+        
+        Правила:
+          - Нода с наибольшим authority → Verifier-Node (валидация)
+          - Ноды с role='gateway' или cpu_cores<=2 → Drafter-Node (черновики)
+          - Остальные → Drafter-Node (по умолчанию)
+          - При равном authority — Verifier тот, у кого RAM больше
+        """
         if not all_nodes:
             return "drafter"
-        master = max(all_nodes, key=lambda n: float(n.get("authority", 0.0) or 0.0))
-        return "verifier" if node.get("node_id") == master.get("node_id") else "drafter"
+
+        # «Слабые» ноды всегда Drafter — шлюзы, маломощные
+        node_role = str(node.get("role", "worker"))
+        node_cores = int(node.get("power", {}).get("cpu_cores", 1) or 1)
+        node_ram = float(node.get("power", {}).get("ram_gb", 0.0) or 0.0)
+        if node_role == "gateway" or node_cores <= 2 or node_ram < 3.0:
+            return "drafter"
+
+        # Самая мощная нода — Verifier (Master)
+        master = max(all_nodes, key=lambda n: (
+            float(n.get("authority", 0.0) or 0.0),
+            float(n.get("power", {}).get("ram_gb", 0.0) or 0.0),
+        ))
+        if node.get("node_id") == master.get("node_id"):
+            return "verifier"
+
+        return "drafter"
 
     def _score_node(self, node: dict, task_type: str, all_nodes: list[dict] | None = None) -> float:
         if all_nodes is None:
@@ -887,16 +911,43 @@ class ArgosBridge:
         nodes = self.registry.all()
         acceptance = get_acceptance_snapshot(window=120)
         all_nodes = [me] + nodes
+
+        # Acceptance Rate breakdown
+        acc_rate = float(acceptance.get('rate', 1.0))
+        acc_samples = int(acceptance.get('samples', 0) or 0)
+        acc_avg_sim = float(acceptance.get('avg_similarity', 1.0))
+
         lines = [
             "📊 P2P TELEMETRY",
             f"  Local: {me.get('hostname')} role={me.get('role')} power={me.get('power',{}).get('index',0)}",
             f"  Local consensus role: {me.get('consensus_role','drafter')}",
             f"  Local runtime: inflight={me.get('inflight',0)} p95={me.get('p95_ms',0)}ms error_rate={me.get('error_rate',0)}",
-            f"  Acceptance rate(120s): {float(acceptance.get('rate',1.0))*100:.1f}% (samples={int(acceptance.get('samples',0) or 0)})",
-            f"  Known remote nodes: {len(nodes)}",
             "",
-            "  Scores (ai/heavy):",
+            "  📈 ACCEPTANCE RATE:",
+            f"    Rate(120s): {acc_rate*100:.1f}% ({acceptance.get('accepted',0)}/{acc_samples})",
+            f"    Avg similarity: {acc_avg_sim:.3f}",
+            f"    Window: {acceptance.get('window_sec',120)}s",
         ]
+
+        # Per-drafter quality из metrik
+        try:
+            from src.observability import Metrics as ObsMetrics
+            snap = ObsMetrics.snapshot()
+            drafter_gauges = {k: v for k, v in snap.get("gauges", {}).items()
+                             if k.startswith("drafter.last_similarity.")}
+            if drafter_gauges:
+                lines.append("")
+                lines.append("  🎯 PER-DRAFTER QUALITY:")
+                for key, sim in sorted(drafter_gauges.items()):
+                    drafter_name = key.replace("drafter.last_similarity.", "")
+                    lines.append(f"    {drafter_name}: similarity={sim:.3f}")
+        except Exception:
+            pass
+
+        lines.append("")
+        lines.append(f"  Known remote nodes: {len(nodes)}")
+        lines.append("")
+        lines.append("  Scores (ai/heavy/draft/verify):")
 
         ranked = sorted(
             all_nodes,
@@ -906,11 +957,14 @@ class ArgosBridge:
         for node in ranked[:8]:
             ai_score = self.distributor._score_node(node, "ai", all_nodes)
             heavy_score = self.distributor._score_node(node, "heavy", all_nodes)
+            draft_score = self.distributor._score_node(node, "draft", all_nodes)
+            verify_score = self.distributor._score_node(node, "verify", all_nodes)
             consensus_role = self.distributor._consensus_role(node, all_nodes)
             lines.append(
                 f"  - {node.get('hostname','?')}[{node.get('role','worker')}] "
                 f"consensus={consensus_role} "
                 f"ai={ai_score:.1f} heavy={heavy_score:.1f} "
+                f"draft={draft_score:.1f} verify={verify_score:.1f} "
                 f"rtt={float(node.get('rtt_ms',0.0) or 0.0):.1f}ms "
                 f"inflight={int(node.get('inflight',0) or 0)} "
                 f"err={float(node.get('error_rate',0.0) or 0.0):.3f}"

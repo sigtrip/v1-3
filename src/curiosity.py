@@ -110,7 +110,9 @@ class ArgosCuriosity:
         self._verifier_lessons: deque[dict] = deque(maxlen=120)
         self._last_idle_train_ts = 0.0
         self._idle_train_count = 0
+        self._alignment_batch_size = max(1, min(int(os.getenv("ARGOS_ALIGN_BATCH", "3") or "3"), 8))
         self.idle_train_min_interval_sec = max(20, int(os.getenv("ARGOS_IDLE_TRAIN_MIN_SEC", "90") or "90"))
+        self._drafter_calibration_enabled = os.getenv("ARGOS_DRAFTER_CALIBRATION", "on").strip().lower() not in {"0", "off", "false", "no"}
 
     def start(self) -> str:
         if self._running:
@@ -243,40 +245,137 @@ class ArgosCuriosity:
         self._verifier_lessons.appendleft(lesson)
 
     def run_idle_learning_cycle(self, force: bool = False) -> tuple[bool, str]:
+        """
+        Batch Alignment + Active Drafter Calibration.
+
+        Алгоритм:
+          1. Забираем до _alignment_batch_size уроков от Верификатора.
+          2. Для каждого урока:
+             a) Сохраняем эталон в память (контекстное выравнивание).
+             b) Если calibration включена — даём Драфтеру тот же промт
+                и сравниваем его новый ответ с эталоном (active calibration).
+          3. Считаем batch acceptance — если улучшается, публикуем метрику.
+        """
+        import difflib as _dl
+
         now = time.time()
         if not force and (now - self._last_idle_train_ts) < self.idle_train_min_interval_sec:
             return False, "idle train cooldown"
         if not self._verifier_lessons:
             return False, "no verifier lessons"
 
-        lesson = self._verifier_lessons.popleft()
-        align_block = (
-            "Drafter Alignment Lesson\n"
-            f"Prompt: {lesson.get('prompt','')}\n"
-            f"Draft: {lesson.get('draft','')}\n"
-            f"Verifier Final: {lesson.get('final','')}\n"
-            f"Accepted: {lesson.get('accepted', False)}\n"
-            f"Similarity: {lesson.get('similarity', 0.0)}\n"
-            "Rule: в следующей генерации приближайся к стилю Verifier Final."
-        )
+        # ── 1. Собираем батч ──────────────────────────────
+        batch: list[dict] = []
+        for _ in range(self._alignment_batch_size):
+            if not self._verifier_lessons:
+                break
+            batch.append(self._verifier_lessons.popleft())
 
+        if not batch:
+            return False, "empty batch"
+
+        applied = 0
+        calibrated = 0
+        improvements: list[float] = []
+
+        for lesson in batch:
+            prompt_text   = lesson.get("prompt", "")
+            draft_text    = lesson.get("draft", "")
+            final_text    = lesson.get("final", "")
+            old_sim       = float(lesson.get("similarity", 0.0))
+
+            # ── 2a. Сохраняем эталон (контекстное выравнивание) ──
+            align_block = (
+                "Drafter Alignment Lesson\n"
+                f"Prompt: {prompt_text[:600]}\n"
+                f"Draft: {draft_text[:600]}\n"
+                f"Verifier Final: {final_text[:600]}\n"
+                f"Accepted: {lesson.get('accepted', False)}\n"
+                f"Similarity: {old_sim:.4f}\n"
+                "Rule: в следующей генерации приближайся к стилю Verifier Final."
+            )
+            try:
+                if self.core.memory:
+                    self.core.memory.remember(
+                        key=f"drafter_alignment_{int(now)}_{applied}",
+                        value=align_block[:1500],
+                        category="drafter_alignment",
+                    )
+                if self.core.db:
+                    self.core.db.log_chat("argos", f"[IdleTrain] {align_block[:900]}", "CuriosityTrain")
+                applied += 1
+            except Exception as e:
+                log.debug("Curiosity alignment store error: %s", e)
+
+            # ── 2b. Active Drafter Calibration ────────────────
+            if self._drafter_calibration_enabled and prompt_text and final_text:
+                try:
+                    new_draft = self._ask_drafter_probe(prompt_text, final_text)
+                    if new_draft:
+                        new_sim = _dl.SequenceMatcher(None, new_draft.strip(), final_text.strip()).ratio()
+                        delta = new_sim - old_sim
+                        improvements.append(delta)
+                        calibrated += 1
+                        log.debug("Calibration: old_sim=%.3f new_sim=%.3f delta=%+.3f", old_sim, new_sim, delta)
+                        # Запись в метрики
+                        try:
+                            from src.observability import Metrics as ObsMetrics
+                            ObsMetrics.observe("drafter.calibration_delta", delta)
+                            ObsMetrics.gauge("drafter.calibration_last_sim", new_sim)
+                        except Exception:
+                            pass
+                except Exception as e:
+                    log.debug("Curiosity active calibration error: %s", e)
+
+        # ── 3. Итоги батча ────────────────────────────────
+        self._last_idle_train_ts = now
+        self._idle_train_count += applied
+
+        avg_improvement = (sum(improvements) / len(improvements)) if improvements else 0.0
         try:
-            if self.core.memory:
-                self.core.memory.remember(
-                    key=f"drafter_alignment_{int(now)}",
-                    value=align_block[:1500],
-                    category="drafter_alignment",
-                )
-            if self.core.db:
-                self.core.db.log_chat("argos", f"[IdleTrain] {align_block[:900]}", "CuriosityTrain")
+            from src.observability import Metrics as ObsMetrics, log_event
+            ObsMetrics.inc("curiosity.idle_train.applied", applied)
+            ObsMetrics.inc("curiosity.idle_train.calibrated", calibrated)
+            ObsMetrics.gauge("curiosity.idle_train.batch_avg_delta", avg_improvement)
+            log_event("curiosity_idle_train", {
+                "batch_size": len(batch),
+                "applied": applied,
+                "calibrated": calibrated,
+                "avg_delta": round(avg_improvement, 4),
+                "forced": force,
+            }, source="curiosity")
+        except Exception:
+            pass
 
-            self._last_idle_train_ts = now
-            self._idle_train_count += 1
-            log.info("Curiosity idle training #%d from verifier lesson", self._idle_train_count)
-            return True, f"idle train applied #{self._idle_train_count}"
+        log.info(
+            "Curiosity idle train batch: %d applied, %d calibrated, avg_delta=%+.3f",
+            applied, calibrated, avg_improvement,
+        )
+        return True, f"idle train batch={len(batch)} applied={applied} calibrated={calibrated} Δ={avg_improvement:+.3f}"
+
+    def _ask_drafter_probe(self, prompt_text: str, verifier_final: str) -> str | None:
+        """
+        Active Calibration: повторяет запрос к локальному Драфтеру
+        с контекстом эталона (через few-shot подсказку).
+        """
+        if not hasattr(self.core, '_local_drafter_providers'):
+            return None
+        try:
+            drafters = self.core._local_drafter_providers()
+            if not drafters:
+                return None
+            provider_name, fn = drafters[0]
+            calibration_context = (
+                "Ты Drafter. Ниже — эталонный ответ Верификатора на аналогичный вопрос. "
+                "Используй его стиль и структуру.\n\n"
+                f"Эталон:\n{verifier_final[:800]}\n\n"
+                "Теперь ответь на следующий запрос в таком же стиле:"
+            )
+            answer = fn(calibration_context, prompt_text[:600])
+            return answer.strip() if answer else None
         except Exception as e:
-            log.warning("Curiosity idle training: %s", e)
-            return False, str(e)
+            log.debug("Drafter probe failed: %s", e)
+            return None
 
     def _ask_question(self):
         question = self._pick_question()

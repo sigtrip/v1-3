@@ -216,8 +216,90 @@ def record_acceptance(accepted: bool, drafter: str, verifier: str, similarity: f
     })
     Metrics.gauge("consensus.acceptance_rate", float(snap.get("rate", 1.0)))
     Metrics.gauge("consensus.acceptance_samples", float(snap.get("samples", 0)))
+
+    # Per-drafter acceptance tracking
+    drafter_snap = get_drafter_acceptance(drafter or "unknown", window=120)
+    Metrics.gauge(f"drafter.acceptance_rate.{row[2]}", float(drafter_snap.get("rate", 1.0)))
+    Metrics.gauge(f"drafter.avg_similarity.{row[2]}", float(drafter_snap.get("avg_similarity", 1.0)))
+
     log_event("consensus_acceptance", {
         "accepted": ok,
+        "drafter": row[2],
+        "verifier": row[3],
+        "similarity": sim,
+        "acceptance_rate": snap.get("rate", 1.0),
+        "drafter_rate": drafter_snap.get("rate", 1.0),
+        "samples": snap.get("samples", 0),
+    }, source="consensus")
+
+
+def get_drafter_acceptance(drafter: str, window: int = 120) -> dict:
+    """Per-drafter Acceptance Rate за последние N секунд."""
+    now = time.time()
+    horizon = max(10, int(window))
+    drafter_norm = (drafter or "unknown")[:40]
+    with _lock:
+        rows = [r for r in _acceptance_events
+                if (now - r[0]) <= horizon and r[2] == drafter_norm]
+    samples = len(rows)
+    accepted = sum(1 for r in rows if r[1])
+    rate = (accepted / samples) if samples > 0 else 1.0
+    avg_sim = (sum(r[4] for r in rows) / samples) if samples > 0 else 1.0
+    return {
+        "drafter": drafter_norm,
+        "rate": round(rate, 4),
+        "samples": samples,
+        "accepted": accepted,
+        "rejected": samples - accepted,
+        "avg_similarity": round(avg_sim, 4),
+        "window_sec": horizon,
+    }
+
+
+def drafter_quality_report(window: int = 300) -> str:
+    """Полный отчёт по качеству всех Драфтеров."""
+    now = time.time()
+    horizon = max(10, int(window))
+    with _lock:
+        rows = [r for r in _acceptance_events if (now - r[0]) <= horizon]
+
+    if not rows:
+        return "📊 Нет данных по Драфтерам."
+
+    # Группировка по драфтеру
+    drafters: dict[str, list] = {}
+    for r in rows:
+        name = r[2]
+        if name not in drafters:
+            drafters[name] = []
+        drafters[name].append(r)
+
+    lines = [f"📊 DRAFTER QUALITY REPORT (last {horizon}s):"]
+    for name, d_rows in sorted(drafters.items()):
+        count = len(d_rows)
+        accepted = sum(1 for r in d_rows if r[1])
+        rate = (accepted / count) if count > 0 else 0
+        avg_sim = (sum(r[4] for r in d_rows) / count) if count > 0 else 0
+        trend = ""
+        if count >= 4:
+            half = count // 2
+            early_sim = sum(r[4] for r in d_rows[:half]) / half
+            late_sim = sum(r[4] for r in d_rows[half:]) / (count - half)
+            delta = late_sim - early_sim
+            trend = f" trend={'📈' if delta > 0.02 else '📉' if delta < -0.02 else '➡️'}{delta:+.3f}"
+        status = "✅" if rate >= 0.7 else "⚠️" if rate >= 0.5 else "❌"
+        lines.append(
+            f"  {status} {name}: rate={rate*100:.0f}% ({accepted}/{count}) "
+            f"sim={avg_sim:.3f}{trend}"
+        )
+
+    # Global summary
+    total = len(rows)
+    total_accepted = sum(1 for r in rows if r[1])
+    global_rate = (total_accepted / total) if total > 0 else 0
+    lines.append(f"\n  GLOBAL: {global_rate*100:.0f}% ({total_accepted}/{total})")
+
+    return "\n".join(lines)
         "drafter": row[2],
         "verifier": row[3],
         "similarity": sim,

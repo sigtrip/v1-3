@@ -473,26 +473,50 @@ class TaskQueueManager:
 
         if samples < self._acceptance_samples_min:
             return
-        if rate >= self._acceptance_floor:
-            return
-        if (now - self._last_backpressure_action_ts) < 30:
-            return
 
         current_ai_rps = int(self._class_rps.get("ai", 1) or 1)
-        reduced_ai_rps = max(1, int(round(current_ai_rps * 0.7)))
-        if reduced_ai_rps >= current_ai_rps and current_ai_rps > 1:
-            reduced_ai_rps = current_ai_rps - 1
 
-        self._class_rps["ai"] = max(1, reduced_ai_rps)
-        os.environ["ARGOS_TASK_RPS_AI"] = str(self._class_rps["ai"])
-        self._last_backpressure_action_ts = now
-        Metrics.inc("taskqueue.backpressure.applied")
-        log_event("taskqueue_backpressure", {
-            "reason": "acceptance_rate_low",
-            "acceptance_rate": round(rate, 4),
-            "samples": samples,
-            "old_ai_rps": current_ai_rps,
-            "new_ai_rps": self._class_rps["ai"],
-        }, source="task_queue")
+        # ── Backpressure: acceptance rate ниже порога → снижаем RPS + дообучение
+        if rate < self._acceptance_floor:
+            if (now - self._last_backpressure_action_ts) < 30:
+                return
 
-        self._run_idle_learning_cycle(now, force=True)
+            reduced_ai_rps = max(1, int(round(current_ai_rps * 0.7)))
+            if reduced_ai_rps >= current_ai_rps and current_ai_rps > 1:
+                reduced_ai_rps = current_ai_rps - 1
+
+            self._class_rps["ai"] = max(1, reduced_ai_rps)
+            os.environ["ARGOS_TASK_RPS_AI"] = str(self._class_rps["ai"])
+            self._last_backpressure_action_ts = now
+            Metrics.inc("taskqueue.backpressure.applied")
+            log_event("taskqueue_backpressure", {
+                "reason": "acceptance_rate_low",
+                "acceptance_rate": round(rate, 4),
+                "samples": samples,
+                "old_ai_rps": current_ai_rps,
+                "new_ai_rps": self._class_rps["ai"],
+            }, source="task_queue")
+
+            # Принудительное дообучение Драфтеров
+            self._run_idle_learning_cycle(now, force=True)
+            return
+
+        # ── Auto-recovery: acceptance rate выше порога → постепенно восстанавливаем RPS
+        if rate >= self._acceptance_floor and current_ai_rps < self._baseline_ai_rps:
+            recovery_threshold = self._acceptance_floor + 0.1  # нужен запас +10%
+            if rate >= recovery_threshold:
+                if (now - self._last_backpressure_action_ts) < 45:
+                    return
+                recovered_rps = min(current_ai_rps + 1, self._baseline_ai_rps)
+                self._class_rps["ai"] = recovered_rps
+                os.environ["ARGOS_TASK_RPS_AI"] = str(recovered_rps)
+                self._last_backpressure_action_ts = now
+                Metrics.inc("taskqueue.backpressure.recovery")
+                log_event("taskqueue_rps_recovery", {
+                    "reason": "acceptance_rate_recovered",
+                    "acceptance_rate": round(rate, 4),
+                    "samples": samples,
+                    "old_ai_rps": current_ai_rps,
+                    "new_ai_rps": recovered_rps,
+                    "baseline_rps": self._baseline_ai_rps,
+                }, source="task_queue")

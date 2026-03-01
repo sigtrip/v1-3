@@ -916,12 +916,15 @@ class ArgosCore:
         return self._cloud_verifier_providers() + self._local_drafter_providers()
 
     def _post_verifier_feedback(self, user_text: str, drafts: list[tuple[str, str]], final_answer: str, verifier: str):
+        """Per-drafter quality tracking + curiosity alignment."""
         if not drafts or not final_answer:
             return
         best_ratio = 0.0
         best_drafter = "unknown"
+        drafter_scores: list[tuple[str, float]] = []
         for drafter_name, draft_text in drafts:
             ratio = difflib.SequenceMatcher(None, (draft_text or "").strip(), (final_answer or "").strip()).ratio()
+            drafter_scores.append((drafter_name, ratio))
             if ratio >= best_ratio:
                 best_ratio = ratio
                 best_drafter = drafter_name
@@ -934,6 +937,11 @@ class ArgosCore:
                 verifier=verifier,
                 similarity=best_ratio,
             )
+            # Per-drafter quality → отдельные метрики
+            from src.observability import Metrics as ObsMetrics
+            for d_name, d_ratio in drafter_scores:
+                ObsMetrics.observe("drafter.similarity", d_ratio, tags={"drafter": d_name})
+                ObsMetrics.gauge(f"drafter.last_similarity.{d_name}", d_ratio)
         except Exception:
             pass
 
@@ -951,6 +959,13 @@ class ArgosCore:
                 log.warning("Curiosity verifier lesson: %s", e)
 
     def _ask_auto_consensus(self, context: str, user_text: str) -> tuple[str | None, str | None]:
+        """
+        Speculative Consensus v2:
+          1. Локальные модели (Ollama/LM Studio) = Drafter-каста → генерируют N черновиков ПАРАЛЛЕЛЬНО
+          2. Облачная модель (Gemini/GigaChat) = Verifier-каста → НЕ пишет с нуля,
+             а ищет ошибки в черновиках и собирает финал
+          3. Per-drafter quality tracking через acceptance_rate
+        """
         providers = self._all_auto_providers()
         if not providers:
             return None, None
@@ -965,22 +980,41 @@ class ArgosCore:
         drafters = self._local_drafter_providers()
         verifiers = self._cloud_verifier_providers()
 
+        # ── Параллельная генерация черновиков ──────────────
         drafts: list[tuple[str, str]] = []
         if drafters:
+            draft_slots: list[dict] = []
             for idx in range(self.spec_draft_count):
                 provider_name, fn = drafters[idx % len(drafters)]
-                draft_prompt = (
-                    f"Сделай быстрый ЧЕРНОВИК #{idx + 1} для запроса пользователя. "
-                    "Коротко, по делу, без лишних пояснений."
-                    " Если это код — дай рабочий скелет без длинных вступлений.\n\n"
-                    f"Запрос пользователя: {user_text}"
-                )
-                draft_answer = fn(
-                    context + "\n\nРоль: Drafter. Только быстрый черновик.",
-                    draft_prompt,
-                )
-                if draft_answer and draft_answer.strip():
-                    drafts.append((provider_name, draft_answer.strip()))
+                draft_slots.append({"idx": idx, "name": provider_name, "fn": fn, "result": None})
+
+            def _gen_draft(slot: dict):
+                try:
+                    draft_prompt = (
+                        f"Сделай быстрый ЧЕРНОВИК #{slot['idx'] + 1} для запроса пользователя. "
+                        "Коротко, по делу, без лишних пояснений."
+                        " Если это код — дай рабочий скелет без длинных вступлений.\n\n"
+                        f"Запрос пользователя: {user_text}"
+                    )
+                    answer = slot["fn"](
+                        context + "\n\nРоль: Drafter. Только быстрый черновик.",
+                        draft_prompt,
+                    )
+                    slot["result"] = answer.strip() if answer else None
+                except Exception as exc:
+                    log.debug("Drafter %s draft#%d error: %s", slot["name"], slot["idx"], exc)
+
+            threads = []
+            for slot in draft_slots:
+                t = threading.Thread(target=_gen_draft, args=(slot,), daemon=True)
+                threads.append(t)
+                t.start()
+            for t in threads:
+                t.join(timeout=30)
+
+            for slot in draft_slots:
+                if slot["result"]:
+                    drafts.append((slot["name"], slot["result"]))
 
         if not drafts:
             for provider_name, fn in providers:
@@ -992,23 +1026,39 @@ class ArgosCore:
         if not verifiers:
             return drafts[0][1], f"SpecConsensus:DraftOnly({drafts[0][0]})"
 
+        # ── Верификация ───────────────────────────────────
+        drafts_block = "\n\n".join(
+            f"=== ЧЕРНОВИК #{i+1} (от {name}) ===\n{text}"
+            for i, (name, text) in enumerate(drafts)
+        )
         verifier_prompt = (
-            "Ты Verifier. Запрещено писать ответ с нуля.\n"
-            "Твоя задача: найти ошибки в черновиках, выбрать лучший, исправить только проблемные места и собрать финальный вариант.\n"
-            "Формат ответа: только финальный ответ пользователю, без служебных комментариев.\n\n"
+            "Ты Verifier. АБСОЛЮТНЫЙ ЗАПРЕТ писать ответ с нуля.\n"
+            "Алгоритм:\n"
+            "  1. Прочитай все черновики.\n"
+            "  2. Перечисли найденные ошибки (фактология, логика, код) — одной строкой на ошибку.\n"
+            "  3. Выбери лучший черновик как основу.\n"
+            "  4. Исправь только проблемные места.\n"
+            "  5. Выведи финальный ответ.\n\n"
+            "Формат ответа:\n"
+            "[ERRORS] (список ошибок, или «нет ошибок»)\n"
+            "[FINAL] (итоговый ответ пользователю)\n\n"
             f"Запрос пользователя: {user_text}\n\n"
-            "Черновики от Drafter-моделей:\n"
-            + "\n".join(f"- {name}: {text}" for name, text in drafts)
+            f"{drafts_block}"
         )
         for verifier_name, verify_fn in verifiers:
-            final_answer = verify_fn(
+            raw_answer = verify_fn(
                 context + "\n\nРоль: Verifier. Только проверка и сборка финала на базе черновиков.",
                 verifier_prompt,
             )
-            if final_answer and final_answer.strip():
-                self._post_verifier_feedback(user_text, drafts, final_answer.strip(), verifier_name)
+            if raw_answer and raw_answer.strip():
+                # Извлекаем финальную часть, если Verifier следовал формату
+                final_answer = raw_answer.strip()
+                if "[FINAL]" in final_answer:
+                    final_answer = final_answer.split("[FINAL]", 1)[1].strip()
+
+                self._post_verifier_feedback(user_text, drafts, final_answer, verifier_name)
                 used = "+".join(name for name, _ in drafts)
-                return final_answer.strip(), f"SpecConsensus:{used}→{verifier_name}"
+                return final_answer, f"SpecConsensus:{used}→{verifier_name}"
 
         merged = drafts[0][1]
         return merged, f"SpecConsensus:DraftFallback({drafts[0][0]})"
