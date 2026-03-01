@@ -164,6 +164,7 @@ class ArgosCore:
         self.gateway_mgr  = None
         self.smart_profiles = {}
         self._smart_create_wizard = None
+        self.operator_mode = False
         self.module_loader = None
         self.ha = None
         self.tool_calling = None
@@ -198,6 +199,7 @@ class ArgosCore:
         try:
             from src.memory import ArgosMemory
             self.memory = ArgosMemory()
+            self.context.memory_ref = self.memory
             log.info("Память: OK")
         except Exception as e:
             log.warning("Память недоступна: %s", e)
@@ -891,6 +893,31 @@ class ArgosCore:
     def execute_intent(self, text: str, admin, flasher) -> str | None:
         t = text.lower()
 
+        if hasattr(admin, "set_alert_callback"):
+            admin.set_alert_callback(self._on_alert)
+
+        if hasattr(admin, "set_role") and any(k in t for k in ["роль доступа", "установи роль", "режим доступа"]):
+            if "статус" in t and hasattr(admin, "security_status"):
+                return admin.security_status()
+            role = text.split()[-1].strip().lower()
+            return admin.set_role(role)
+
+        if hasattr(admin, "security_status") and any(k in t for k in ["статус безопасности", "security status", "audit status"]):
+            return admin.security_status()
+
+        if any(k in t for k in ["оператор режим вкл", "включи операторский режим"]):
+            self.operator_mode = True
+            return "🎛️ Операторский режим включён. Доступны сценарии: оператор инцидент / оператор диагностика / оператор восстановление"
+        if any(k in t for k in ["оператор режим выкл", "выключи операторский режим"]):
+            self.operator_mode = False
+            return "🎛️ Операторский режим выключен."
+        if any(k in t for k in ["оператор инцидент", "сценарий инцидент"]):
+            return self._operator_incident(admin)
+        if any(k in t for k in ["оператор диагностика", "сценарий диагностика"]):
+            return self._operator_diagnostics(admin)
+        if any(k in t for k in ["оператор восстановление", "сценарий восстановление"]):
+            return self._operator_recovery()
+
         if self.module_loader and any(k in t for k in ["модули", "список модулей", "modules"]):
             return self.module_loader.list_modules()
 
@@ -969,8 +996,10 @@ class ArgosCore:
 
         # ── Терминал ──────────────────────────────────────
         if any(k in t for k in ["консоль", "терминал"]):
+            if not self.context.allow_root:
+                return "⛔ Команды терминала ограничены текущим квантовым профилем (без root-допуска)."
             cmd = text.split("консоль",1)[-1].strip() if "консоль" in t else text.split("терминал",1)[-1].strip()
-            return admin.run_cmd(cmd)
+            return admin.run_cmd(cmd, user="argos")
 
         # ── Vision ────────────────────────────────────────
         if self.vision:
@@ -1193,6 +1222,13 @@ class ArgosCore:
             if len(spec) < 2:
                 return "Формат: обнови из github USER/REPO SKILL"
             return self.marketplace.update(repo=spec[0], skill_name=spec[1])
+        if self.marketplace and "оцени навык" in t:
+            spec = text.split("оцени навык", 1)[-1].strip().split()
+            if len(spec) < 2:
+                return "Формат: оцени навык SKILL [1-5]"
+            return self.marketplace.rate(spec[0], spec[1])
+        if self.marketplace and any(k in t for k in ["рейтинг навыков", "оценки навыков"]):
+            return self.marketplace.ratings_report()
 
         # ── История ───────────────────────────────────────
         if any(k in t for k in ["история", "предыдущие разговоры"]):
@@ -1396,6 +1432,21 @@ class ArgosCore:
                     port = parts[1] if len(parts) > 1 else None
                     return self.gateway_mgr.flash_gateway(parts[0], port)
                 return "Формат: прошей шлюз [id] [порт]"
+            if any(k in t for k in ["здоровье шлюзов", "health шлюзов", "проверь шлюзы"]):
+                parts = text.split()
+                gw_id = parts[-1] if len(parts) >= 3 and parts[-1] not in {"шлюзов", "шлюзы"} else None
+                return self.gateway_mgr.health_check(gw_id)
+            if "откат прошивки" in t:
+                parts = text.split("откат прошивки", 1)[-1].strip().split()
+                if not parts:
+                    return "Формат: откат прошивки [id] [шагов?]"
+                steps = 1
+                if len(parts) > 1:
+                    try:
+                        steps = max(1, int(parts[1]))
+                    except Exception:
+                        steps = 1
+                return self.gateway_mgr.rollback_firmware(parts[0], steps)
             if "конфиг шлюза" in t:
                 gw_id = text.split("конфиг шлюза")[-1].strip().split()[0] if text.split("конфиг шлюза")[-1].strip() else ""
                 if gw_id:
@@ -1407,6 +1458,35 @@ class ArgosCore:
             return self._help()
 
         return None
+
+    def _operator_incident(self, admin) -> str:
+        lines = ["🚨 ОПЕРАТОР: ИНЦИДЕНТ"]
+        lines.append(admin.get_stats())
+        if self.alerts:
+            lines.append(self.alerts.status())
+        if self.gateway_mgr:
+            lines.append(self.gateway_mgr.health_check())
+        lines.append("Рекомендация: запусти 'оператор диагностика' для детального анализа.")
+        return "\n\n".join(lines)
+
+    def _operator_diagnostics(self, admin) -> str:
+        lines = ["🩺 ОПЕРАТОР: ДИАГНОСТИКА"]
+        lines.append(admin.get_stats())
+        lines.append(self.sensors.get_full_report())
+        if self.iot_bridge:
+            lines.append(self.iot_bridge.status())
+        if self.mesh_net:
+            lines.append(self.mesh_net.status_report())
+        if self.gateway_mgr:
+            lines.append(self.gateway_mgr.health_check())
+        return "\n\n".join(lines)
+
+    def _operator_recovery(self) -> str:
+        lines = ["🛠️ ОПЕРАТОР: ВОССТАНОВЛЕНИЕ"]
+        if self.gateway_mgr:
+            lines.append(self.gateway_mgr.health_check())
+        lines.append("Чек-лист:\n  1) Проверить порты/сеть\n  2) Переподготовить прошивку\n  3) Выполнить откат прошивки при деградации")
+        return "\n\n".join(lines)
 
     def _help(self) -> str:
         return """👁️ АРГОС UNIVERSAL OS — КОМАНДЫ:

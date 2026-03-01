@@ -7,6 +7,7 @@ import os
 import sqlite3
 import time
 import re
+import hashlib
 from src.argos_logger import get_logger
 from src.knowledge.vector_store import ArgosVectorStore
 
@@ -56,8 +57,57 @@ class ArgosMemory:
                 UNIQUE(subject, predicate, object)
             );
         """)
+        self._ensure_fact_columns()
         self.conn.commit()
         log.debug("Memory DB инициализирована.")
+
+    def _ensure_fact_columns(self):
+        migrations = [
+            "ALTER TABLE facts ADD COLUMN utility_signal REAL DEFAULT 0",
+            "ALTER TABLE facts ADD COLUMN expires_at REAL DEFAULT 0",
+            "ALTER TABLE facts ADD COLUMN access_count INTEGER DEFAULT 0",
+            "ALTER TABLE facts ADD COLUMN last_accessed REAL DEFAULT 0",
+            "ALTER TABLE facts ADD COLUMN fingerprint TEXT DEFAULT ''",
+        ]
+        for sql in migrations:
+            try:
+                self.conn.execute(sql)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        return re.sub(r"\s+", " ", (text or "").strip().lower())
+
+    def _fingerprint(self, category: str, key: str, value: str) -> str:
+        base = f"{self._normalize_text(category)}|{self._normalize_text(key)}|{self._normalize_text(value)}"
+        return hashlib.sha1(base.encode("utf-8")).hexdigest()
+
+    def _default_signal(self, category: str, key: str, value: str) -> float:
+        score = 1.0
+        cat = (category or "").lower()
+        k = (key or "").lower()
+        v = (value or "")
+        if cat in {"user", "system", "profile"}:
+            score += 1.2
+        if len(v) > 80:
+            score += 0.3
+        if any(token in k for token in ["ключ", "token", "api", "предпочт", "цель", "огранич"]):
+            score += 0.8
+        if cat == "noise":
+            score = 0.2
+        return round(score, 2)
+
+    def _cleanup_noise(self, ttl_seconds: int = 72 * 3600):
+        try:
+            threshold = time.time() - ttl_seconds
+            self.conn.execute(
+                "DELETE FROM facts WHERE category='noise' AND ((expires_at > 0 AND expires_at <= ?) OR (expires_at = 0 AND strftime('%s', ts) <= ?))",
+                (time.time(), threshold),
+            )
+            self.conn.commit()
+        except Exception as e:
+            log.warning("Memory noise cleanup: %s", e)
 
     def _warmup_vector_index(self):
         try:
@@ -87,12 +137,36 @@ class ArgosMemory:
             log.warning("Vector index: %s", e)
 
     # ── ФАКТЫ ──────────────────────────────────────────────
-    def remember(self, key: str, value: str, category: str = "user") -> str:
+    def remember(self, key: str, value: str, category: str = "user", ttl_sec: int | None = None) -> str:
         """Запомнить факт. 'аргос, запомни: я люблю Python'"""
+        norm_key = self._normalize_text(key)
+        norm_val = self._normalize_text(value)
+        if not norm_key or not norm_val:
+            return "❌ Нечего запоминать: пустой ключ или значение."
+
+        fp = self._fingerprint(category, key, value)
+        self._cleanup_noise()
+
+        dup = self.conn.execute(
+            "SELECT id, value FROM facts WHERE category=? AND key=?",
+            (category, key),
+        ).fetchone()
+        if dup and self._normalize_text(dup[1]) == norm_val:
+            self.conn.execute(
+                "UPDATE facts SET access_count=access_count+1, last_accessed=? WHERE id=?",
+                (time.time(), dup[0]),
+            )
+            self.conn.commit()
+            return f"ℹ️ Уже в памяти: {key} → {value}"
+
+        expires_at = float(time.time() + ttl_sec) if ttl_sec and ttl_sec > 0 else 0.0
+        signal = self._default_signal(category, key, value)
         self.conn.execute(
-            "INSERT INTO facts (category, key, value) VALUES (?,?,?) "
-            "ON CONFLICT(category,key) DO UPDATE SET value=excluded.value, ts=datetime('now','localtime')",
-            (category, key, value)
+            "INSERT INTO facts (category, key, value, utility_signal, expires_at, access_count, last_accessed, fingerprint) VALUES (?,?,?,?,?,?,?,?) "
+            "ON CONFLICT(category,key) DO UPDATE SET "
+            "value=excluded.value, ts=datetime('now','localtime'), utility_signal=excluded.utility_signal, "
+            "expires_at=excluded.expires_at, access_count=facts.access_count+1, last_accessed=excluded.last_accessed, fingerprint=excluded.fingerprint",
+            (category, key, value, signal, expires_at, 1, time.time(), fp)
         )
         self.conn.commit()
         self._index_text(
@@ -106,9 +180,16 @@ class ArgosMemory:
 
     def recall(self, key: str, category: str = "user") -> str | None:
         row = self.conn.execute(
-            "SELECT value FROM facts WHERE category=? AND key=?", (category, key)
+            "SELECT id, value FROM facts WHERE category=? AND key=?", (category, key)
         ).fetchone()
-        return row[0] if row else None
+        if not row:
+            return None
+        self.conn.execute(
+            "UPDATE facts SET access_count=access_count+1, utility_signal=utility_signal+0.1, last_accessed=? WHERE id=?",
+            (time.time(), row[0]),
+        )
+        self.conn.commit()
+        return row[1]
 
     def forget(self, key: str, category: str = "user") -> str:
         self.conn.execute("DELETE FROM facts WHERE category=? AND key=?", (category, key))
@@ -136,12 +217,19 @@ class ArgosMemory:
         return "\n".join(lines)
 
     def get_all_facts(self, category: str = None) -> list:
+        self._cleanup_noise()
         if category:
             return self.conn.execute(
-                "SELECT category, key, value, ts FROM facts WHERE category=? ORDER BY ts DESC", (category,)
+                "SELECT category, key, value, ts FROM facts "
+                "WHERE category=? AND (expires_at=0 OR expires_at>?) "
+                "ORDER BY utility_signal DESC, ts DESC",
+                (category, time.time())
             ).fetchall()
         return self.conn.execute(
-            "SELECT category, key, value, ts FROM facts ORDER BY category, key"
+            "SELECT category, key, value, ts FROM facts "
+            "WHERE (expires_at=0 OR expires_at>?) "
+            "ORDER BY utility_signal DESC, category, key",
+            (time.time(),)
         ).fetchall()
 
     def get_context(self) -> str:
@@ -150,7 +238,7 @@ class ArgosMemory:
         if not facts:
             return ""
         lines = ["Известные факты о пользователе и системе:"]
-        for cat, key, val, _ in facts:
+        for cat, key, val, _ in facts[:60]:
             lines.append(f"  [{cat}] {key}: {val}")
         return "\n".join(lines)
 

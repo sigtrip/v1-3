@@ -3,10 +3,118 @@ import platform
 import os
 import shutil
 import subprocess
+import json
+import shlex
+import time
+from pathlib import Path
+
+
+AUDIT_LOG_PATH = "logs/security_audit.log"
+
+ROLE_ALLOWED_BINARIES = {
+    "viewer": {
+        "ls", "pwd", "whoami", "date", "uptime", "df", "free", "ps", "head", "tail", "cat", "echo"
+    },
+    "operator": {
+        "ls", "pwd", "whoami", "date", "uptime", "df", "free", "ps", "head", "tail", "cat", "echo",
+        "ip", "ss", "netstat", "lsof", "ping", "find", "grep", "du", "top"
+    },
+    "admin": {
+        "ls", "pwd", "whoami", "date", "uptime", "df", "free", "ps", "head", "tail", "cat", "echo",
+        "ip", "ss", "netstat", "lsof", "ping", "find", "grep", "du", "top",
+        "git", "python", "python3", "pip", "pip3", "systemctl", "journalctl"
+    },
+    "root": {"*"},
+}
+
+DANGEROUS_TOKENS = [
+    "rm -rf /", "mkfs", "dd if=", "shutdown", "reboot", "poweroff", "halt",
+    ":(){:|:&};:", "chmod 777 /", "chown -r /", "del /f /s /q c:\\"
+]
+
+SHELL_META_TOKENS = ["&&", "||", ";", "|", "`", "$(", ">", "<"]
 
 class ArgosAdmin:
     def __init__(self):
         self.os_type = platform.system()
+        self.current_role = os.getenv("ARGOS_ROLE", "admin").strip().lower() or "admin"
+        if self.current_role not in ROLE_ALLOWED_BINARIES:
+            self.current_role = "admin"
+        self._alert_cb = None
+        os.makedirs("logs", exist_ok=True)
+
+    def set_alert_callback(self, callback):
+        self._alert_cb = callback
+
+    def set_role(self, role: str) -> str:
+        role_name = (role or "").strip().lower()
+        if role_name not in ROLE_ALLOWED_BINARIES:
+            return "❌ Неизвестная роль. Доступные: viewer, operator, admin, root"
+        self.current_role = role_name
+        self._audit(event="role_change", command=f"set_role:{role_name}", allowed=True)
+        return f"✅ Роль доступа установлена: {role_name}"
+
+    def security_status(self) -> str:
+        allowed = ROLE_ALLOWED_BINARIES.get(self.current_role, set())
+        allowed_preview = "*" if "*" in allowed else ", ".join(sorted(list(allowed))[:12])
+        return (
+            "🛡️ SECURITY STATUS\n"
+            f"  Роль: {self.current_role}\n"
+            f"  Allowlist: {allowed_preview}\n"
+            f"  Audit log: {AUDIT_LOG_PATH}"
+        )
+
+    def _audit(self, event: str, command: str, allowed: bool, reason: str = "", user: str = "local"):
+        payload = {
+            "ts": time.time(),
+            "event": event,
+            "role": self.current_role,
+            "user": user,
+            "command": command,
+            "allowed": allowed,
+            "reason": reason,
+        }
+        try:
+            with open(AUDIT_LOG_PATH, "a", encoding="utf-8") as f:
+                f.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def _raise_security_alert(self, message: str):
+        if self._alert_cb:
+            try:
+                self._alert_cb(message)
+            except Exception:
+                pass
+
+    def _validate_command(self, command: str) -> tuple[bool, str, list[str]]:
+        cmd = (command or "").strip()
+        if not cmd:
+            return False, "Пустая команда", []
+
+        low = cmd.lower()
+        for token in DANGEROUS_TOKENS:
+            if token in low:
+                return False, f"Опасный паттерн: {token}", []
+
+        for token in SHELL_META_TOKENS:
+            if token in cmd:
+                return False, f"Shell-метасимвол запрещён: {token}", []
+
+        try:
+            parts = shlex.split(cmd)
+        except Exception:
+            return False, "Невалидная shell-синтаксическая команда", []
+
+        if not parts:
+            return False, "Пустая команда", []
+
+        binary = Path(parts[0]).name
+        allowed_set = ROLE_ALLOWED_BINARIES.get(self.current_role, ROLE_ALLOWED_BINARIES["viewer"])
+        if "*" not in allowed_set and binary not in allowed_set:
+            return False, f"Команда '{binary}' не разрешена для роли {self.current_role}", []
+
+        return True, "ok", parts
 
     # ── 1. МОНИТОРИНГ ─────────────────────────────────────
     def get_stats(self):
@@ -104,17 +212,27 @@ class ArgosAdmin:
             return f"Ошибка удаления: {e}"
 
     # ── 4. ТЕРМИНАЛ ───────────────────────────────────────
-    def run_cmd(self, command):
-        if any(bad in command.lower() for bad in ["rm -rf /", "format c:", "del /f /s /q c:\\"]):
-            return "⛔ Действие заблокировано протоколом самосохранения."
+    def run_cmd(self, command, user: str = "local"):
+        valid, reason, parts = self._validate_command(command)
+        if not valid:
+            self._audit(event="cmd_denied", command=command, allowed=False, reason=reason, user=user)
+            self._raise_security_alert(f"SECURITY: отклонена команда '{command}'. Причина: {reason}")
+            return f"⛔ Команда заблокирована: {reason}"
+
+        self._audit(event="cmd_exec", command=command, allowed=True, user=user)
         try:
-            result = subprocess.check_output(
-                command, shell=True, stderr=subprocess.STDOUT,
-                text=True, timeout=30
+            result = subprocess.run(
+                parts,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
             )
-            out = result[:800]
-            return f"💻 Вывод:\n{out}" + ("..." if len(result) > 800 else "")
-        except subprocess.CalledProcessError as e:
-            return f"❌ Ошибка команды:\n{e.output[:400]}"
+            output = (result.stdout or "") + (("\n" + result.stderr) if result.stderr else "")
+            if result.returncode != 0:
+                return f"❌ Ошибка команды (code={result.returncode}):\n{output[:400]}"
+            out = output[:800]
+            return f"💻 Вывод:\n{out}" + ("..." if len(output) > 800 else "")
         except subprocess.TimeoutExpired:
+            self._audit(event="cmd_timeout", command=command, allowed=True, reason="timeout", user=user)
             return "⏱️ Команда превысила таймаут (30с)."
