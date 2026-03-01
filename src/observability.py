@@ -13,6 +13,7 @@ from src.event_bus import get_bus, Events
 log    = get_logger("argos.obs")
 _bus   = get_bus()
 _lock  = threading.Lock()
+_acceptance_events = deque(maxlen=3000)
 
 # JSON-лог
 JSON_LOG = "logs/argos_structured.jsonl"
@@ -176,6 +177,53 @@ def log_intent(text: str, intent: str, state: str, ms: float):
     Metrics.inc("intent.count", tags={"intent": intent[:30]})
     Metrics.observe("intent.latency_ms", ms)
     log_event("intent", {"text": text[:100], "intent": intent, "state": state, "ms": ms})
+
+
+def get_acceptance_snapshot(window: int = 120) -> dict:
+    now = time.time()
+    horizon = max(10, int(window))
+    with _lock:
+        rows = [r for r in _acceptance_events if (now - r[0]) <= horizon]
+
+    samples = len(rows)
+    accepted = sum(1 for r in rows if r[1])
+    rejected = samples - accepted
+    rate = (accepted / samples) if samples > 0 else 1.0
+    avg_similarity = (sum(r[4] for r in rows) / samples) if samples > 0 else 1.0
+    return {
+        "rate": round(rate, 4),
+        "samples": samples,
+        "accepted": accepted,
+        "rejected": rejected,
+        "avg_similarity": round(avg_similarity, 4),
+        "window_sec": horizon,
+    }
+
+
+def record_acceptance(accepted: bool, drafter: str, verifier: str, similarity: float):
+    ts = time.time()
+    ok = bool(accepted)
+    sim = max(0.0, min(float(similarity or 0.0), 1.0))
+    row = (ts, ok, (drafter or "unknown")[:40], (verifier or "unknown")[:40], sim)
+    with _lock:
+        _acceptance_events.append(row)
+
+    snap = get_acceptance_snapshot(window=120)
+    Metrics.inc("consensus.acceptance", tags={
+        "result": "accepted" if ok else "rejected",
+        "drafter": row[2],
+        "verifier": row[3],
+    })
+    Metrics.gauge("consensus.acceptance_rate", float(snap.get("rate", 1.0)))
+    Metrics.gauge("consensus.acceptance_samples", float(snap.get("samples", 0)))
+    log_event("consensus_acceptance", {
+        "accepted": ok,
+        "drafter": row[2],
+        "verifier": row[3],
+        "similarity": sim,
+        "acceptance_rate": snap.get("rate", 1.0),
+        "samples": snap.get("samples", 0),
+    }, source="consensus")
 
 
 # ── ЧТЕНИЕ ПОСЛЕДНИХ ЗАПИСЕЙ ──────────────────────────────

@@ -15,7 +15,7 @@ from src.argos_logger import get_logger
 log = get_logger("argos.taskqueue")
 
 try:
-    from src.observability import Metrics, log_event
+    from src.observability import Metrics, log_event, get_acceptance_snapshot
 except Exception:  # pragma: no cover
     class Metrics:  # type: ignore
         @classmethod
@@ -32,6 +32,9 @@ except Exception:  # pragma: no cover
 
     def log_event(event_type: str, data: dict, source: str = "argos"):
         return None
+
+    def get_acceptance_snapshot(window: int = 120) -> dict:  # type: ignore
+        return {"rate": 1.0, "samples": 0, "accepted": 0, "rejected": 0}
 
 
 @dataclass(order=True)
@@ -77,6 +80,12 @@ class TaskQueueManager:
             "ai": max(1, min(int(os.getenv("ARGOS_TASK_RPS_AI", "3") or "3"), 100)),
             "heavy": max(1, min(int(os.getenv("ARGOS_TASK_RPS_HEAVY", "1") or "1"), 100)),
         }
+        self._baseline_ai_rps = self._class_rps["ai"]
+        self._acceptance_floor = max(0.1, min(float(os.getenv("ARGOS_ACCEPTANCE_FLOOR", "0.50") or "0.50"), 0.95))
+        self._acceptance_samples_min = max(3, min(int(os.getenv("ARGOS_ACCEPTANCE_MIN_SAMPLES", "8") or "8"), 120))
+        self._backpressure_check_sec = max(5, int(os.getenv("ARGOS_BACKPRESSURE_CHECK_SEC", "20") or "20"))
+        self._last_backpressure_check_ts = 0.0
+        self._last_backpressure_action_ts = 0.0
 
         self.default_retries = max(0, min(int(os.getenv("ARGOS_TASK_RETRIES", "1") or "1"), 10))
         self.default_deadline_sec = max(0, min(int(os.getenv("ARGOS_TASK_DEADLINE_SEC", "120") or "120"), 3600))
@@ -87,6 +96,9 @@ class TaskQueueManager:
 
         self._heavy_preemptive_guard: Callable[[TaskEnvelope], bool] | None = None
         self._heavy_failover_runner: Callable[[TaskEnvelope], tuple[bool, str]] | None = None
+        self._idle_learning_handler: Callable[[bool], tuple[bool, str] | None] | None = None
+        self._idle_learning_min_sec = max(15, int(os.getenv("ARGOS_IDLE_LEARNING_MIN_SEC", "60") or "60"))
+        self._last_idle_learning_ts = 0.0
 
     def register_runner(self, kind: str, runner: Callable[[TaskEnvelope], Any]):
         if not kind or not callable(runner):
@@ -101,6 +113,12 @@ class TaskQueueManager:
         if self._heavy_preemptive_guard and self._heavy_failover_runner:
             return "✅ TaskQueue heavy failover подключён."
         return "ℹ️ TaskQueue heavy failover отключён."
+
+    def register_idle_learning_handler(self, handler: Callable[[bool], tuple[bool, str] | None] | None) -> str:
+        self._idle_learning_handler = handler if callable(handler) else None
+        if self._idle_learning_handler:
+            return "✅ TaskQueue idle-learning handler подключён."
+        return "ℹ️ TaskQueue idle-learning handler отключён."
 
     def start(self) -> str:
         if self._running:
@@ -169,6 +187,9 @@ class TaskQueueManager:
             try:
                 task = self._queue.get(timeout=1)
             except queue.Empty:
+                now = time.time()
+                self._run_idle_learning_cycle(now, force=False)
+                self._check_acceptance_backpressure(now)
                 continue
 
             now = time.time()
@@ -289,6 +310,10 @@ class TaskQueueManager:
             Metrics.gauge("taskqueue.size", float(self._queue.qsize()))
             self._queue.task_done()
 
+            now = time.time()
+            self._run_idle_learning_cycle(now, force=False)
+            self._check_acceptance_backpressure(now)
+
     def set_workers(self, count: int) -> str:
         target = max(1, min(int(count), 16))
         if target <= len(self._workers):
@@ -406,3 +431,68 @@ class TaskQueueManager:
         except Exception as e:
             log.warning("TaskQueue preemptive offload runner error: %s", e)
             return None
+
+    def _has_pending_ai_or_heavy(self) -> bool:
+        with self._queue.mutex:
+            for item in list(self._queue.queue):
+                if item.task_class in {"ai", "heavy"}:
+                    return True
+        return False
+
+    def _run_idle_learning_cycle(self, now: float, force: bool):
+        handler = self._idle_learning_handler
+        if not handler:
+            return
+        if not force:
+            if self._has_pending_ai_or_heavy():
+                return
+            if (now - self._last_idle_learning_ts) < self._idle_learning_min_sec:
+                return
+        try:
+            result = handler(force)
+            self._last_idle_learning_ts = now
+            if result and isinstance(result, tuple) and bool(result[0]):
+                Metrics.inc("taskqueue.idle_learning.applied")
+                log_event("taskqueue_idle_learning", {
+                    "ok": True,
+                    "detail": str(result[1])[:180],
+                    "forced": bool(force),
+                }, source="task_queue")
+        except Exception as e:
+            log.warning("TaskQueue idle learning error: %s", e)
+
+    def _check_acceptance_backpressure(self, now: float):
+        if (now - self._last_backpressure_check_ts) < self._backpressure_check_sec:
+            return
+        self._last_backpressure_check_ts = now
+
+        snap = get_acceptance_snapshot(window=120)
+        rate = float(snap.get("rate", 1.0) or 1.0)
+        samples = int(snap.get("samples", 0) or 0)
+        Metrics.gauge("taskqueue.acceptance_rate", rate)
+
+        if samples < self._acceptance_samples_min:
+            return
+        if rate >= self._acceptance_floor:
+            return
+        if (now - self._last_backpressure_action_ts) < 30:
+            return
+
+        current_ai_rps = int(self._class_rps.get("ai", 1) or 1)
+        reduced_ai_rps = max(1, int(round(current_ai_rps * 0.7)))
+        if reduced_ai_rps >= current_ai_rps and current_ai_rps > 1:
+            reduced_ai_rps = current_ai_rps - 1
+
+        self._class_rps["ai"] = max(1, reduced_ai_rps)
+        os.environ["ARGOS_TASK_RPS_AI"] = str(self._class_rps["ai"])
+        self._last_backpressure_action_ts = now
+        Metrics.inc("taskqueue.backpressure.applied")
+        log_event("taskqueue_backpressure", {
+            "reason": "acceptance_rate_low",
+            "acceptance_rate": round(rate, 4),
+            "samples": samples,
+            "old_ai_rps": current_ai_rps,
+            "new_ai_rps": self._class_rps["ai"],
+        }, source="task_queue")
+
+        self._run_idle_learning_cycle(now, force=True)

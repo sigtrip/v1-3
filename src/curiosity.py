@@ -9,6 +9,7 @@ import time
 import datetime
 import os
 import threading
+from collections import deque
 from src.argos_logger import get_logger
 
 log = get_logger("argos.curiosity")
@@ -106,6 +107,10 @@ class ArgosCuriosity:
         self._last_research_ts = 0.0
         self._research_count = 0
         self._next_voice_ask_ts = 0.0
+        self._verifier_lessons: deque[dict] = deque(maxlen=120)
+        self._last_idle_train_ts = 0.0
+        self._idle_train_count = 0
+        self.idle_train_min_interval_sec = max(20, int(os.getenv("ARGOS_IDLE_TRAIN_MIN_SEC", "90") or "90"))
 
     def start(self) -> str:
         if self._running:
@@ -212,6 +217,67 @@ class ArgosCuriosity:
         except Exception as e:
             log.warning("Curiosity cycle: %s", e)
 
+    def ingest_verifier_lesson(
+        self,
+        prompt: str,
+        drafts: list[tuple[str, str]],
+        final_answer: str,
+        verifier: str,
+        accepted: bool,
+        similarity: float,
+    ):
+        if not final_answer:
+            return
+        draft_candidates = [d[1].strip() for d in drafts if d and isinstance(d[1], str) and d[1].strip()]
+        if not draft_candidates:
+            return
+        lesson = {
+            "ts": time.time(),
+            "prompt": (prompt or "")[:700],
+            "draft": draft_candidates[0][:1200],
+            "final": final_answer[:1200],
+            "verifier": (verifier or "Verifier")[:32],
+            "accepted": bool(accepted),
+            "similarity": round(float(similarity or 0.0), 4),
+        }
+        self._verifier_lessons.appendleft(lesson)
+
+    def run_idle_learning_cycle(self, force: bool = False) -> tuple[bool, str]:
+        now = time.time()
+        if not force and (now - self._last_idle_train_ts) < self.idle_train_min_interval_sec:
+            return False, "idle train cooldown"
+        if not self._verifier_lessons:
+            return False, "no verifier lessons"
+
+        lesson = self._verifier_lessons.popleft()
+        align_block = (
+            "Drafter Alignment Lesson\n"
+            f"Prompt: {lesson.get('prompt','')}\n"
+            f"Draft: {lesson.get('draft','')}\n"
+            f"Verifier Final: {lesson.get('final','')}\n"
+            f"Accepted: {lesson.get('accepted', False)}\n"
+            f"Similarity: {lesson.get('similarity', 0.0)}\n"
+            "Rule: в следующей генерации приближайся к стилю Verifier Final."
+        )
+
+        try:
+            if self.core.memory:
+                self.core.memory.remember(
+                    key=f"drafter_alignment_{int(now)}",
+                    value=align_block[:1500],
+                    category="drafter_alignment",
+                )
+            if self.core.db:
+                self.core.db.log_chat("argos", f"[IdleTrain] {align_block[:900]}", "CuriosityTrain")
+
+            self._last_idle_train_ts = now
+            self._idle_train_count += 1
+            log.info("Curiosity idle training #%d from verifier lesson", self._idle_train_count)
+            return True, f"idle train applied #{self._idle_train_count}"
+        except Exception as e:
+            log.warning("Curiosity idle training: %s", e)
+            return False, str(e)
+
     def _ask_question(self):
         question = self._pick_question()
         if not question:
@@ -300,6 +366,7 @@ class ArgosCuriosity:
             f"  Статус:   {'🟢 Активно' if self._running else '🔴 Отключено'}\n"
             f"  Задано вопросов: {self._asked_count}\n"
             f"  Инсайтов создано: {self._research_count}\n"
+            f"  Idle-train уроков: {len(self._verifier_lessons)} | Применено: {self._idle_train_count}\n"
             f"  Idle: {idle_for} мин | Порог: {self.idle_threshold_sec//60} мин\n"
             f"{last}"
             f"  Интервал: {self.min_interval//60}–{self.max_interval//60} мин"

@@ -9,6 +9,7 @@ import json
 import time
 import base64
 import uuid
+import difflib
 from collections import deque
 
 # ── Graceful imports ──────────────────────────────────────
@@ -181,6 +182,11 @@ class ArgosCore:
         self._gigachat_token_expires_at = 0.0
         self.auto_collab_enabled = os.getenv("ARGOS_AUTO_COLLAB", "on").strip().lower() not in {"0", "false", "off", "no", "нет"}
         self.auto_collab_max_models = max(2, min(int(os.getenv("ARGOS_AUTO_COLLAB_MAX_MODELS", "4") or "4"), 4))
+        self.spec_draft_count = max(1, min(int(os.getenv("ARGOS_SPEC_DRAFT_COUNT", "3") or "3"), 3))
+        try:
+            self.acceptance_major_ratio = max(0.4, min(float(os.getenv("ARGOS_ACCEPTANCE_MAJOR_RATIO", "0.72") or "0.72"), 0.95))
+        except Exception:
+            self.acceptance_major_ratio = 0.72
         self.homeostasis = None
         self.curiosity = None
         self._homeostasis_block_heavy = False
@@ -357,6 +363,8 @@ class ArgosCore:
             from src.task_queue import TaskQueueManager
             self.task_queue = TaskQueueManager(worker_count=2)
             self.task_queue.register_runner("logic.command", self._queue_run_logic)
+            if self.curiosity and hasattr(self.curiosity, "run_idle_learning_cycle"):
+                self.task_queue.register_idle_learning_handler(self.curiosity.run_idle_learning_cycle)
             self.task_queue.start()
             log.info("TaskQueue: OK")
         except Exception as e:
@@ -856,21 +864,61 @@ class ArgosCore:
             log.error("LM Studio: %s", e)
             return None
 
-    def _auto_providers(self) -> list[tuple[str, callable]]:
+    def _local_drafter_providers(self) -> list[tuple[str, callable]]:
         providers = []
-        if self.model:
-            providers.append(("Gemini", self._ask_gemini))
-        if self._has_gigachat_config():
-            providers.append(("GigaChat", self._ask_gigachat))
-        if self._has_yandexgpt_config():
-            providers.append(("YandexGPT", self._ask_yandexgpt))
         if self._has_lmstudio_config():
             providers.append(("LMStudio", self._ask_lmstudio))
         providers.append(("Ollama", self._ask_ollama))
         return providers[:self.auto_collab_max_models]
 
+    def _cloud_verifier_providers(self) -> list[tuple[str, callable]]:
+        providers = []
+        if self.model:
+            providers.append(("Gemini", self._ask_gemini))
+        if self._has_gigachat_config():
+            providers.append(("GigaChat", self._ask_gigachat))
+        return providers[:self.auto_collab_max_models]
+
+    def _all_auto_providers(self) -> list[tuple[str, callable]]:
+        return self._cloud_verifier_providers() + self._local_drafter_providers()
+
+    def _post_verifier_feedback(self, user_text: str, drafts: list[tuple[str, str]], final_answer: str, verifier: str):
+        if not drafts or not final_answer:
+            return
+        best_ratio = 0.0
+        best_drafter = "unknown"
+        for drafter_name, draft_text in drafts:
+            ratio = difflib.SequenceMatcher(None, (draft_text or "").strip(), (final_answer or "").strip()).ratio()
+            if ratio >= best_ratio:
+                best_ratio = ratio
+                best_drafter = drafter_name
+        accepted = best_ratio >= self.acceptance_major_ratio
+        try:
+            from src.observability import record_acceptance
+            record_acceptance(
+                accepted=accepted,
+                drafter=best_drafter,
+                verifier=verifier,
+                similarity=best_ratio,
+            )
+        except Exception:
+            pass
+
+        if self.curiosity and hasattr(self.curiosity, "ingest_verifier_lesson"):
+            try:
+                self.curiosity.ingest_verifier_lesson(
+                    prompt=user_text,
+                    drafts=drafts,
+                    final_answer=final_answer,
+                    verifier=verifier,
+                    accepted=accepted,
+                    similarity=best_ratio,
+                )
+            except Exception as e:
+                log.warning("Curiosity verifier lesson: %s", e)
+
     def _ask_auto_consensus(self, context: str, user_text: str) -> tuple[str | None, str | None]:
-        providers = self._auto_providers()
+        providers = self._all_auto_providers()
         if not providers:
             return None, None
 
@@ -881,45 +929,56 @@ class ArgosCore:
                     return answer, provider_name
             return None, None
 
-        collected: list[tuple[str, str]] = []
-        for provider_name, fn in providers:
-            peer_block = ""
-            if collected:
-                peer_opinions = "\n".join(
-                    f"- {name}: {text}" for name, text in collected
-                )
-                peer_block = (
-                    "\n\nНиже ответы других ИИ-моделей. Учти их, исправь слабые места, "
-                    "но не повторяй дословно и не упоминай названия моделей в финальном тексте:\n"
-                    f"{peer_opinions}"
-                )
-            answer = fn(context + peer_block, user_text)
-            if answer and answer.strip():
-                collected.append((provider_name, answer.strip()))
+        drafters = self._local_drafter_providers()
+        verifiers = self._cloud_verifier_providers()
 
-        if not collected:
+        drafts: list[tuple[str, str]] = []
+        if drafters:
+            for idx in range(self.spec_draft_count):
+                provider_name, fn = drafters[idx % len(drafters)]
+                draft_prompt = (
+                    f"Сделай быстрый ЧЕРНОВИК #{idx + 1} для запроса пользователя. "
+                    "Коротко, по делу, без лишних пояснений."
+                    " Если это код — дай рабочий скелет без длинных вступлений.\n\n"
+                    f"Запрос пользователя: {user_text}"
+                )
+                draft_answer = fn(
+                    context + "\n\nРоль: Drafter. Только быстрый черновик.",
+                    draft_prompt,
+                )
+                if draft_answer and draft_answer.strip():
+                    drafts.append((provider_name, draft_answer.strip()))
+
+        if not drafts:
+            for provider_name, fn in providers:
+                answer = fn(context, user_text)
+                if answer and answer.strip():
+                    return answer.strip(), provider_name
             return None, None
-        if len(collected) == 1:
-            return collected[0][1], collected[0][0]
 
-        synthesis_prompt = (
-            "Сделай единый, согласованный ответ пользователю на русском.\n"
-            "Правила: по делу, без воды, без упоминания моделей, устранить противоречия, "
-            "если есть неопределённость — явно это обозначить.\n\n"
+        if not verifiers:
+            return drafts[0][1], f"SpecConsensus:DraftOnly({drafts[0][0]})"
+
+        verifier_prompt = (
+            "Ты Verifier. Запрещено писать ответ с нуля.\n"
+            "Твоя задача: найти ошибки в черновиках, выбрать лучший, исправить только проблемные места и собрать финальный вариант.\n"
+            "Формат ответа: только финальный ответ пользователю, без служебных комментариев.\n\n"
             f"Запрос пользователя: {user_text}\n\n"
-            "Черновики разных моделей:\n"
-            + "\n".join(f"- {name}: {text}" for name, text in collected)
+            "Черновики от Drafter-моделей:\n"
+            + "\n".join(f"- {name}: {text}" for name, text in drafts)
         )
-
-        for provider_name, fn in providers:
-            final_answer = fn(context, synthesis_prompt)
+        for verifier_name, verify_fn in verifiers:
+            final_answer = verify_fn(
+                context + "\n\nРоль: Verifier. Только проверка и сборка финала на базе черновиков.",
+                verifier_prompt,
+            )
             if final_answer and final_answer.strip():
-                used = "+".join(name for name, _ in collected)
-                return final_answer.strip(), f"Auto-Consensus:{used}→{provider_name}"
+                self._post_verifier_feedback(user_text, drafts, final_answer.strip(), verifier_name)
+                used = "+".join(name for name, _ in drafts)
+                return final_answer.strip(), f"SpecConsensus:{used}→{verifier_name}"
 
-        used = "+".join(name for name, _ in collected)
-        merged = "\n\n".join(f"{name}: {text}" for name, text in collected)
-        return merged, f"Auto-Consensus:{used}"
+        merged = drafts[0][1]
+        return merged, f"SpecConsensus:DraftFallback({drafts[0][0]})"
 
     # ═══════════════════════════════════════════════════════
     # ОСНОВНАЯ ЛОГИКА

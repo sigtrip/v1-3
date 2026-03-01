@@ -19,6 +19,12 @@ from collections import deque
 from types import SimpleNamespace
 from typing import Optional
 
+try:
+    from src.observability import get_acceptance_snapshot
+except Exception:  # pragma: no cover
+    def get_acceptance_snapshot(window: int = 120) -> dict:
+        return {"rate": 1.0, "samples": 0, "accepted": 0, "rejected": 0}
+
 # ── КОНСТАНТЫ ─────────────────────────────────────────────
 P2P_PORT        = 55771          # Порт для P2P связи
 BROADCAST_PORT  = 55772          # Порт для UDP-обнаружения
@@ -286,15 +292,28 @@ class TaskDistributor:
 
     def _infer_task_type(self, prompt: str) -> str:
         low = (prompt or "").lower()
+        if any(k in low for k in ("валид", "verify", "verification", "финал", "finalize", "проверь")):
+            return "verify"
+        if any(k in low for k in ("draft", "чернов", "наброс", "быстрый вариант")):
+            return "draft"
         if any(k in low for k in self.HEAVY_KEYWORDS):
             return "heavy"
         return "ai"
 
-    def _score_node(self, node: dict, task_type: str) -> float:
+    def _consensus_role(self, node: dict, all_nodes: list[dict]) -> str:
+        if not all_nodes:
+            return "drafter"
+        master = max(all_nodes, key=lambda n: float(n.get("authority", 0.0) or 0.0))
+        return "verifier" if node.get("node_id") == master.get("node_id") else "drafter"
+
+    def _score_node(self, node: dict, task_type: str, all_nodes: list[dict] | None = None) -> float:
+        if all_nodes is None:
+            all_nodes = [self.me.to_dict()] + self.registry.all()
         power = float(node.get("power", {}).get("index", 0.0))
         auth = float(node.get("authority", 0.0))
         ram_gb = float(node.get("power", {}).get("ram_gb", 0.0))
         role = str(node.get("role", "worker"))
+        consensus_role = self._consensus_role(node, all_nodes)
         queue_depth = float(node.get("queue_depth", 0.0))
         inflight = float(node.get("inflight", 0.0))
         rtt_ms = float(node.get("rtt_ms", 80.0) or 80.0)
@@ -317,6 +336,17 @@ class TaskDistributor:
                 min(ram_gb, 64.0) * self.weights["heavy_ram"] -
                 dynamic_penalty
             )
+
+        if task_type == "verify":
+            verify_bonus = 36.0 if consensus_role == "verifier" else -18.0
+            verify_role_bonus = 8.0 if role == "server" else (2.0 if role == "worker" else -16.0)
+            return (auth * 0.75) + (power * 0.25) + verify_bonus + verify_role_bonus - dynamic_penalty
+
+        if task_type == "draft":
+            drafter_bonus = 18.0 if consensus_role == "drafter" else -35.0
+            weak_node_bias = max(0.0, 65.0 - power) * 0.22
+            gateway_bias = 8.0 if role == "gateway" else 0.0
+            return (auth * 0.35) + weak_node_bias + drafter_bonus + gateway_bias - (dynamic_penalty * 0.7)
 
         if task_type == "old":
             return float(node.get("age_days", 0.0)) * 10.0 + auth - (dynamic_penalty * 0.7)
@@ -345,11 +375,18 @@ class TaskDistributor:
                 candidates = all_
             best = max(candidates, key=lambda n: self._score_node(n, "heavy"))
         elif task_type == "ai":
-            best = max(all_, key=lambda n: self._score_node(n, "ai"))
+            best = max(all_, key=lambda n: self._score_node(n, "ai", all_))
+        elif task_type == "verify":
+            best = max(all_, key=lambda n: self._score_node(n, "verify", all_))
+        elif task_type == "draft":
+            drafters = [n for n in all_ if self._consensus_role(n, all_) == "drafter"]
+            if not drafters:
+                drafters = all_
+            best = max(drafters, key=lambda n: self._score_node(n, "draft", all_))
         elif task_type == "old":
             best = max(all_, key=lambda n: n.get("age_days", 0))
         else:
-            best = max(all_, key=lambda n: self._score_node(n, task_type))
+            best = max(all_, key=lambda n: self._score_node(n, task_type, all_))
 
         is_me = best["node_id"] == me["node_id"]
         return {"node": best, "is_local": is_me, "task_type": task_type}
@@ -358,7 +395,7 @@ class TaskDistributor:
         nodes = self.registry.all()
         me = self.me.to_dict()
         all_nodes = [me] + nodes
-        ranked = sorted(all_nodes, key=lambda n: self._score_node(n, task_type), reverse=True)
+        ranked = sorted(all_nodes, key=lambda n: self._score_node(n, task_type, all_nodes), reverse=True)
         return ranked[:max(1, min(limit, 5))]
 
     def _exec_local(self, prompt: str, resolved_type: str, core=None) -> str:
@@ -584,11 +621,16 @@ class ArgosBridge:
                 p95 = float(sorted_lat[idx])
             total = self._done + self._errors
             err_rate = (self._errors / total) if total > 0 else 0.0
+            consensus_role = self.distributor._consensus_role(
+                self.profile.to_dict(),
+                [self.profile.to_dict()] + self.registry.all(),
+            )
             return {
                 "queue_depth": 0,
                 "inflight": self._inflight,
                 "p95_ms": round(p95, 1),
                 "error_rate": round(err_rate, 3),
+                "consensus_role": consensus_role,
                 "state_ts": time.time(),
             }
 
@@ -843,26 +885,31 @@ class ArgosBridge:
         me = self.profile.to_dict()
         me.update(self._runtime_status())
         nodes = self.registry.all()
+        acceptance = get_acceptance_snapshot(window=120)
+        all_nodes = [me] + nodes
         lines = [
             "📊 P2P TELEMETRY",
             f"  Local: {me.get('hostname')} role={me.get('role')} power={me.get('power',{}).get('index',0)}",
+            f"  Local consensus role: {me.get('consensus_role','drafter')}",
             f"  Local runtime: inflight={me.get('inflight',0)} p95={me.get('p95_ms',0)}ms error_rate={me.get('error_rate',0)}",
+            f"  Acceptance rate(120s): {float(acceptance.get('rate',1.0))*100:.1f}% (samples={int(acceptance.get('samples',0) or 0)})",
             f"  Known remote nodes: {len(nodes)}",
             "",
             "  Scores (ai/heavy):",
         ]
 
-        all_nodes = [me] + nodes
         ranked = sorted(
             all_nodes,
-            key=lambda n: self.distributor._score_node(n, "ai"),
+            key=lambda n: self.distributor._score_node(n, "ai", all_nodes),
             reverse=True
         )
         for node in ranked[:8]:
-            ai_score = self.distributor._score_node(node, "ai")
-            heavy_score = self.distributor._score_node(node, "heavy")
+            ai_score = self.distributor._score_node(node, "ai", all_nodes)
+            heavy_score = self.distributor._score_node(node, "heavy", all_nodes)
+            consensus_role = self.distributor._consensus_role(node, all_nodes)
             lines.append(
                 f"  - {node.get('hostname','?')}[{node.get('role','worker')}] "
+                f"consensus={consensus_role} "
                 f"ai={ai_score:.1f} heavy={heavy_score:.1f} "
                 f"rtt={float(node.get('rtt_ms',0.0) or 0.0):.1f}ms "
                 f"inflight={int(node.get('inflight',0) or 0)} "
