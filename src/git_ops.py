@@ -4,6 +4,7 @@ git_ops.py — Управление Git-операциями из Аргоса
 """
 import os
 import subprocess
+import fnmatch
 
 from src.argos_logger import get_logger
 
@@ -11,8 +12,53 @@ log = get_logger("argos.gitops")
 
 
 class ArgosGitOps:
+    DEFAULT_DENYLIST = [
+        ".env",
+        "*.env",
+        "config/master.key",
+        "config/*secret*",
+        "config/*token*",
+        "data/chroma/*",
+        "*.pem",
+        "*.p12",
+        "*.key",
+    ]
+
     def __init__(self, repo_path: str = "."):
         self.repo_path = os.path.abspath(repo_path)
+
+    def _denylist(self) -> list[str]:
+        extra = (os.getenv("ARGOS_GITOPS_DENYLIST", "") or "").strip()
+        if not extra:
+            return list(self.DEFAULT_DENYLIST)
+        extra_items = [x.strip() for x in extra.split(",") if x.strip()]
+        return list(self.DEFAULT_DENYLIST) + extra_items
+
+    def _tracked_changes(self) -> list[str]:
+        code, out = self._run("status", "--short")
+        if code != 0:
+            return []
+        changed = []
+        for raw in out.splitlines():
+            line = raw.strip("\n")
+            if len(line) < 4:
+                continue
+            path = line[3:].strip()
+            if " -> " in path:
+                path = path.split(" -> ", 1)[1].strip()
+            changed.append(path.replace("\\", "/"))
+        return changed
+
+    def _blocked_paths(self) -> list[str]:
+        patterns = self._denylist()
+        blocked = []
+        for path in self._tracked_changes():
+            normalized = path.lstrip("./")
+            for pattern in patterns:
+                if fnmatch.fnmatch(normalized, pattern):
+                    blocked.append(normalized)
+                    break
+        return sorted(set(blocked))
 
     def _run(self, *args: str, timeout: int = 40) -> tuple[int, str]:
         proc = subprocess.run(
@@ -78,6 +124,18 @@ class ArgosGitOps:
             return f"❌ Не удалось получить status:\n{short[:400]}"
         if not short.strip():
             return "ℹ️ Нет изменений для коммита."
+
+        blocked = self._blocked_paths()
+        allow_blocked = os.getenv("ARGOS_GITOPS_ALLOW_BLOCKED", "0").strip().lower() in {"1", "true", "yes", "on"}
+        if blocked and not allow_blocked:
+            preview = "\n".join(f"  - {p}" for p in blocked[:20])
+            suffix = "\n  ..." if len(blocked) > 20 else ""
+            return (
+                "⛔ Commit заблокирован denylist-политикой.\n"
+                "Обнаружены потенциально чувствительные файлы:\n"
+                f"{preview}{suffix}\n"
+                "Если это осознанно, выставь ARGOS_GITOPS_ALLOW_BLOCKED=1 и повтори."
+            )
 
         add_code, add_out = self._run("add", "-A")
         if add_code != 0:
