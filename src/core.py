@@ -186,6 +186,7 @@ class ArgosCore:
         self.bt_scanner = None
         self.tool_calling = None
         self.git_ops = None
+        self.pupi_ops = None
         self.task_queue = None
         self.awa = None
         self.drafter = None
@@ -249,6 +250,7 @@ class ArgosCore:
         self._init_modules()
         self._init_tool_calling()
         self._init_git_ops()
+        self._init_pupi_ops()
         self._init_task_queue()
         log.info("ArgosCore FINAL v2.0 инициализирован.")
 
@@ -536,6 +538,17 @@ class ArgosCore:
         except Exception as e:
             log.warning("GitOps: %s", e)
 
+    def _init_pupi_ops(self):
+        try:
+            from src.pupi_ops import ArgosPupiOps
+            self.pupi_ops = ArgosPupiOps()
+            if self.pupi_ops.configured:
+                log.info("PupiOps: OK")
+            else:
+                log.info("PupiOps: OFF (нет PUPI_API_URL/PUPI_API_TOKEN)")
+        except Exception as e:
+            log.warning("PupiOps: %s", e)
+
     def _init_task_queue(self):
         try:
             from src.task_queue import TaskQueueManager
@@ -763,8 +776,6 @@ class ArgosCore:
             return "openai"
         if value in {"grok", "xai", "x.ai"}:
             return "grok"
-        if value in {"pupi", "pupiapi", "pupi_api"}:
-            return "pupi"
         return "auto"
 
     def set_ai_mode(self, mode: str) -> str:
@@ -788,8 +799,6 @@ class ArgosCore:
             return "OpenAI"
         if self.ai_mode == "grok":
             return "Grok"
-        if self.ai_mode == "pupi":
-            return "Pupi API"
         return "Auto"
 
     def _setup_ai(self):
@@ -828,11 +837,6 @@ class ArgosCore:
             log.info("Grok/xAI: конфигурация обнаружена")
         else:
             log.info("Grok/xAI недоступен — нет GROK_API_KEY")
-
-        if self._has_pupi_config():
-            log.info("Pupi API: конфигурация обнаружена")
-        else:
-            log.info("Pupi API недоступен — нет PUPI_API_TOKEN/PUPI_API_URL")
 
         self._ensure_ollama_running()
 
@@ -949,11 +953,6 @@ class ArgosCore:
 
     def _has_grok_config(self) -> bool:
         return bool((os.getenv("GROK_API_KEY", "") or "").strip())
-
-    def _has_pupi_config(self) -> bool:
-        token = (os.getenv("PUPI_API_TOKEN", "") or "").strip()
-        url = (os.getenv("PUPI_API_URL", "") or "").strip()
-        return bool(token and url)
 
     def _ask_gemini_rest(self, context: str, user_text: str) -> str | None:
         key = (os.getenv("GEMINI_API_KEY", "") or "").strip()
@@ -1181,53 +1180,6 @@ class ArgosCore:
             return None
         except Exception as e:
             log.error("Grok: %s", e)
-            return None
-
-    def _ask_pupi(self, context: str, user_text: str) -> str | None:
-        token = (os.getenv("PUPI_API_TOKEN", "") or "").strip()
-        url = (os.getenv("PUPI_API_URL", "") or "").strip()
-        if not (token and url):
-            return None
-        model = (os.getenv("PUPI_MODEL", "pupi-latest") or "").strip() or "pupi-latest"
-        try:
-            hist = self.context.get_prompt_context()
-            payload = {
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": context},
-                    {"role": "user", "content": f"{hist}\n\n{user_text}"},
-                ],
-                "temperature": 0.4,
-                "max_tokens": 1200,
-            }
-            response = requests.post(
-                url,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/json",
-                },
-                json=payload,
-                timeout=25,
-            )
-            if not response.ok:
-                log.error("Pupi API: HTTP %s %s", response.status_code, response.text[:400])
-                return None
-            data = response.json()
-            choices = data.get("choices") or []
-            if choices:
-                message = choices[0].get("message") or {}
-                content = message.get("content")
-                if isinstance(content, str):
-                    return content.strip()
-            content = data.get("content")
-            if isinstance(content, str):
-                return content.strip()
-            text = data.get("text")
-            if isinstance(text, str):
-                return text.strip()
-            return None
-        except Exception as e:
-            log.error("Pupi API: %s", e)
             return None
 
     def _ask_gigachat(self, context: str, user_text: str) -> str | None:
@@ -1458,8 +1410,6 @@ class ArgosCore:
             providers.append(("OpenAI", self._ask_openai))
         if self._has_grok_config():
             providers.append(("Grok", self._ask_grok))
-        if self._has_pupi_config():
-            providers.append(("Pupi", self._ask_pupi))
         return providers[:self.auto_collab_max_models]
 
     def _all_auto_providers(self) -> list[tuple[str, callable]]:
@@ -1726,9 +1676,6 @@ class ArgosCore:
         elif self.ai_mode == "grok":
             answer = self._ask_grok(context, user_text)
             engine = f"{q_data['name']} (Grok)"
-        elif self.ai_mode == "pupi":
-            answer = self._ask_pupi(context, user_text)
-            engine = f"{q_data['name']} (Pupi API)"
         else:
             answer = self._ask_consensus(context, user_text)
             engine = f"{q_data['name']} (Auto-Consensus)"
@@ -1753,8 +1700,6 @@ class ArgosCore:
                 answer = "OpenAI недоступен. Проверьте OPENAI_API_KEY/OPENAI_MODEL или переключите режим ИИ."
             elif self.ai_mode == "grok":
                 answer = "Grok/xAI недоступен. Проверьте GROK_API_KEY/GROK_MODEL или переключите режим ИИ."
-            elif self.ai_mode == "pupi":
-                answer = "Pupi API недоступен. Проверьте PUPI_API_TOKEN/PUPI_API_URL/PUPI_MODEL или переключите режим ИИ."
             else:
                 answer = "Связь с ядрами ИИ разорвана. Режим оффлайн."
             engine = "Offline"
@@ -1912,6 +1857,25 @@ class ArgosCore:
                     msg = msg[idx + len(marker):].strip()
                     break
             return self.git_ops.commit(msg)
+
+        if self.pupi_ops and any(k in t for k in ["pupi статус", "pupi status"]):
+            return self.pupi_ops.status()
+        if self.pupi_ops and any(k in t for k in ["pupi список", "pupi list"]):
+            return self.pupi_ops.list_scripts()
+        if self.pupi_ops and t.startswith("pupi pull "):
+            parts = text.split(maxsplit=3)
+            name = parts[2] if len(parts) > 2 else ""
+            save_path = parts[3] if len(parts) > 3 else None
+            return self.pupi_ops.pull_script(name, save_path)
+        if self.pupi_ops and t.startswith("pupi push "):
+            parts = text.split(maxsplit=3)
+            local_path = parts[2] if len(parts) > 2 else ""
+            remote_name = parts[3] if len(parts) > 3 else None
+            return self.pupi_ops.push_script(local_path, remote_name)
+        if self.pupi_ops and (t.startswith("pupi delete ") or t.startswith("pupi удали ")):
+            parts = text.split(maxsplit=2)
+            name = parts[2] if len(parts) > 2 else ""
+            return self.pupi_ops.delete_script(name)
 
         if hasattr(admin, "set_alert_callback"):
             admin.set_alert_callback(self._on_alert)
@@ -2086,8 +2050,6 @@ class ArgosCore:
             return self.set_ai_mode("openai")
         if any(k in t for k in ["режим ии grok", "модель grok", "ai mode grok", "режим ии xai"]):
             return self.set_ai_mode("grok")
-        if any(k in t for k in ["режим ии pupi", "модель pupi", "ai mode pupi"]):
-            return self.set_ai_mode("pupi")
         if any(k in t for k in ["текущий режим ии", "какая модель", "ai mode"]):
             return f"🤖 Текущий режим ИИ: {self.ai_mode_label()}"
         if any(k in t for k in ["включи wake word", "wake word вкл"]):
@@ -3084,7 +3046,13 @@ class ArgosCore:
 
 🎤 ГОЛОС
   голос вкл/выкл · включи wake word
-        режим ии авто/gemini/gigachat/yandexgpt/lmstudio/ollama/watsonx/openai/grok/pupi
+        режим ии авто/gemini/gigachat/yandexgpt/lmstudio/ollama/watsonx/openai/grok
+
+🧰 PUPI API (PYTHON SCRIPT REGISTRY)
+    pupi статус · pupi список
+    pupi pull [name] [save_path?]
+    pupi push [local_path] [remote_name?]
+    pupi delete [name]
 
 💬 ДИАЛОГ
   контекст диалога · сброс контекста

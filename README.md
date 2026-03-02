@@ -12,7 +12,7 @@
 
 | Слой | Что умеет |
 |------|-----------|
-| 🧠 **Интеллект** | Gemini / GigaChat / YandexGPT / LM Studio / OpenAI / Grok / Pupi API → Ollama/Llama3 / **IBM Watsonx** (Llama-3.1-70B), multi-turn + Tool Calling по JSON-схемам |
+| 🧠 **Интеллект** | Gemini / GigaChat / YandexGPT / LM Studio / OpenAI / Grok → Ollama/Llama3 / **IBM Watsonx** (Llama-3.1-70B), multi-turn + Tool Calling по JSON-схемам |
 | 🗣️ **Голос** | TTS (pyttsx3) + STT (SpeechRecognition) + Wake Word «Аргос» |
 | 🤖 **Агент** | Цепочки задач: «скан сети → запиши → отправь в Telegram» |
 | 👁️ **Vision** | Анализ экрана / камеры / файлов через Gemini Vision |
@@ -223,8 +223,8 @@ GROK_API_KEY=ключ_grok_xai
 # опционально: GROK_MODEL=grok-2-latest
 # опционально: GROK_API_URL=https://api.x.ai/v1/chat/completions
 PUPI_API_TOKEN=токен_pupi_api
-PUPI_API_URL=https://your-pupi-endpoint/v1/chat/completions
-# опционально: PUPI_MODEL=pupi-latest
+PUPI_API_URL=https://your-pupi-endpoint
+# опционально: PUPI_BRANCH=main
 # опционально: GEMINI_REST_URL=https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent
 ARGOS_OLLAMA_AUTOSTART=on
 # опционально: ARGOS_OLLAMA_HEALTH_URL=http://localhost:11434/api/tags
