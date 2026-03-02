@@ -2023,6 +2023,8 @@ class ArgosCore:
         if self.iot_bridge:
             if any(k in t for k in ["iot статус", "iot устройства", "устройства iot"]):
                 return self.iot_bridge.status()
+            if any(k in t for k in ["iot возможности", "iot capability", "iot матрица", "возможности iot"]):
+                return self.iot_bridge.capability_report()
             if any(k in t for k in ["iot протоколы", "протоколы iot", "пром протоколы", "какие протоколы"]):
                 return self._iot_protocols_help()
             if "зарегистрируй устройство" in t or "добавь устройство" in t:
@@ -2606,7 +2608,7 @@ class ArgosCore:
   Типы: home, greenhouse, garage, cellar, incubator, aquarium, terrarium
 
 📡 IoT / MESH-СЕТЬ
-  iot статус · добавь устройство [id] [тип] [протокол]
+    iot статус · iot возможности · добавь устройство [id] [тип] [протокол]
     статус устройства [id] · iot протоколы
   подключи zigbee/lora/mqtt · запусти mesh
   статус mesh · запусти zigbee/lora [порт]

@@ -638,9 +638,22 @@ ha mqtt home/livingroom/light/set state=ON brightness=180
 | **MQTT** | paho-mqtt | Любые MQTT-устройства |
 | **Modbus** | pymodbus | Промышленные контроллеры |
 
+Фактическая матрица поддержки:
+
+| Протокол/стек | Статус | Примечание |
+|---------------|--------|------------|
+| Zigbee (MQTT) | ✅ Implemented | Рабочий адаптер в IoTBridge |
+| LoRa (UART AT) | ✅ Implemented | Рабочий адаптер в IoTBridge |
+| WiFi Mesh (UDP) | ✅ Implemented | Рабочий mesh-адаптер |
+| MQTT | ✅ Implemented | Общий MQTT bridge |
+| Tasmota Discovery | ✅ Implemented | Zero-config через homeassistant/# |
+| Modbus RTU/TCP | 🟨 Template-based | Через gateway templates и внешние runtime |
+| BACnet / KNX / LonWorks / M-Bus / OPC UA | 🧭 Planned/Template | Протоколы декларированы, отдельные runtime-адаптеры в IoTBridge пока не реализованы |
+
 ```
 # Команды
 iot статус                    # список всех IoT-устройств
+iot возможности               # фактическая матрица поддержки на текущей ноде
 iot протоколы                 # полный список промышленных протоколов
 статус устройства sensor_01   # детальный мониторинг устройства
 подключи zigbee localhost     # подключить Zigbee через MQTT

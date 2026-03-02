@@ -8,6 +8,7 @@ iot_bridge.py — IoT-мост Аргоса
 """
 import json, os, time, threading, socket, struct
 import sqlite3
+import importlib.util
 from collections import defaultdict
 from src.argos_logger import get_logger
 from src.event_bus import get_bus, Events
@@ -621,6 +622,43 @@ class IoTBridge:
 
     def status(self) -> str:
         return self.registry.report()
+
+    def capability_report(self) -> str:
+        """Показывает фактические возможности IoT-стека на текущей ноде."""
+        def has(mod: str) -> bool:
+            try:
+                return importlib.util.find_spec(mod) is not None
+            except Exception:
+                return False
+
+        rows = [
+            ("Zigbee (MQTT)", "IMPLEMENTED", "READY" if has("paho.mqtt.client") else "MISSING dep: paho-mqtt"),
+            ("LoRa (UART AT)", "IMPLEMENTED", "READY" if has("serial") else "MISSING dep: pyserial"),
+            ("WiFi Mesh (UDP)", "IMPLEMENTED", "READY"),
+            ("MQTT Broker Bridge", "IMPLEMENTED", "READY" if has("paho.mqtt.client") else "MISSING dep: paho-mqtt"),
+            ("Tasmota Discovery", "IMPLEMENTED", "READY" if has("paho.mqtt.client") else "MISSING dep: paho-mqtt"),
+            ("Modbus RTU/TCP", "TEMPLATE-BASED", "Gateway templates + external runtime"),
+            ("BACnet", "PLANNED/TEMPLATE", "Protocol listed; adapter code not implemented in IoTBridge"),
+            ("KNX", "PLANNED/TEMPLATE", "Protocol listed; adapter code not implemented in IoTBridge"),
+            ("LonWorks", "PLANNED/TEMPLATE", "Protocol listed; adapter code not implemented in IoTBridge"),
+            ("M-Bus", "PLANNED/TEMPLATE", "Protocol listed; adapter code not implemented in IoTBridge"),
+            ("OPC UA", "PLANNED/TEMPLATE", "Protocol listed; adapter code not implemented in IoTBridge"),
+        ]
+
+        lines = ["📡 IOT ВОЗМОЖНОСТИ (фактическая матрица):"]
+        for name, status, note in rows:
+            icon = "✅" if status == "IMPLEMENTED" else "🟨" if status == "TEMPLATE-BASED" else "🧭"
+            lines.append(f"  {icon} {name}: {status} — {note}")
+
+        lines.append("\nАвтодобавление устройств:")
+        lines.append("  • Zigbee: через MQTT топики zigbee2mqtt/#")
+        lines.append("  • LoRa: через входящие пакеты +RCV")
+        lines.append("  • Mesh: через UDP-пакеты mesh")
+        lines.append("  • Tasmota: через homeassistant/# discovery")
+        lines.append("\nАвторасширение шаблонов:")
+        lines.append("  • изучи протокол [шаблон] [протокол] [прошивка?] [описание?]")
+        lines.append("  • изучи устройство [шаблон] [протокол] [hardware?]")
+        return "\n".join(lines)
 
     def device_status(self, dev_id: str) -> str:
         dev = self.registry.get(dev_id)
