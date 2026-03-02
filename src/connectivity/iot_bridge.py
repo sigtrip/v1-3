@@ -785,6 +785,54 @@ class IoTBridge:
         dev = IoTDevice(dev_id, dtype, protocol, address, name)
         return self.registry.register(dev)
 
+    @staticmethod
+    def _normalize_mac(value: str) -> str:
+        raw = "".join(ch for ch in str(value or "") if ch.isalnum()).upper()
+        if len(raw) != 12:
+            return str(value or "").strip().upper()
+        return ":".join(raw[i:i + 2] for i in range(0, 12, 2))
+
+    def register_gateway(self, dev_id: str, protocol: str = "zigbee",
+                         ip: str = "", mac: str = "", name: str = "") -> str:
+        gateway_id = (dev_id or "").strip() or f"gw_{int(time.time())}"
+        normalized_mac = self._normalize_mac(mac) if mac else ""
+        address = (ip or normalized_mac or "").strip()
+
+        dev = IoTDevice(gateway_id, "gateway", protocol, address, name or gateway_id)
+        if ip:
+            dev.update("ip", ip.strip())
+        if normalized_mac:
+            dev.update("mac", normalized_mac)
+        dev.update("gateway_protocol", protocol)
+        return self.registry.register(dev)
+
+    def _find_device(self, query: str) -> IoTDevice | None:
+        q = (query or "").strip()
+        if not q:
+            return None
+
+        direct = self.registry.get(q)
+        if direct:
+            return direct
+
+        q_lower = q.lower()
+        q_mac = self._normalize_mac(q)
+
+        for dev in self.registry.all():
+            if (dev.name or "").lower() == q_lower:
+                return dev
+            if (dev.address or "").lower() == q_lower:
+                return dev
+
+            ip = str(dev.state.get("ip", "") or "").strip().lower()
+            if ip and ip == q_lower:
+                return dev
+
+            mac = self._normalize_mac(str(dev.state.get("mac", "") or ""))
+            if mac and mac == q_mac:
+                return dev
+        return None
+
     def status(self) -> str:
         return self.registry.report()
 
@@ -838,7 +886,7 @@ class IoTBridge:
         return self.capability_report()
 
     def device_status(self, dev_id: str) -> str:
-        dev = self.registry.get(dev_id)
+        dev = self._find_device(dev_id)
         if not dev:
             return f"❌ Устройство '{dev_id}' не найдено."
 
@@ -861,7 +909,7 @@ class IoTBridge:
         return "\n".join(lines)
 
     def send_command(self, dev_id: str, command: str, value=None) -> str:
-        dev = self.registry.get(dev_id)
+        dev = self._find_device(dev_id)
         if not dev:
             return f"❌ Устройство '{dev_id}' не найдено."
         if dev.protocol == "zigbee":
@@ -885,7 +933,7 @@ class IoTBridge:
         return f"❌ Протокол '{dev.protocol}' не поддерживает команды."
 
     def get_value(self, dev_id: str, key: str):
-        dev = self.registry.get(dev_id)
+        dev = self._find_device(dev_id)
         if not dev:
             return None
         return dev.state.get(key)

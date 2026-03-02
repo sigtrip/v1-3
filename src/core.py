@@ -2955,11 +2955,34 @@ class ArgosCore:
                     name = parts[4] if len(parts) > 4 else dev_id
                     return self.iot_bridge.register_device(dev_id, dtype, proto, addr, name)
                 return "Формат: добавь устройство [id] [тип] [протокол] [адрес] [имя]"
+            if "добавь шлюз" in t or "зарегистрируй шлюз" in t:
+                # Формат: добавь шлюз [id] [протокол] [ip] [mac] [name...]
+                import shlex as _shlex
+                tail = text
+                for marker in ("добавь шлюз", "зарегистрируй шлюз"):
+                    if marker in t:
+                        tail = text.split(marker, 1)[-1].strip()
+                        break
+                parts = _shlex.split(tail) if tail else []
+                if len(parts) >= 4:
+                    gw_id, proto, ip, mac = parts[0], parts[1], parts[2], parts[3]
+                    name = " ".join(parts[4:]) if len(parts) > 4 else gw_id
+                    return self.iot_bridge.register_gateway(gw_id, proto, ip, mac, name)
+                return "Формат: добавь шлюз [id] [протокол] [ip] [mac] [name...]"
             if "статус устройства" in t or "мониторинг устройства" in t:
                 parts = text.split("устройства" if "устройства" in t else "устройство")[-1].strip().split()
                 if parts:
                     return self.iot_bridge.device_status(parts[0])
                 return "Формат: статус устройства [id]"
+            if "найди шлюз" in t or "найди устройство" in t:
+                tail = text
+                for marker in ("найди шлюз", "найди устройство"):
+                    if marker in t:
+                        tail = text.split(marker, 1)[-1].strip()
+                        break
+                if tail:
+                    return self.iot_bridge.device_status(tail.split()[0])
+                return "Формат: найди шлюз [id|ip|mac]"
             if "подключи zigbee" in t:
                 parts = text.split("подключи zigbee")[-1].strip().split()
                 host = parts[0] if parts else "localhost"
