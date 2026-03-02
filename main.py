@@ -5,8 +5,8 @@ main.py — ArgosUniversal OS v1.0.0 FINAL
   Флаги:  --no-gui | --mobile | --root | --dashboard | --wake
 """
 import os, sys, threading
-from dotenv import load_dotenv
-load_dotenv()
+from src.env_bootstrap import bootstrap_env
+bootstrap_env()
 
 from src.core                        import ArgosCore
 from src.admin                       import ArgosAdmin

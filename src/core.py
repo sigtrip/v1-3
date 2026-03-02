@@ -49,8 +49,8 @@ from src.modules                     import ModuleLoader
 from src.context_manager             import DialogContext
 from src.agent                       import ArgosAgent
 from src.argos_logger                import get_logger
-from dotenv import load_dotenv
-load_dotenv()
+from src.env_bootstrap               import bootstrap_env
+bootstrap_env()
 
 log = get_logger("argos.core")
 
