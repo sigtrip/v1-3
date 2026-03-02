@@ -2,6 +2,23 @@
 
 Все заметные изменения проекта фиксируются в этом файле.
 
+## v1.3.1 — 2026-03-02
+
+### Added
+- Веб-панели (`web_dashboard` и `fastapi_dashboard`) получили кнопку `🎙 СЛУШАТЬ` с браузерным SpeechRecognition для голосового ввода команд.
+- Desktop GUI расширен новыми режимами выбора ИИ: `Watsonx`, `OpenAI`, `Grok`.
+
+### Changed
+- `src/core.py`: добавлена нормализация placeholder-секретов из `.env`, чтобы фейковые/шаблонные значения не считались валидной конфигурацией провайдеров.
+- `src/core.py`: улучшена инициализация провайдеров (`Gemini`, `GigaChat`, `YandexGPT`, `OpenAI`, `Grok`, `Watsonx`) и добавлен флаг `GIGACHAT_VERIFY_SSL`.
+- `src/connectivity/telegram_bot.py`: усилена валидация `TELEGRAM_BOT_TOKEN`/`USER_ID` и стабилизирован запуск polling в threaded-режиме (`run_polling(stop_signals=None)`).
+- `requirements-optional.txt`: убрана жёсткая pip-зависимость `SoapySDR>=0.8.1`, добавлены кроссплатформенные инструкции системной установки.
+
+### Fixed
+- Устранён runtime-сбой Telegram-моста (`set_wakeup_fd only works in main thread`) при запуске бота в отдельном потоке.
+- Снижен шум конфигурационных ошибок при placeholder-значениях API ключей.
+- Исправлена доступность голосового ввода в веб-интерфейсах.
+
 ## v1.3.0 — 2026-03-01
 
 ### Added
