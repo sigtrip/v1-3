@@ -4,7 +4,7 @@ core.py — ArgosCore FINAL v2.0
     ИИ + Контекст + Голос + Wake Word + Память + Планировщик +
     Алерты + Агент + Vision + P2P + Загрузчик + 50+ команд
 """
-import os, threading, requests, asyncio, tempfile
+import os, threading, requests, asyncio, tempfile, subprocess, shutil
 import concurrent.futures
 import json
 import time
@@ -150,6 +150,7 @@ class ArgosCore:
         self.context    = DialogContext(max_turns=10)
         self.agent      = ArgosAgent(self)
         self.ollama_url = "http://localhost:11434/api/generate"
+        self.ollama_health_url = (os.getenv("ARGOS_OLLAMA_HEALTH_URL", "http://localhost:11434/api/tags") or "").strip()
         self.lmstudio_url = (os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1/chat/completions") or "").strip()
         self.lmstudio_model = (os.getenv("LMSTUDIO_MODEL", "local-model") or "").strip() or "local-model"
         self.ai_mode    = self._normalize_ai_mode(os.getenv("ARGOS_AI_MODE", "auto"))
@@ -165,6 +166,7 @@ class ArgosCore:
         self._boot      = None
         self._dashboard = None
         self._wake      = None
+        self._ollama_proc = None
         self._tts_engine = None
         self._whisper_model = None
         self.skill_loader = None
@@ -831,6 +833,49 @@ class ArgosCore:
             log.info("Pupi API: конфигурация обнаружена")
         else:
             log.info("Pupi API недоступен — нет PUPI_API_TOKEN/PUPI_API_URL")
+
+        self._ensure_ollama_running()
+
+    def _is_ollama_available(self) -> bool:
+        try:
+            response = requests.get(self.ollama_health_url, timeout=2)
+            return response.ok
+        except Exception:
+            return False
+
+    def _ensure_ollama_running(self) -> None:
+        autostart = (os.getenv("ARGOS_OLLAMA_AUTOSTART", "on") or "on").strip().lower() not in {
+            "0", "off", "false", "no", "нет"
+        }
+        if not autostart:
+            log.info("Ollama autostart: OFF")
+            return
+
+        if self._is_ollama_available():
+            log.info("Ollama: already running")
+            return
+
+        if shutil.which("ollama") is None:
+            log.warning("Ollama autostart: бинарник 'ollama' не найден в PATH")
+            return
+
+        try:
+            self._ollama_proc = subprocess.Popen(
+                ["ollama", "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as e:
+            log.warning("Ollama autostart failed: %s", e)
+            return
+
+        for _ in range(8):
+            if self._is_ollama_available():
+                log.info("Ollama autostart: OK")
+                return
+            time.sleep(0.5)
+
+        log.warning("Ollama autostart: process started, but API still unavailable")
 
     def _setup_watsonx(self):
         """IBM Watsonx AI — Llama-3 70B через инфраструктуру IBM."""
