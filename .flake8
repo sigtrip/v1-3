@@ -1,0 +1,22 @@
+[flake8]
+max-line-length = 120
+exclude =
+    .git,
+    __pycache__,
+    build,
+    dist,
+    .buildozer,
+    venv,
+    .venv
+ignore =
+    E501,
+    W503,
+    E402,
+    E722,
+    E741,
+    F401,
+    F841
+per-file-ignores =
+    src/core.py:E302,E303
+    src/connectivity/p2p_bridge.py:E302,E303
+    tests/*:E302,E303

@@ -2799,6 +2799,8 @@ class ArgosCore:
             return self.p2p.set_failover_limit(parts[2])
         if any(k in t for k in ["протокол p2p", "p2p протокол", "libp2p", "zkp"]):
             return p2p_protocol_roadmap()
+        if any(k in t for k in ["p2p транспорт", "p2p transport", "транспорты p2p"]):
+            return self.p2p.transport_status() if self.p2p else "P2P не запущен."
         if "запусти p2p" in t:
             return self.start_p2p()
         if "синхронизируй навыки" in t:

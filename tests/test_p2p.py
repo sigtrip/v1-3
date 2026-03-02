@@ -352,6 +352,179 @@ class TestIntegration(unittest.TestCase):
         bus.stop()
 
 
+# ═══════════════════════════════════════════════════════════
+# ТЕСТЫ P2P ROUTING WEIGHT
+# ═══════════════════════════════════════════════════════════
+class TestP2PWeight(unittest.TestCase):
+    """Тесты обновления весов маршрутизации."""
+
+    def test_p2p_weight_update(self):
+        from src.connectivity.p2p_bridge import ArgosBridge
+        bridge = ArgosBridge(core=None)
+        result = bridge.set_routing_weight("power", 1.2)
+        self.assertIn("1.2", result)
+        self.assertEqual(bridge.distributor.weights["power"], 1.2)
+
+    def test_p2p_weight_unknown(self):
+        from src.connectivity.p2p_bridge import ArgosBridge
+        bridge = ArgosBridge(core=None)
+        result = bridge.set_routing_weight("nonexistent_key", 0.5)
+        self.assertIn("❌", result)
+
+    def test_p2p_failover_limit(self):
+        from src.connectivity.p2p_bridge import ArgosBridge
+        bridge = ArgosBridge(core=None)
+        result = bridge.set_failover_limit(4)
+        self.assertIn("4", result)
+        self.assertEqual(bridge.distributor.failover_limit, 4)
+
+
+# ═══════════════════════════════════════════════════════════
+# ТЕСТЫ TRANSPORT REGISTRY
+# ═══════════════════════════════════════════════════════════
+class TestTransportRegistry(unittest.TestCase):
+    """Тесты реестра транспортов и базовых классов."""
+
+    def test_registry_register_and_get(self):
+        from src.connectivity.p2p_transport import TransportRegistry, TCPTransport
+        reg = TransportRegistry()
+        tcp = TCPTransport(55771)
+        reg.register("tcp", tcp, weight=1.0)
+        self.assertIs(reg.get("tcp"), tcp)
+
+    def test_registry_set_weight(self):
+        from src.connectivity.p2p_transport import TransportRegistry, TCPTransport
+        reg = TransportRegistry()
+        reg.register("tcp", TCPTransport(55771), weight=0.5)
+        ok = reg.set_weight("tcp", 1.5)
+        self.assertTrue(ok)
+        self.assertEqual(reg._weights["tcp"], 1.5)
+
+    def test_registry_set_weight_unknown(self):
+        from src.connectivity.p2p_transport import TransportRegistry
+        reg = TransportRegistry()
+        ok = reg.set_weight("nonexistent", 1.0)
+        self.assertFalse(ok)
+
+    def test_registry_unregister(self):
+        from src.connectivity.p2p_transport import TransportRegistry, TCPTransport
+        reg = TransportRegistry()
+        reg.register("tcp", TCPTransport(55771))
+        ok = reg.unregister("tcp")
+        self.assertTrue(ok)
+        self.assertIsNone(reg.get("tcp"))
+
+    def test_registry_best_selects_highest_weight(self):
+        from src.connectivity.p2p_transport import TransportRegistry, TCPTransport
+        reg = TransportRegistry()
+        tcp1 = TCPTransport(55771)
+        tcp2 = TCPTransport(55772)
+        reg.register("tcp-low", tcp1, weight=0.3)
+        reg.register("tcp-high", tcp2, weight=1.5)
+        best = reg.best()
+        self.assertIs(best, tcp2)
+
+    def test_registry_status(self):
+        from src.connectivity.p2p_transport import TransportRegistry, TCPTransport
+        reg = TransportRegistry()
+        reg.register("tcp", TCPTransport(55771), weight=0.8)
+        status = reg.status()
+        self.assertIn("tcp", status)
+        self.assertIn("0.80", status)
+
+    def test_tcp_transport_available(self):
+        from src.connectivity.p2p_transport import TCPTransport
+        tcp = TCPTransport(55771)
+        self.assertTrue(tcp.is_available())
+
+    def test_tcp_transport_status(self):
+        from src.connectivity.p2p_transport import TCPTransport
+        tcp = TCPTransport(55771)
+        self.assertIn("tcp", tcp.status())
+
+    def test_wireguard_transport_not_available(self):
+        """WireGuard недоступен без реального интерфейса."""
+        from src.connectivity.p2p_transport import WireGuardTransport
+        wg = WireGuardTransport(wg_interface="wg_nonexistent_999")
+        self.assertFalse(wg.is_available())
+
+    def test_zerotier_transport_not_available(self):
+        """ZeroTier недоступен без zerotier-cli."""
+        from src.connectivity.p2p_transport import ZeroTierTransport
+        zt = ZeroTierTransport(network_id="fake123")
+        self.assertFalse(zt.is_available())
+
+    def test_base_transport_not_available(self):
+        from src.connectivity.p2p_transport import P2PTransportBase
+        base = P2PTransportBase()
+        self.assertFalse(base.is_available())
+
+
+# ═══════════════════════════════════════════════════════════
+# ТЕСТЫ ZKP TRANSPORT WRAPPER
+# ═══════════════════════════════════════════════════════════
+class TestZKPTransportWrapper(unittest.TestCase):
+    """Тесты ZKP-обёртки над транспортом."""
+
+    def test_wrapper_delegates_availability(self):
+        from src.connectivity.p2p_transport import ZKPTransportWrapper, TCPTransport
+        tcp = TCPTransport(55771)
+        wrapper = ZKPTransportWrapper(tcp, zkp_engine=None)
+        self.assertEqual(wrapper.is_available(), tcp.is_available())
+
+    def test_wrapper_name_includes_inner(self):
+        from src.connectivity.p2p_transport import ZKPTransportWrapper, TCPTransport
+        tcp = TCPTransport(55771)
+        wrapper = ZKPTransportWrapper(tcp, zkp_engine=None)
+        self.assertIn("tcp", wrapper.name)
+        self.assertIn("zkp", wrapper.name)
+
+    def test_wrapper_verify_no_engine(self):
+        """Без ZKP engine верификация всегда True."""
+        from src.connectivity.p2p_transport import ZKPTransportWrapper, TCPTransport
+        wrapper = ZKPTransportWrapper(TCPTransport(55771), zkp_engine=None)
+        self.assertTrue(wrapper.verify_incoming({"action": "test"}))
+
+    def test_wrapper_verify_with_zkp(self):
+        """С ZKP engine подписанный пакет проходит верификацию."""
+        from src.connectivity.p2p_transport import ZKPTransportWrapper, TCPTransport
+        from src.security.zkp import ArgosZKPEngine
+        zkp = ArgosZKPEngine(node_id="test-node", network_secret="secret", enabled=True)
+        wrapper = ZKPTransportWrapper(TCPTransport(55771), zkp_engine=zkp)
+        # Подписываем
+        challenge = zkp.challenge("test", "req-1")
+        proof = zkp.sign(challenge)
+        data = {"action": "test", "zkp_proof": proof, "zkp_challenge": challenge}
+        self.assertTrue(wrapper.verify_incoming(data))
+
+    def test_wrapper_verify_bad_proof(self):
+        """Поддельный proof не проходит верификацию."""
+        from src.connectivity.p2p_transport import ZKPTransportWrapper, TCPTransport
+        from src.security.zkp import ArgosZKPEngine
+        zkp = ArgosZKPEngine(node_id="test-node", network_secret="secret", enabled=True)
+        wrapper = ZKPTransportWrapper(TCPTransport(55771), zkp_engine=zkp)
+        data = {"action": "test", "zkp_proof": {"node_id": "fake", "pub": "0", "commit": "0", "response": "0", "ts": 0}, "zkp_challenge": "fake"}
+        self.assertFalse(wrapper.verify_incoming(data))
+
+
+# ═══════════════════════════════════════════════════════════
+# ТЕСТЫ P2P ROADMAP
+# ═══════════════════════════════════════════════════════════
+class TestP2PRoadmap(unittest.TestCase):
+
+    def test_roadmap_contains_zkp(self):
+        from src.connectivity.p2p_bridge import p2p_protocol_roadmap
+        roadmap = p2p_protocol_roadmap()
+        self.assertIn("ZKP", roadmap)
+        self.assertIn("WireGuard", roadmap)
+
+    def test_roadmap_contains_transports(self):
+        from src.connectivity.p2p_bridge import p2p_protocol_roadmap
+        roadmap = p2p_protocol_roadmap()
+        self.assertIn("TCP", roadmap)
+        self.assertIn("ZeroTier", roadmap)
+
+
 # ── RUNNER ────────────────────────────────────────────────
 def run_tests():
     print("━" * 60)
@@ -363,6 +536,8 @@ def run_tests():
         TestNodeProfile, TestNodeRegistry, TestTaskDistributor,
         TestArgosBridge, TestP2PPacketEncoding, TestP2PAuthority,
         TestEventBusP2P, TestIntegration,
+        TestP2PWeight, TestTransportRegistry, TestZKPTransportWrapper,
+        TestP2PRoadmap,
     ]
     for cls in test_classes:
         suite.addTests(loader.loadTestsFromTestCase(cls))

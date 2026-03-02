@@ -39,6 +39,7 @@ def p2p_protocol_roadmap() -> str:
     return (
         "🛰️ P2P ПРОТОКОЛ ARGOS\n"
         "Текущий транспорт: UDP discovery + TCP JSON (custom).\n"
+        "Доступные транспорты: TCP, WireGuard, ZeroTier (см. ARGOS_WG_INTERFACE, ARGOS_ZT_NETWORK).\n"
         "\n"
         "🎯 Рекомендуемый target: libp2p (совместимость с dHT, pubsub, secure transports).\n"
         "Этапы миграции:\n"
@@ -47,12 +48,15 @@ def p2p_protocol_roadmap() -> str:
         "3) Messaging: gossipsub для событий, request-response для RPC.\n"
         "4) Data exchange: protobuf-сообщения и версионирование протокола.\n"
         "\n"
-        "🔐 ZKP roadmap (перспектива):\n"
+        "🔐 ZKP (privacy-routing):\n"
+        "- ✅ Schnorr NIZK-proof — реализован (src/security/zkp.py).\n"
+        "- ✅ ZKPTransportWrapper — подпись/верификация пакетов (src/connectivity/p2p_transport.py).\n"
         "- Phase A: selective disclosure (минимизация персональных полей).\n"
         "- Phase B: proof-of-attribute (подтверждение факта без раскрытия значения).\n"
         "- Phase C: proof-of-policy (валидность данных/правил между нодами).\n"
         "\n"
-        "Примечание: в текущей версии ZKP не активирован, это roadmap для следующей итерации."
+        "🛡️ Активация ZKP: ARGOS_P2P_ZKP=on в .env\n"
+        "🔧 Custom-транспорт: создайте класс(P2PTransportBase) → register_transport()."
     )
 
 
@@ -599,18 +603,86 @@ class ArgosBridge:
 
     def start(self) -> str:
         self._running = True
+        self._init_transport_registry()
         threading.Thread(target=self._udp_broadcaster, daemon=True).start()
         threading.Thread(target=self._udp_listener,    daemon=True).start()
         threading.Thread(target=self._tcp_server,      daemon=True).start()
         threading.Thread(target=self._heartbeat_loop,  daemon=True).start()
-        return (
-            f"🌐 P2P-мост запущен\n"
-            f"   IP:       {self._local_ip}:{P2P_PORT}\n"
-            f"   Нода ID:  {self.profile.node_id[:8]}...\n"
-            f"   Возраст:  {self.profile.get_age_days():.2f} дней\n"
-            f"   Мощность: {self.profile.get_power()['index']}/100\n"
-            f"   Авторитет:{self.profile.get_authority()}"
-        )
+
+        transport_lines = []
+        if hasattr(self, '_transport_registry'):
+            for name, t in self._transport_registry.all_available():
+                transport_lines.append(f"   Transport: {name} ✓")
+
+        lines = [
+            f"🌐 P2P-мост запущен",
+            f"   IP:       {self._local_ip}:{P2P_PORT}",
+            f"   Нода ID:  {self.profile.node_id[:8]}...",
+            f"   Возраст:  {self.profile.get_age_days():.2f} дней",
+            f"   Мощность: {self.profile.get_power()['index']}/100",
+            f"   Авторитет:{self.profile.get_authority()}",
+        ] + transport_lines
+        return "\n".join(lines)
+
+    def _init_transport_registry(self):
+        """Инициализирует реестр транспортов: TCP + WireGuard + ZeroTier + ZKP."""
+        try:
+            from src.connectivity.p2p_transport import (
+                TransportRegistry, TCPTransport,
+                WireGuardTransport, ZeroTierTransport,
+                ZKPTransportWrapper,
+            )
+            self._transport_registry = TransportRegistry()
+
+            # TCP — всегда
+            tcp = TCPTransport(P2P_PORT)
+            self._transport_registry.register("tcp", tcp, weight=0.8)
+
+            # WireGuard — если интерфейс задан
+            wg_iface = os.getenv("ARGOS_WG_INTERFACE", "").strip()
+            if wg_iface:
+                wg = WireGuardTransport(wg_interface=wg_iface, port=P2P_PORT)
+                self._transport_registry.register("wireguard", wg, weight=1.2)
+                print(f"[P2P]: WireGuard transport registered ({wg_iface})")
+
+            # ZeroTier — если сеть задана
+            zt_net = os.getenv("ARGOS_ZT_NETWORK", "").strip()
+            if zt_net:
+                zt = ZeroTierTransport(network_id=zt_net, port=P2P_PORT)
+                self._transport_registry.register("zerotier", zt, weight=1.1)
+                print(f"[P2P]: ZeroTier transport registered ({zt_net[:10]})")
+
+            # ZKP-обёртка для лучшего транспорта
+            zkp_enabled = os.getenv("ARGOS_P2P_ZKP", "off").strip().lower() in {"1", "on", "true", "yes"}
+            if zkp_enabled:
+                from src.security.zkp import ArgosZKPEngine
+                zkp = ArgosZKPEngine(
+                    node_id=self.profile.node_id,
+                    network_secret=NETWORK_SECRET,
+                    enabled=True,
+                )
+                best = self._transport_registry.best()
+                if best:
+                    wrapped = ZKPTransportWrapper(best, zkp_engine=zkp)
+                    self._transport_registry.register(f"zkp+{best.name}", wrapped, weight=1.5)
+                    print(f"[P2P]: ZKP privacy-routing enabled over {best.name}")
+
+        except Exception as e:
+            print(f"[P2P]: Transport registry init error: {e}")
+            self._transport_registry = None
+
+    def register_transport(self, name: str, transport, weight: float = 1.0):
+        """Публичный API для регистрации custom-транспортов."""
+        if hasattr(self, '_transport_registry') and self._transport_registry:
+            self._transport_registry.register(name, transport, weight)
+            return f"✅ Транспорт '{name}' зарегистрирован (weight={weight:.2f})"
+        return f"❌ Реестр транспортов не инициализирован"
+
+    def transport_status(self) -> str:
+        """Статус всех зарегистрированных транспортов."""
+        if hasattr(self, '_transport_registry') and self._transport_registry:
+            return self._transport_registry.status()
+        return "📡 Transport registry: не инициализирован"
 
     def _cache_get(self, req_id: str) -> Optional[str]:
         if not req_id:

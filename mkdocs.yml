@@ -1,11 +1,52 @@
 site_name: ARGOS Universal OS Docs
-site_description: Документация ARGOS — user/developer guide и философия проекта
-site_url: https://example.com/argos-docs
+site_description: Документация ARGOS — user/developer guide, API и философия проекта
+site_url: https://sigtrip.github.io/v1-3
 repo_name: sigtrip/v1-3
 repo_url: https://github.com/sigtrip/v1-3
 
 theme:
-  name: mkdocs
+  name: material
+  palette:
+    - scheme: slate
+      primary: teal
+      accent: cyan
+      toggle:
+        icon: material/brightness-4
+        name: Светлая тема
+    - scheme: default
+      primary: teal
+      accent: cyan
+      toggle:
+        icon: material/brightness-7
+        name: Тёмная тема
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - search.suggest
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            show_source: false
+            show_bases: true
+            heading_level: 3
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
 
 nav:
   - Главная: index.md
@@ -14,6 +55,14 @@ nav:
       - Повседневное использование: user-guide/usage.md
   - Developer Guide:
       - Плагины и навыки: developer-guide/skills.md
+      - P2P транспорты: developer-guide/p2p-transports.md
+      - CI/CD: developer-guide/ci-cd.md
+  - API:
+      - Core: api/core.md
+      - P2P Bridge: api/p2p-bridge.md
+      - P2P Transport: api/p2p-transport.md
+      - ZKP: api/zkp.md
+      - Connectivity: api/connectivity.md
   - Philosophy:
       - Цифровое бессмертие: philosophy/digital-immortality.md
       - Квантовое управление: philosophy/quantum-governance.md
