@@ -204,7 +204,10 @@ class ArgosCore:
         self.gemini_rpm_limit = 15
         self._gemini_limiter = _SlidingWindowRateLimiter(max_calls=self.gemini_rpm_limit, window_seconds=60)
         self._last_gemini_rate_limited = False
-        self._gigachat_access_token = (os.getenv("GIGACHAT_ACCESS_TOKEN", "") or "").strip() or None
+        self._gigachat_access_token = self._clean_secret(os.getenv("GIGACHAT_ACCESS_TOKEN", "")) or None
+        self._gigachat_verify_ssl = (os.getenv("GIGACHAT_VERIFY_SSL", "1") or "1").strip().lower() not in {
+            "0", "off", "false", "no", "нет"
+        }
         self._gigachat_token_expires_at = 0.0
         self.auto_collab_enabled = os.getenv("ARGOS_AUTO_COLLAB", "on").strip().lower() not in {"0", "false", "off", "no", "нет"}
         self.auto_collab_max_models = max(2, min(int(os.getenv("ARGOS_AUTO_COLLAB_MAX_MODELS", "4") or "4"), 4))
@@ -801,8 +804,31 @@ class ArgosCore:
             return "Grok"
         return "Auto"
 
+    def _clean_secret(self, value: str) -> str:
+        v = (value or "").strip()
+        if not v:
+            return ""
+        low = v.lower()
+        placeholders = {
+            "your_key_here", "your_token_here", "changeme", "none", "null",
+            "токен_от_@botfather", "твой_telegram_id", "ключ_openai", "ключ_grok_xai",
+            "ключ_от_ibm_watsonx", "project_id_из_watsonx", "iam_токен_yandex_cloud",
+            "folder_id_yandex_cloud", "ключ_от_ai.google.dev", "токен_gigachat_если_есть",
+            "токен_pupi_api",
+        }
+        if low in placeholders:
+            return ""
+        if any(marker in low for marker in ["ключ_от", "токен_", "your_", "your-"]):
+            return ""
+        if any(("а" <= ch <= "я") or ("А" <= ch <= "Я") or ch in {"ё", "Ё"} for ch in v):
+            return ""
+        return v
+
+    def _env_secret(self, name: str) -> str:
+        return self._clean_secret(os.getenv(name, "") or "")
+
     def _setup_ai(self):
-        key = os.getenv("GEMINI_API_KEY", "")
+        key = self._env_secret("GEMINI_API_KEY")
         if GEMINI_OK and key and key != "your_key_here":
             self.model = _GeminiCompatClient(api_key=key, model_name="gemini-2.0-flash")
             log.info("Gemini: OK")
@@ -883,8 +909,8 @@ class ArgosCore:
 
     def _setup_watsonx(self):
         """IBM Watsonx AI — Llama-3 70B через инфраструктуру IBM."""
-        self.watsonx_api_key = (os.getenv("WATSONX_API_KEY", "") or "").strip()
-        self.watsonx_project_id = (os.getenv("WATSONX_PROJECT_ID", "") or "").strip()
+        self.watsonx_api_key = self._env_secret("WATSONX_API_KEY")
+        self.watsonx_project_id = self._env_secret("WATSONX_PROJECT_ID")
         self.watsonx_url = (os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com") or "").strip()
         self.watsonx_model = None
 
@@ -913,8 +939,8 @@ class ArgosCore:
 
     def _setup_yandex(self):
         # Используем IAM_TOKEN как постоянный Api-Key для стабильности
-        self.yandex_api_key = (os.getenv("YANDEX_IAM_TOKEN", "") or "").strip()
-        self.yandex_folder_id = (os.getenv("YANDEX_FOLDER_ID", "") or "").strip()
+        self.yandex_api_key = self._env_secret("YANDEX_IAM_TOKEN")
+        self.yandex_folder_id = self._env_secret("YANDEX_FOLDER_ID")
 
         # По умолчанию берем тяжелую модель, если URI не задан в .env
         self.yandex_model_uri = (
@@ -934,28 +960,28 @@ class ArgosCore:
         return f"Gemini: превышен лимит {self.gemini_rpm_limit} запросов в минуту. Повтори чуть позже или переключи режим ИИ."
 
     def _has_gigachat_config(self) -> bool:
-        if self._gigachat_access_token:
+        if self._clean_secret(self._gigachat_access_token or ""):
             return True
-        client_id = (os.getenv("GIGACHAT_CLIENT_ID", "") or "").strip()
-        client_secret = (os.getenv("GIGACHAT_CLIENT_SECRET", "") or "").strip()
+        client_id = self._env_secret("GIGACHAT_CLIENT_ID")
+        client_secret = self._env_secret("GIGACHAT_CLIENT_SECRET")
         return bool(client_id and client_secret)
 
     def _has_yandexgpt_config(self) -> bool:
-        iam = (getattr(self, "yandex_api_key", "") or (os.getenv("YANDEX_IAM_TOKEN", "") or "")).strip()
-        folder = (getattr(self, "yandex_folder_id", "") or (os.getenv("YANDEX_FOLDER_ID", "") or "")).strip()
+        iam = self._clean_secret(getattr(self, "yandex_api_key", "") or (os.getenv("YANDEX_IAM_TOKEN", "") or ""))
+        folder = self._clean_secret(getattr(self, "yandex_folder_id", "") or (os.getenv("YANDEX_FOLDER_ID", "") or ""))
         return bool(iam and folder)
 
     def _has_lmstudio_config(self) -> bool:
         return bool((self.lmstudio_url or "").strip())
 
     def _has_openai_config(self) -> bool:
-        return bool((os.getenv("OPENAI_API_KEY", "") or "").strip())
+        return bool(self._env_secret("OPENAI_API_KEY"))
 
     def _has_grok_config(self) -> bool:
-        return bool((os.getenv("GROK_API_KEY", "") or "").strip())
+        return bool(self._env_secret("GROK_API_KEY"))
 
     def _ask_gemini_rest(self, context: str, user_text: str) -> str | None:
-        key = (os.getenv("GEMINI_API_KEY", "") or "").strip()
+        key = self._env_secret("GEMINI_API_KEY")
         if not key:
             return None
         endpoint = (
@@ -1041,8 +1067,8 @@ class ArgosCore:
         if self._gigachat_access_token and time.time() < self._gigachat_token_expires_at - 30:
             return self._gigachat_access_token
 
-        client_id = (os.getenv("GIGACHAT_CLIENT_ID", "") or "").strip()
-        client_secret = (os.getenv("GIGACHAT_CLIENT_SECRET", "") or "").strip()
+        client_id = self._env_secret("GIGACHAT_CLIENT_ID")
+        client_secret = self._env_secret("GIGACHAT_CLIENT_SECRET")
         if not (client_id and client_secret):
             return self._gigachat_access_token
 
@@ -1058,6 +1084,7 @@ class ArgosCore:
                 "https://ngw.devices.sberbank.ru:9443/api/v2/oauth",
                 headers=headers,
                 data={"scope": "GIGACHAT_API_PERS"},
+                verify=self._gigachat_verify_ssl,
                 timeout=20,
             )
             if not response.ok:
@@ -1099,7 +1126,7 @@ class ArgosCore:
             return self._ask_gemini_rest(context, user_text)
 
     def _ask_openai(self, context: str, user_text: str) -> str | None:
-        api_key = (os.getenv("OPENAI_API_KEY", "") or "").strip()
+        api_key = self._env_secret("OPENAI_API_KEY")
         if not api_key:
             return None
         url = (os.getenv("OPENAI_API_URL", "https://api.openai.com/v1/chat/completions") or "").strip()
@@ -1141,7 +1168,7 @@ class ArgosCore:
             return None
 
     def _ask_grok(self, context: str, user_text: str) -> str | None:
-        api_key = (os.getenv("GROK_API_KEY", "") or "").strip()
+        api_key = self._env_secret("GROK_API_KEY")
         if not api_key:
             return None
         url = (os.getenv("GROK_API_URL", "https://api.x.ai/v1/chat/completions") or "").strip()
@@ -1205,6 +1232,7 @@ class ArgosCore:
                     "Accept": "application/json",
                 },
                 json=payload,
+                verify=self._gigachat_verify_ssl,
                 timeout=25,
             )
             if not response.ok:

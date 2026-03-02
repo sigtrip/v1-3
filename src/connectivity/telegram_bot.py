@@ -55,7 +55,11 @@ class ArgosTelegram:
 
     def _is_placeholder_token(self, token: str) -> bool:
         value = (token or "").strip().lower()
-        return value in {"", "your_token_here", "none", "null", "changeme"}
+        if value in {"", "your_token_here", "none", "null", "changeme", "токен_от_@botfather"}:
+            return True
+        if "токен_" in value or "botfather" in value:
+            return True
+        return False
 
     def _looks_like_token(self, token: str) -> bool:
         t = (token or "").strip()
@@ -64,13 +68,21 @@ class ArgosTelegram:
         bot_id, secret = t.split(":", 1)
         return bot_id.isdigit() and len(secret) >= 30
 
+    def _looks_like_user_id(self, user_id: str) -> bool:
+        uid = (user_id or "").strip()
+        if not uid:
+            return False
+        if uid.lower() in {"твой_telegram_id", "your_telegram_id", "none", "null"}:
+            return False
+        return uid.isdigit()
+
     def can_start(self) -> tuple[bool, str]:
         if self._is_placeholder_token(self.token):
             return False, "Токен не задан"
         if not self._looks_like_token(self.token):
             return False, "Формат токена некорректен"
-        if not self.user_id:
-            return False, "USER_ID не задан"
+        if not self._looks_like_user_id(self.user_id):
+            return False, "USER_ID не задан или некорректен"
         return True, "ok"
 
     # ── ПРОВЕРКА ДОСТУПА ──────────────────────────────────

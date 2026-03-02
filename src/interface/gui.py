@@ -46,7 +46,7 @@ class ArgosGUI(ctk.CTk):
         self.ai_mode_var = ctk.StringVar(value=self._ai_mode_to_ui(self.core.ai_mode))
         self.ai_mode_menu = ctk.CTkOptionMenu(
             self.sidebar,
-            values=["Auto", "Gemini", "GigaChat", "YandexGPT", "Ollama"],
+            values=["Auto", "Gemini", "GigaChat", "YandexGPT", "Ollama", "Watsonx", "OpenAI", "Grok"],
             variable=self.ai_mode_var,
             command=self._on_ai_mode_changed,
         )
@@ -168,6 +168,12 @@ class ArgosGUI(ctk.CTk):
             return "YandexGPT"
         if value == "ollama":
             return "Ollama"
+        if value == "watsonx":
+            return "Watsonx"
+        if value == "openai":
+            return "OpenAI"
+        if value == "grok":
+            return "Grok"
         return "Auto"
 
     def _ui_to_ai_mode(self, mode: str) -> str:
@@ -180,6 +186,12 @@ class ArgosGUI(ctk.CTk):
             return "yandexgpt"
         if value == "ollama":
             return "ollama"
+        if value == "watsonx":
+            return "watsonx"
+        if value == "openai":
+            return "openai"
+        if value == "grok":
+            return "grok"
         return "auto"
 
     def _on_ai_mode_changed(self, selected: str):

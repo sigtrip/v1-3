@@ -4,7 +4,12 @@
 
 # ── SDR / RF reconnaissance (AirSnitch) ───────────────────
 pyrtlsdr>=0.2.93
-SoapySDR>=0.8.1
+# SoapySDR Python bindings are not reliably published on PyPI for all platforms
+# (especially Windows). Install SoapySDR separately via system package manager
+# and vendor drivers if you need extended SDR backends.
+# Example:
+#   Windows: install SoapySDR + drivers manually (or via vendor installer)
+#   Linux:   sudo apt install soapysdr-tools python3-soapysdr
 
 # ── Wireless analysis (WiFi Sentinel) ─────────────────────
 scapy>=2.5.0

@@ -80,6 +80,7 @@ HTML = """<!DOCTYPE html>
     <h2>⌨️ ДИРЕКТИВА</h2>
     <input type="text" id="cmd" placeholder="Введи команду для Аргоса..." onkeydown="if(event.key==='Enter')sendCmd()">
     <button onclick="sendCmd()">▶ ВЫПОЛНИТЬ</button>
+    <button onclick="startListen()">🎙 СЛУШАТЬ</button>
     <button id="voice-toggle" onclick="quickVoiceToggle()">🔊 ВКЛЮЧИТЬ ГОЛОС</button>
     <button onclick="quickIotStatus()">📡 IoT СТАТУС</button>
     <button onclick="quickIotProtocols()">🏭 IoT ПРОТОКОЛЫ</button>
@@ -183,6 +184,33 @@ async function sendCmd() {
     const d = await r.json();
     document.getElementById('resp').textContent = d.answer || d.error || '—';
   } catch(e) { document.getElementById('resp').textContent = '❌ '+e; }
+}
+
+function startListen() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    document.getElementById('resp').textContent = '❌ Браузер не поддерживает SpeechRecognition';
+    return;
+  }
+  const rec = new SR();
+  rec.lang = 'ru-RU';
+  rec.interimResults = false;
+  rec.maxAlternatives = 1;
+  document.getElementById('resp').textContent = '🎙 Слушаю...';
+  rec.onresult = (event) => {
+    const text = ((event.results || [])[0] || [])[0]?.transcript || '';
+    if (!text.trim()) {
+      document.getElementById('resp').textContent = '👂 Не распознано';
+      return;
+    }
+    const inp = document.getElementById('cmd');
+    inp.value = text.trim();
+    sendCmd();
+  };
+  rec.onerror = (e) => {
+    document.getElementById('resp').textContent = `❌ Ошибка микрофона: ${e.error || e.message || 'unknown'}`;
+  };
+  rec.start();
 }
 
 function quickVoiceToggle() {
