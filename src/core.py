@@ -2058,6 +2058,40 @@ class ArgosCore:
                 host = parts[0] if parts else "localhost"
                 port = int(parts[1]) if len(parts) > 1 else 1883
                 return self.iot_bridge.connect_mqtt(host, port)
+            if "подключи modbus tcp" in t:
+                parts = text.split("подключи modbus tcp")[-1].strip().split()
+                host = parts[0] if parts else "127.0.0.1"
+                port = int(parts[1]) if len(parts) > 1 else 502
+                return self.iot_bridge.connect_modbus_tcp(host, port)
+            if "подключи modbus" in t:
+                parts = text.split("подключи modbus")[-1].strip().split()
+                port = parts[0] if parts else "/dev/ttyUSB0"
+                baud = int(parts[1]) if len(parts) > 1 else 9600
+                return self.iot_bridge.connect_modbus_serial(port, baud)
+            if "modbus чтение" in t or "modbus read" in t:
+                parts = text.split("modbus", 1)[-1].strip().split()
+                # modbus чтение [address] [count] [unit]
+                if len(parts) >= 2:
+                    try:
+                        address = int(parts[1])
+                        count = int(parts[2]) if len(parts) > 2 else 1
+                        unit = int(parts[3]) if len(parts) > 3 else 1
+                        return self.iot_bridge.modbus_read(address=address, count=count, unit=unit)
+                    except Exception:
+                        return "Формат: modbus чтение [address] [count=1] [unit=1]"
+                return "Формат: modbus чтение [address] [count=1] [unit=1]"
+            if "modbus запись" in t or "modbus write" in t:
+                parts = text.split("modbus", 1)[-1].strip().split()
+                # modbus запись [address] [value] [unit]
+                if len(parts) >= 3:
+                    try:
+                        address = int(parts[1])
+                        value = int(parts[2])
+                        unit = int(parts[3]) if len(parts) > 3 else 1
+                        return self.iot_bridge.modbus_write(address=address, value=value, unit=unit)
+                    except Exception:
+                        return "Формат: modbus запись [address] [value] [unit=1]"
+                return "Формат: modbus запись [address] [value] [unit=1]"
             if any(k in t for k in ["команда устройству", "отправь команду"]):
                 parts = text.split("устройству" if "устройству" in t else "команду")[-1].strip().split()
                 if len(parts) >= 2:
@@ -2610,7 +2644,9 @@ class ArgosCore:
 📡 IoT / MESH-СЕТЬ
     iot статус · iot возможности · добавь устройство [id] [тип] [протокол]
     статус устройства [id] · iot протоколы
-  подключи zigbee/lora/mqtt · запусти mesh
+    подключи zigbee/lora/mqtt/modbus · подключи modbus tcp [host] [port]
+    modbus чтение [address] [count] [unit] · modbus запись [address] [value] [unit]
+    запусти mesh
   статус mesh · запусти zigbee/lora [порт]
   запусти wifi mesh [SSID]
   добавь mesh устройство [id] [протокол] [адрес]

@@ -360,6 +360,116 @@ class MQTTBroker:
             except Exception as e: log.error("MQTT cb: %s", e)
 
 
+class ModbusAdapter:
+    """Минимальный runtime-адаптер Modbus (RTU/TCP) через pymodbus."""
+
+    def __init__(self, registry: IoTRegistry):
+        self.registry = registry
+        self._client = None
+        self._mode = None
+        self._endpoint = None
+
+    def connect_serial(self, port: str = "/dev/ttyUSB0", baudrate: int = 9600,
+                       parity: str = "N", stopbits: int = 1, bytesize: int = 8,
+                       timeout: float = 2.0) -> str:
+        try:
+            from pymodbus.client import ModbusSerialClient
+        except ImportError:
+            return "❌ Modbus: установи pip install pymodbus"
+
+        try:
+            client = ModbusSerialClient(
+                method="rtu",
+                port=port,
+                baudrate=baudrate,
+                parity=parity,
+                stopbits=stopbits,
+                bytesize=bytesize,
+                timeout=timeout,
+            )
+            if not client.connect():
+                return f"❌ Modbus RTU: не удалось подключиться к {port}"
+            self._client = client
+            self._mode = "rtu"
+            self._endpoint = f"{port}:{baudrate}"
+            return f"✅ Modbus RTU подключён: {self._endpoint}"
+        except Exception as e:
+            return f"❌ Modbus RTU: {e}"
+
+    def connect_tcp(self, host: str = "127.0.0.1", port: int = 502,
+                    timeout: float = 2.0) -> str:
+        try:
+            from pymodbus.client import ModbusTcpClient
+        except ImportError:
+            return "❌ Modbus: установи pip install pymodbus"
+
+        try:
+            client = ModbusTcpClient(host=host, port=port, timeout=timeout)
+            if not client.connect():
+                return f"❌ Modbus TCP: не удалось подключиться к {host}:{port}"
+            self._client = client
+            self._mode = "tcp"
+            self._endpoint = f"{host}:{port}"
+            return f"✅ Modbus TCP подключён: {self._endpoint}"
+        except Exception as e:
+            return f"❌ Modbus TCP: {e}"
+
+    def _ensure_device(self, unit: int) -> IoTDevice:
+        dev_id = f"modbus_u{unit}"
+        dev = self.registry.get(dev_id)
+        if not dev:
+            dev = IoTDevice(dev_id, "sensor", "modbus", self._endpoint or "modbus", f"Modbus Unit {unit}")
+            self.registry.register(dev)
+        return dev
+
+    def read_holding(self, address: int, count: int = 1, unit: int = 1) -> str:
+        if not self._client:
+            return "❌ Modbus не подключён. Сначала: подключи modbus ..."
+        try:
+            try:
+                rr = self._client.read_holding_registers(address=address, count=count, slave=unit)
+            except TypeError:
+                rr = self._client.read_holding_registers(address=address, count=count, unit=unit)
+
+            if rr is None:
+                return "❌ Modbus: пустой ответ"
+            if hasattr(rr, "isError") and rr.isError():
+                return f"❌ Modbus read error: {rr}"
+
+            regs = list(getattr(rr, "registers", []) or [])
+            dev = self._ensure_device(unit)
+            for idx, val in enumerate(regs):
+                dev.update(f"hr_{address + idx}", val)
+            return f"✅ Modbus U{unit} HR[{address}:{address + max(0, count - 1)}] = {regs}"
+        except Exception as e:
+            return f"❌ Modbus read: {e}"
+
+    def write_register(self, address: int, value: int, unit: int = 1) -> str:
+        if not self._client:
+            return "❌ Modbus не подключён. Сначала: подключи modbus ..."
+        try:
+            try:
+                wr = self._client.write_register(address=address, value=value, slave=unit)
+            except TypeError:
+                wr = self._client.write_register(address=address, value=value, unit=unit)
+
+            if wr is None:
+                return "❌ Modbus: пустой ответ"
+            if hasattr(wr, "isError") and wr.isError():
+                return f"❌ Modbus write error: {wr}"
+
+            dev = self._ensure_device(unit)
+            dev.update(f"hr_{address}", value)
+            return f"✅ Modbus U{unit} WRITE HR[{address}] = {value}"
+        except Exception as e:
+            return f"❌ Modbus write: {e}"
+
+    def status(self) -> str:
+        if not self._client:
+            return "🔴 Modbus: не подключён"
+        return f"🟢 Modbus: {self._mode or 'unknown'} {self._endpoint or ''}".strip()
+
+
 class TasmotaDiscoveryBridge:
     """Zero-config мост для Tasmota discovery через Home Assistant MQTT топики."""
 
@@ -577,6 +687,7 @@ class IoTBridge:
         self.lora     = LoRaAdapter(self.registry)
         self.mesh     = MeshAdapter(self.registry)
         self.mqtt     = MQTTBroker(self.registry)
+        self.modbus   = ModbusAdapter(self.registry)
         self.tasmota  = TasmotaDiscoveryBridge(self.registry)
         self._init_tasmota_discovery()
         log.info("IoTBridge инициализирован. Устройств: %d", len(self.registry.all()))
@@ -611,6 +722,18 @@ class IoTBridge:
 
     def connect_mqtt(self, host="localhost", port=1883) -> str:
         return self.mqtt.connect(host, port)
+
+    def connect_modbus_serial(self, port="/dev/ttyUSB0", baud=9600) -> str:
+        return self.modbus.connect_serial(port=port, baudrate=baud)
+
+    def connect_modbus_tcp(self, host="127.0.0.1", port=502) -> str:
+        return self.modbus.connect_tcp(host=host, port=port)
+
+    def modbus_read(self, address: int, count: int = 1, unit: int = 1) -> str:
+        return self.modbus.read_holding(address=address, count=count, unit=unit)
+
+    def modbus_write(self, address: int, value: int, unit: int = 1) -> str:
+        return self.modbus.write_register(address=address, value=value, unit=unit)
 
     def connect_tasmota_discovery(self, host="localhost", port=1883, topic="homeassistant/#") -> str:
         return self.tasmota.connect(host, port, topic)
@@ -695,6 +818,16 @@ class IoTBridge:
             return self.mesh.send(dev.address, {"cmd": command, "val": value})
         if dev.protocol == "mqtt":
             return self.mqtt.publish(f"devices/{dev_id}/set", {command: value})
+        if dev.protocol == "modbus":
+            c = (command or "").strip().lower()
+            if c in {"read", "read_holding", "чтение"}:
+                try:
+                    addr = int(value) if value is not None else 0
+                    return self.modbus_read(address=addr, count=1, unit=1)
+                except Exception:
+                    return "Формат для modbus read: команда устройству [id] read [address]"
+            if c in {"write", "write_register", "запись"}:
+                return "Формат для modbus write: modbus запись [address] [value] [unit]"
         return f"❌ Протокол '{dev.protocol}' не поддерживает команды."
 
     def get_value(self, dev_id: str, key: str):

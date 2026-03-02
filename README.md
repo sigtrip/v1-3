@@ -647,7 +647,7 @@ ha mqtt home/livingroom/light/set state=ON brightness=180
 | WiFi Mesh (UDP) | ✅ Implemented | Рабочий mesh-адаптер |
 | MQTT | ✅ Implemented | Общий MQTT bridge |
 | Tasmota Discovery | ✅ Implemented | Zero-config через homeassistant/# |
-| Modbus RTU/TCP | 🟨 Template-based | Через gateway templates и внешние runtime |
+| Modbus RTU/TCP | ✅ Implemented (minimal) | Runtime-адаптер в IoTBridge: serial/tcp + read/write holding registers |
 | BACnet / KNX / LonWorks / M-Bus / OPC UA | 🧭 Planned/Template | Протоколы декларированы, отдельные runtime-адаптеры в IoTBridge пока не реализованы |
 
 ```
@@ -658,6 +658,10 @@ iot протоколы                 # полный список промыш�
 статус устройства sensor_01   # детальный мониторинг устройства
 подключи zigbee localhost     # подключить Zigbee через MQTT
 подключи lora /dev/ttyUSB0    # подключить LoRa модем
+подключи modbus /dev/ttyUSB0 9600      # Modbus RTU
+подключи modbus tcp 192.168.1.10 502   # Modbus TCP
+modbus чтение 100 2 1          # address=100, count=2, unit=1
+modbus запись 120 55 1         # address=120, value=55, unit=1
 запусти mesh                  # запустить UDP mesh
 статус mesh                   # mesh-устройства
 добавь устройство sensor_01 sensor zigbee addr_01 "Датчик кухня"
