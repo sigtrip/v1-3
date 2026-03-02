@@ -82,6 +82,59 @@ class SelfHealingEngine:
         os.makedirs(self.BACKUP_DIR, exist_ok=True)
         log.info("SelfHealingEngine v%s | enabled=%s", self.VERSION, self._enabled)
 
+    # ── In-memory healing API (для evolution) ───────────
+    def _extract_code(self, text: str) -> str:
+        """Извлекает чистый код из ответа ИИ (с/без markdown fence)."""
+        payload = (text or "").strip()
+        m = re.search(r"```python\n(.*?)\n```", payload, re.DOTALL)
+        if m:
+            return m.group(1).strip()
+        m = re.search(r"```\n(.*?)\n```", payload, re.DOTALL)
+        if m:
+            return m.group(1).strip()
+        return payload
+
+    def validate_code(self, code: str) -> Tuple[bool, str]:
+        """Проверяет код на синтаксические ошибки через ast.parse."""
+        try:
+            ast.parse(code)
+            return True, "OK"
+        except SyntaxError as e:
+            return False, f"SyntaxError: {e.msg} (line {e.lineno}, col {e.offset})"
+        except Exception as e:
+            return False, f"UnexpectedError: {e}"
+
+    def heal_code(self, broken_code: str, error_msg: str) -> Optional[str]:
+        """Лечит код в памяти через доступное ИИ-ядро и возвращает исправленный код."""
+        if not self.core:
+            log.warning("Self-Healing: core не подключен, heal_code недоступен")
+            return None
+
+        system_prompt = (
+            "Ты — Self-Healing Engine системы Argos. "
+            "Исправь Python-код, который не проходит компиляцию. "
+            "Верни только исправленный код без пояснений, строго в ```python ... ```."
+        )
+        user_prompt = f"ERROR:\n{error_msg}\n\nBROKEN_CODE:\n{broken_code}"
+
+        try:
+            ai_response = None
+            if hasattr(self.core, "_ask_consensus") and getattr(self.core, "ai_mode", "") == "auto":
+                ai_response = self.core._ask_consensus(system_prompt, user_prompt)
+            elif getattr(self.core, "ai_mode", "") == "watsonx" and hasattr(self.core, "_ask_watsonx"):
+                ai_response = self.core._ask_watsonx(system_prompt, user_prompt)
+            elif hasattr(self.core, "_ask_gemini") and getattr(self.core, "model", None):
+                ai_response = self.core._ask_gemini(system_prompt, user_prompt)
+            elif hasattr(self.core, "_ask_ollama"):
+                ai_response = self.core._ask_ollama(system_prompt, user_prompt)
+
+            if not ai_response:
+                return None
+            return self._extract_code(ai_response)
+        except Exception as e:
+            log.error("Self-Healing heal_code error: %s", e)
+            return None
+
     # ── Перехват исключений ──────────────────────────────
     def start_intercepting(self) -> str:
         """Устанавливает глобальный перехватчик исключений."""

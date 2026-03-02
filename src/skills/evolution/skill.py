@@ -267,6 +267,26 @@ class ArgosEvolution:
 			return "❌ ИИ не ответил. Попробуй позже."
 
 		answer = self._extract_code_only(answer)
+
+		# 4. Жесткий code-gate и автолечение (Self-Healing)
+		try:
+			ast.parse(answer)
+		except SyntaxError as e:
+			error_msg = f"SyntaxError: {e.msg} (строка {e.lineno})"
+			from src.self_healing import SelfHealingEngine
+			healer = SelfHealingEngine(core=self.core)
+			healed_code = healer.heal_code(answer, error_msg)
+			if healed_code:
+				is_valid, val_msg = healer.validate_code(healed_code)
+				if is_valid:
+					answer = healed_code
+				else:
+					return f"❌ Self-Healing не справился. Код отбракован: {val_msg}"
+			else:
+				return f"❌ Код отбракован ({error_msg}) и ИИ не смог его починить."
+		except Exception as e:
+			return f"❌ Неизвестная ошибка при проверке кода: {e}"
+
 		ok_code, reason = self._ensure_executable_skill(answer)
 		if not ok_code:
 			repaired = self._repair_to_code(answer, description)
