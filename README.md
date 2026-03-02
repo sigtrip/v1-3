@@ -36,6 +36,15 @@
 | 🧠 **Batch Idle Learning** | Пакетное alignment (до 8 уроков), Active Drafter Calibration с few-shot зондированием |
 | 🔄 **P2P Role Routing** | Автоматическое назначение ролей: weak→Drafter, master→Verifier по ресурсам ноды |
 | 📊 **Acceptance Rate** | Per-drafter метрики приёмки, auto-recovery RPS при отскоке acceptance rate |
+| 🎯 **AWA-Core** | Центральный координатор модулей, capability-routing, cascade pipelines, health heartbeat |
+| 💾 **Adaptive Drafter (TLT)** | LRU-кэш 512 энтри, сжатие контекста, offline-паттерны, фильтрация запросов к Gemini |
+| 🩺 **Self-Healing Engine** | Автоисправление Python-кода (syntax/import/runtime), backup + hot-reload, валидация src/ |
+| 📻 **AirSnitch (SDR)** | Сканер эфира 433/868 МГц, RTL-SDR / HackRF / симуляция, перехват пакетов собственных датчиков |
+| 🛡️ **WiFi Sentinel** | Скан AP + Evil Twin детект, HoneyPot-ловушка, детекция deauth-атак и rogue-клиентов |
+| 🏠 **SmartHome Override** | Прямое управление Zigbee/Z-Wave/Tuya минуя облака, cloud-block, watchdog |
+| 🔋 **Power Sentry** | Мониторинг UPS (NUT/upsc), PZEM датчики, аварийное отключение |
+| 🗑️ **Emergency Purge** | Экстренное уничтожение данных (logs/data/full), 3-уровневая очистка + подтверждение кодом |
+| 📦 **Container Isolation** | Docker/LXD изоляция модулей, watchdog, авто-рестарт, очистка |
 | 🧰 **GitOps** | Встроенные команды `git статус`, `git коммит`, `git пуш`, `git автокоммит и пуш` |
 
 ---
@@ -71,6 +80,9 @@ ArgosUniversal/
     ├── github_marketplace.py     # Установка навыков из GitHub
     ├── smart_systems.py          # ★ Оператор умных систем (7 типов)
     ├── curiosity.py              # Автономное любопытство
+    ├── awa_core.py               # ★ AWA-Core — центральный координатор модулей
+    ├── adaptive_drafter.py       # ★ TLT — кэш/сжатие/фильтрация запросов к МОДЕЛИ
+    ├── self_healing.py           # ★ Автоисправление Python-кода
     ├── hardware_guard.py         # Квантовый гомеостаз железа
     ├── git_ops.py                # Безопасные Git status/commit/push
     ├── task_queue.py             # Очередь задач + worker pool
@@ -85,6 +97,8 @@ ArgosUniversal/
     │   ├── root_manager.py       # Win/Linux/Android root
     │   ├── autostart.py          # Системный сервис
     │   ├── zkp.py                # ZKP roadmap helper (privacy/proof сценарии)
+    │   ├── emergency_purge.py    # ★ Экстренное уничтожение данных
+    │   ├── container_isolation.py # ★ Docker/LXD изоляция модулей
     │   └── bootloader_manager.py # BCD/EFI/GRUB/persistence
     │
     ├── connectivity/
@@ -102,6 +116,10 @@ ArgosUniversal/
     │   ├── nfc_manager.py        # ★ NFC-мониторинг (NDEF/MIFARE/NTAG)
     │   ├── usb_diagnostics.py    # ★ USB-диагностика авторизованных устройств
     │   ├── bluetooth_scanner.py  # ★ BLE + Classic сканер, IoT-inventory
+    │   ├── air_snitch.py         # ★ SDR/Sub-GHz сканер эфира (433/868 МГц)
+    │   ├── wifi_sentinel.py      # ★ WiFi Sentinel + HoneyPot
+    │   ├── smarthome_override.py # ★ Прямое Zigbee/Z-Wave/Tuya без облаков
+    │   ├── power_sentry.py       # ★ Мониторинг UPS / энергосистемы
     │   └── android_service.py    # ArgosOmniService — unified background service
     │
     ├── factory/
@@ -717,14 +735,16 @@ Roadmap:
 ## 📊 Аудит v1.0.0-Absolute
 
 ```
-71 файл Python · 71/71 синтаксис ✅
+80 файл Python · 80/80 синтаксис ✅
 30/30 функциональных тестов ✅
-40+ импортируемых модулей
-95+ голосовых/текстовых команд
+50+ импортируемых модулей
+120+ голосовых/текстовых команд
 7 умных систем · 5 IoT-протоколов · 5 шаблонов шлюзов
 NFC / USB / Bluetooth подсистемы
+AWA-Core · Adaptive Drafter · Self-Healing · AirSnitch · WiFi Sentinel
+SmartHome Override · Power Sentry · Emergency Purge · Container Isolation
 Speculative Consensus v2 · Batch Idle Learning · P2P Role Routing
-~9200 строк кода
+~13300 строк кода
 ```
 
 ---

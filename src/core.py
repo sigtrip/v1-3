@@ -176,6 +176,15 @@ class ArgosCore:
         self.tool_calling = None
         self.git_ops = None
         self.task_queue = None
+        self.awa = None
+        self.drafter = None
+        self.healer = None
+        self.air_snitch = None
+        self.wifi_sentinel = None
+        self.smarthome = None
+        self.power_sentry = None
+        self.purge = None
+        self.containers = None
         self._runtime_admin = None
         self._runtime_flasher = None
         self.gemini_rpm_limit = 15
@@ -211,6 +220,15 @@ class ArgosCore:
         self._init_nfc()
         self._init_usb_diagnostics()
         self._init_bluetooth()
+        self._init_awa_core()
+        self._init_adaptive_drafter()
+        self._init_self_healing()
+        self._init_air_snitch()
+        self._init_wifi_sentinel()
+        self._init_smarthome_override()
+        self._init_power_sentry()
+        self._init_emergency_purge()
+        self._init_container_isolation()
         self._init_modules()
         self._init_tool_calling()
         self._init_git_ops()
@@ -374,6 +392,88 @@ class ArgosCore:
             log.info("BT Scanner: OK (%d в инвентаре)", len(self.bt_scanner.devices))
         except Exception as e:
             log.warning("BT Scanner: %s", e)
+
+    def _init_awa_core(self):
+        """AWA-Core — центральный координатор модулей."""
+        try:
+            from src.awa_core import AWACore
+            self.awa = AWACore(core=self)
+            log.info("AWA-Core: OK")
+        except Exception as e:
+            log.warning("AWA-Core: %s", e)
+
+    def _init_adaptive_drafter(self):
+        """Adaptive Drafter (TLT) — кэш/сжатие/фильтрация."""
+        try:
+            from src.adaptive_drafter import AdaptiveDrafter
+            self.drafter = AdaptiveDrafter(core=self)
+            log.info("Adaptive Drafter: OK")
+        except Exception as e:
+            log.warning("Adaptive Drafter: %s", e)
+
+    def _init_self_healing(self):
+        """Self-Healing Engine — автоисправление Python-кода."""
+        try:
+            from src.self_healing import SelfHealingEngine
+            self.healer = SelfHealingEngine(core=self)
+            self.healer.start_intercepting()
+            log.info("Self-Healing: OK")
+        except Exception as e:
+            log.warning("Self-Healing: %s", e)
+
+    def _init_air_snitch(self):
+        """AirSnitch — SDR/Sub-GHz сканер эфира."""
+        try:
+            from src.connectivity.air_snitch import AirSnitch
+            self.air_snitch = AirSnitch()
+            log.info("AirSnitch: OK (backend=%s)", self.air_snitch.backend)
+        except Exception as e:
+            log.warning("AirSnitch: %s", e)
+
+    def _init_wifi_sentinel(self):
+        """WiFi Sentinel — сетевая безопасность + HoneyPot."""
+        try:
+            from src.connectivity.wifi_sentinel import WiFiSentinel
+            self.wifi_sentinel = WiFiSentinel(core=self)
+            log.info("WiFi Sentinel: OK")
+        except Exception as e:
+            log.warning("WiFi Sentinel: %s", e)
+
+    def _init_smarthome_override(self):
+        """SmartHome Override — прямое управление Zigbee/Z-Wave."""
+        try:
+            from src.connectivity.smarthome_override import SmartHomeOverride
+            self.smarthome = SmartHomeOverride()
+            log.info("SmartHome Override: OK (%d устройств)", len(self.smarthome.devices))
+        except Exception as e:
+            log.warning("SmartHome Override: %s", e)
+
+    def _init_power_sentry(self):
+        """Power Sentry — контроль энергосистемы / UPS."""
+        try:
+            from src.connectivity.power_sentry import PowerSentry
+            self.power_sentry = PowerSentry()
+            log.info("Power Sentry: OK")
+        except Exception as e:
+            log.warning("Power Sentry: %s", e)
+
+    def _init_emergency_purge(self):
+        """Emergency Purge — экстренное уничтожение данных."""
+        try:
+            from src.security.emergency_purge import EmergencyPurge
+            self.purge = EmergencyPurge()
+            log.info("Emergency Purge: OK")
+        except Exception as e:
+            log.warning("Emergency Purge: %s", e)
+
+    def _init_container_isolation(self):
+        """Container Isolation — LXD/Docker изоляция."""
+        try:
+            from src.security.container_isolation import ContainerIsolation
+            self.containers = ContainerIsolation()
+            log.info("Container Isolation: OK (runtime=%s)", self.containers.runtime.value)
+        except Exception as e:
+            log.warning("Container Isolation: %s", e)
 
     def _init_tool_calling(self):
         try:
@@ -2043,6 +2143,176 @@ class ArgosCore:
                     lines.append(f"  • {d.name or d.address} — {d.device_type.value}")
                 return "\n".join(lines)
 
+        # ── AWA-Core ──────────────────────────────────────
+        if self.awa:
+            if any(k in t for k in ["awa статус", "awa status", "координатор статус"]):
+                return self.awa.status()
+            if any(k in t for k in ["awa модули", "awa modules", "координатор модули"]):
+                return self.awa.module_list()
+            if any(k in t for k in ["awa история", "awa history", "координатор история"]):
+                return self.awa.decision_history()
+            if any(k in t for k in ["awa stale", "awa проверка"]):
+                stale = self.awa.check_stale()
+                if not stale:
+                    return "🧠 AWA: все модули отвечают вовремя."
+                return "🧠 AWA: устаревшие модули — " + ", ".join(stale)
+
+        # ── Adaptive Drafter ──────────────────────────────
+        if self.drafter:
+            if any(k in t for k in ["drafter статус", "tlt статус", "drafter status"]):
+                return self.drafter.status()
+            if any(k in t for k in ["drafter метрики", "tlt метрики", "drafter metrics"]):
+                m = self.drafter.get_metrics()
+                lines = ["📊 DRAFTER МЕТРИКИ:"]
+                for k2, v in m.items():
+                    lines.append(f"  {k2}: {v}")
+                return "\n".join(lines)
+            if any(k in t for k in ["drafter сброс кэша", "tlt сброс", "drafter flush"]):
+                return self.drafter.invalidate_cache()
+
+        # ── Self-Healing ──────────────────────────────────
+        if self.healer:
+            if any(k in t for k in ["healing статус", "самоисцеление статус", "healer status"]):
+                return self.healer.status()
+            if any(k in t for k in ["healing история", "самоисцеление история", "healer history"]):
+                return self.healer.history_json()
+            if any(k in t for k in ["healing валидация", "healer validate", "самоисцеление проверка"]):
+                return self.healer.validate_all_src()
+
+        # ── AirSnitch ─────────────────────────────────────
+        if self.air_snitch:
+            if any(k in t for k in ["эфир статус", "airsnitch статус", "sdr статус", "радио статус"]):
+                return self.air_snitch.status()
+            if any(k in t for k in ["эфир скан", "airsnitch скан", "sdr скан", "скан эфира"]):
+                return self.air_snitch.scan_all_bands()
+            if any(k in t for k in ["эфир монитор", "airsnitch монитор", "sdr монитор"]):
+                return self.air_snitch.start_monitor()
+            if any(k in t for k in ["эфир стоп", "airsnitch стоп", "sdr стоп"]):
+                return self.air_snitch.stop_monitor()
+            if any(k in t for k in ["эфир пакеты", "airsnitch пакеты", "sdr пакеты"]):
+                pkts = self.air_snitch.get_packets()
+                if not pkts:
+                    return "📻 AirSnitch: пакетов не перехвачено."
+                lines = ["📻 ПЕРЕХВАЧЕННЫЕ ПАКЕТЫ:"]
+                for p in pkts[-20:]:
+                    lines.append(f"  [{p.get('freq_mhz', '?')} МГц] {p.get('protocol', '?')} — {p.get('summary', '')}")
+                return "\n".join(lines)
+
+        # ── WiFi Sentinel ─────────────────────────────────
+        if self.wifi_sentinel:
+            if any(k in t for k in ["wifi статус", "wifi sentinel", "wifi status"]):
+                return self.wifi_sentinel.status()
+            if any(k in t for k in ["wifi скан", "wifi scan", "сканируй wifi"]):
+                aps = self.wifi_sentinel.scan_aps()
+                if not aps:
+                    return "📡 WiFi: точки доступа не обнаружены."
+                lines = [f"📡 WiFi: обнаружено {len(aps)} точек доступа:"]
+                for ap in aps[:20]:
+                    d = ap.to_dict()
+                    lines.append(f"  • {d.get('ssid', '?')} ({d.get('bssid', '?')}) ch{d.get('channel', '?')} {d.get('signal_dbm', '?')}dBm — {d.get('encryption', '?')}")
+                return "\n".join(lines)
+            if any(k in t for k in ["wifi ловушка", "wifi honeypot", "honeypot вкл"]):
+                return self.wifi_sentinel.start_honeypot()
+            if any(k in t for k in ["wifi ловушка стоп", "honeypot выкл", "honeypot стоп"]):
+                return self.wifi_sentinel.stop_honeypot()
+            if any(k in t for k in ["wifi монитор", "wifi monitor"]):
+                return self.wifi_sentinel.start_monitor()
+            if any(k in t for k in ["wifi инциденты", "wifi incidents", "wifi угрозы"]):
+                incidents = self.wifi_sentinel.get_incidents()
+                if not incidents:
+                    return "🛡️ WiFi Sentinel: инцидентов нет."
+                lines = ["🛡️ WiFi ИНЦИДЕНТЫ:"]
+                for inc in incidents[-15:]:
+                    lines.append(f"  [{inc.get('threat_level', '?')}] {inc.get('type', '?')} — {inc.get('description', '')}")
+                return "\n".join(lines)
+
+        # ── SmartHome Override ────────────────────────────
+        if self.smarthome:
+            if any(k in t for k in ["smarthome статус", "override статус", "smarthome status"]):
+                return self.smarthome.status()
+            if any(k in t for k in ["smarthome устройства", "override устройства", "smarthome devices"]):
+                devs = self.smarthome.list_devices()
+                if not devs:
+                    return "🏠 SmartHome Override: устройств нет."
+                lines = ["🏠 OVERRIDE УСТРОЙСТВА:"]
+                for d in devs:
+                    lines.append(f"  • {d.get('device_id', '?')} — {d.get('friendly_name', '?')} [{d.get('protocol', '?')}] cloud={'blocked' if d.get('cloud_blocked') else 'allowed'}")
+                return "\n".join(lines)
+            if any(k in t for k in ["smarthome старт", "override старт", "smarthome start"]):
+                return self.smarthome.start()
+            if t.startswith("smarthome блокируй облако ") or t.startswith("override block "):
+                dev_id = t.split()[-1]
+                return self.smarthome.block_cloud(dev_id)
+            if t.startswith("smarthome команда ") or t.startswith("override cmd "):
+                parts = t.split(maxsplit=2)
+                if len(parts) >= 3:
+                    dev_id = parts[1] if t.startswith("override") else parts[2].split()[0] if len(parts[2].split()) > 0 else ""
+                    return f"Используй формат: smarthome команда [device_id] {{json}}"
+
+        # ── Power Sentry ──────────────────────────────────
+        if self.power_sentry:
+            if any(k in t for k in ["питание статус", "power статус", "ups статус", "power sentry"]):
+                return self.power_sentry.status()
+            if any(k in t for k in ["питание старт", "power start", "power sentry start"]):
+                return self.power_sentry.start()
+            if any(k in t for k in ["питание ups", "power ups list", "список ups"]):
+                ups_list = self.power_sentry.list_ups()
+                if not ups_list:
+                    return "🔋 UPS: не обнаружены."
+                lines = ["🔋 UPS УСТРОЙСТВА:"]
+                for u in ups_list:
+                    lines.append(f"  • {u.get('name', '?')} — {u.get('status', '?')} charge={u.get('battery_pct', '?')}% load={u.get('load_pct', '?')}%")
+                return "\n".join(lines)
+            if any(k in t for k in ["питание показания", "power readings", "показания датчиков питания"]):
+                rds = self.power_sentry.get_readings()
+                if not rds:
+                    return "🔋 Показания: нет данных."
+                lines = ["🔋 ПОКАЗАНИЯ ПИТАНИЯ:"]
+                for r in rds[-10:]:
+                    lines.append(f"  {r.get('sensor_id', '?')}: {r.get('voltage_v', '?')}V {r.get('current_a', '?')}A {r.get('power_w', '?')}W")
+                return "\n".join(lines)
+            if any(k in t for k in ["аварийное отключение", "power emergency", "emergency arm"]):
+                return self.power_sentry.arm_emergency()
+
+        # ── Emergency Purge ───────────────────────────────
+        if self.purge:
+            if any(k in t for k in ["purge статус", "очистка статус", "purge status"]):
+                return self.purge.status()
+            if any(k in t for k in ["purge история", "очистка история", "purge history"]):
+                return self.purge.history()
+            if t.startswith("purge запрос ") or t.startswith("очистка запрос "):
+                parts = t.split()
+                level = parts[2] if len(parts) > 2 else "logs"
+                return self.purge.request_purge(level)
+            if t.startswith("purge подтверди ") or t.startswith("очистка подтверди "):
+                code = t.split()[-1]
+                return self.purge.confirm_purge(code)
+            if any(k in t for k in ["purge отмена", "очистка отмена", "purge cancel"]):
+                return self.purge.cancel_purge()
+
+        # ── Container Isolation ───────────────────────────
+        if self.containers:
+            if any(k in t for k in ["контейнер статус", "container статус", "isolation статус", "контейнеры статус"]):
+                return self.containers.status()
+            if any(k in t for k in ["контейнер список", "container list", "контейнеры"]):
+                return self.containers.list_containers()
+            if t.startswith("контейнер запуск ") or t.startswith("container launch "):
+                parts = t.split()
+                module = parts[2] if len(parts) > 2 else ""
+                if module:
+                    return self.containers.launch(module)
+                return "Укажи модуль: контейнер запуск [module_name]"
+            if t.startswith("контейнер стоп ") or t.startswith("container stop "):
+                name = t.split()[-1]
+                return self.containers.stop(name)
+            if t.startswith("контейнер логи ") or t.startswith("container logs "):
+                name = t.split()[-1]
+                return self.containers.logs(name)
+            if any(k in t for k in ["контейнер watchdog", "container watchdog"]):
+                return self.containers.start_watchdog()
+            if any(k in t for k in ["контейнер очистка", "container cleanup"]):
+                return self.containers.cleanup()
+
         # ── Помощь ────────────────────────────────────────
         if t.strip() in ("помощь", "команды", "что умеешь", "help", "?"):
             return self._help()
@@ -2177,7 +2447,42 @@ class ArgosCore:
   bt статус · bt инвентарь · bt скан [сек]
   bt iot
 
-🧩 МОДУЛИ
+� AWA-CORE (КООРДИНАТОР)
+  awa статус · awa модули · awa история · awa проверка
+
+📊 ADAPTIVE DRAFTER (TLT)
+  drafter статус · drafter метрики · drafter сброс кэша
+
+🩺 SELF-HEALING
+  healing статус · healing история · healing валидация
+
+📻 AIRSNITCH (SDR/SUB-GHz)
+  эфир статус · эфир скан · эфир монитор · эфир стоп
+  эфир пакеты
+
+🛡️ WIFI SENTINEL
+  wifi статус · wifi скан · wifi ловушка · wifi ловушка стоп
+  wifi монитор · wifi инциденты
+
+🏠 SMARTHOME OVERRIDE
+  smarthome статус · smarthome устройства · smarthome старт
+  smarthome блокируй облако [id]
+
+🔋 POWER SENTRY
+  питание статус · питание старт · питание ups
+  питание показания · аварийное отключение
+
+🗑️ EMERGENCY PURGE
+  purge статус · purge история
+  purge запрос [logs|data|full] · purge подтверди [code]
+  purge отмена
+
+📦 CONTAINER ISOLATION
+  контейнер статус · контейнер список
+  контейнер запуск [module] · контейнер стоп [name]
+  контейнер логи [name] · контейнер watchdog · контейнер очистка
+
+�🧩 МОДУЛИ
     список модулей
 
 🧠 LM STUDIO
