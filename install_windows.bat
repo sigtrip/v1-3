@@ -30,6 +30,11 @@ if errorlevel 1 (
 echo [OK] Python: %PYTHON_CMD%
 echo.
 
+call :ensure_ollama
+if errorlevel 1 (
+    echo [WARN] Ollama не установлен. Продолжаю без локальной LLM.
+)
+
 if not exist ".venv\Scripts\python.exe" (
     echo [INFO] Создаю виртуальное окружение .venv
     call :run_py -m venv .venv
@@ -87,6 +92,30 @@ echo        4) python main.py
 echo.
 goto :done
 
+:ensure_ollama
+where ollama >nul 2>&1
+if not errorlevel 1 (
+    echo [OK] Ollama найден в PATH.
+    exit /b 0
+)
+
+echo [INFO] Ollama не найден. Пытаюсь установить через winget...
+call :install_ollama_winget
+if errorlevel 1 (
+    echo [WARN] winget-установка Ollama не удалась. Пробую официальный install.ps1...
+    call :install_ollama_fallback
+)
+
+where ollama >nul 2>&1
+if not errorlevel 1 (
+    echo [OK] Ollama установлен.
+    exit /b 0
+)
+
+echo [WARN] Не удалось автоматически установить Ollama.
+echo [HINT] Вручную: powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://ollama.com/install.ps1 ^| iex"
+exit /b 1
+
 :detect_python
 set "PYTHON_CMD="
 for /f "delims=" %%P in ('py -3 -c "import sys; print(sys.executable)" 2^>nul') do set "PYTHON_CMD=%%P"
@@ -128,6 +157,17 @@ exit /b %errorlevel%
 
 :install_python_fallback
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$url='https://www.python.org/ftp/python/3.11.9/python-3.11.9-amd64.exe'; $out=Join-Path $env:TEMP 'python-3.11.9-amd64.exe'; Invoke-WebRequest -Uri $url -OutFile $out; Start-Process -FilePath $out -ArgumentList '/quiet InstallAllUsers=0 PrependPath=1 Include_pip=1 Include_test=0' -Wait"
+exit /b %errorlevel%
+
+:install_ollama_winget
+where winget >nul 2>&1
+if errorlevel 1 exit /b 1
+
+winget install -e --id Ollama.Ollama --accept-source-agreements --accept-package-agreements --silent
+exit /b %errorlevel%
+
+:install_ollama_fallback
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://ollama.com/install.ps1 | iex"
 exit /b %errorlevel%
 
 :fail

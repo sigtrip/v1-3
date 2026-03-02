@@ -157,8 +157,11 @@ ArgosUniversal/
 ### 1. Установка
 
 ```bash
-# Windows (чистая система, авто-установка Python + все зависимости)
+# Windows (чистая система, авто-установка Python + Ollama + все зависимости)
 install_windows.bat
+
+# Ручная установка Ollama (PowerShell)
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://ollama.com/install.ps1 | iex"
 
 # Всё сразу (включая PyAudio + SpeechRecognition)
 python setup_builder.py --install
