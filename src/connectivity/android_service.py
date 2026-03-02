@@ -258,5 +258,9 @@ def main():
     service.run_forever()
 
 
+# README alias
+AndroidService = ArgosOmniService
+
+
 if __name__ == "__main__":
     main()

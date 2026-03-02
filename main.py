@@ -1,8 +1,10 @@
 """
 main.py — ArgosUniversal OS v1.0.0 FINAL
   Оркестратор: запускает все подсистемы в правильном порядке.
-  Режимы: desktop | mobile | server
-  Флаги:  --no-gui | --mobile | --root | --dashboard | --wake
+  Режимы: desktop | mobile | server | shell
+  Флаги:  --no-gui | --mobile | --root | --dashboard | --wake | --shell
+  Web UI: fastapi (--dashboard) | streamlit (standalone)
+  Аргументы обрабатываются через sys.argv (argparse-совместимо).
 """
 import os, sys, threading
 from src.env_bootstrap import bootstrap_env

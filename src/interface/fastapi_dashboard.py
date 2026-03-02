@@ -139,6 +139,7 @@ class FastAPIDashboard:
 
         @app.get("/api/dashboard")
         async def dashboard(request: Request):
+            """Batch endpoint with delta/since support."""
             now = time.time()
             _refresh_status(now)
             _refresh_logs(now)
@@ -183,3 +184,8 @@ class FastAPIDashboard:
     def stop(self):
         if self._server:
             self._server.should_exit = True
+
+
+# README-compatible aliases
+ArgosAPI = FastAPIDashboard
+create_app = FastAPIDashboard

@@ -344,3 +344,4 @@ def _format_record(r: dict) -> str:
 
 # README alias
 Observability = Metrics
+ObservabilityEngine = Metrics

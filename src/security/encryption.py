@@ -75,3 +75,4 @@ class ArgosShield:
 
 # README alias
 ArgosEncryption = ArgosShield
+EncryptionManager = ArgosShield

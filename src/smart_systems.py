@@ -346,3 +346,4 @@ class SmartSystemsManager:
 
 # README alias
 SmartSystems = SmartSystemsManager
+SmartSystemsOperator = SmartSystemsManager

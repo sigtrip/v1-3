@@ -422,3 +422,7 @@ class ArgosMemory:
 
     def close(self):
         self.conn.close()
+
+
+# README alias
+MemoryManager = ArgosMemory

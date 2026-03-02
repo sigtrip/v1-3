@@ -236,3 +236,7 @@ class ArgosAdmin:
         except subprocess.TimeoutExpired:
             self._audit(event="cmd_timeout", command=command, allowed=True, reason="timeout", user=user)
             return "⏱️ Команда превысила таймаут (30с)."
+
+
+# README alias
+AdminPanel = ArgosAdmin

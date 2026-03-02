@@ -1751,8 +1751,14 @@ class ArgosCore:
             answer = self._ask_grok(context, user_text)
             engine = f"{q_data['name']} (Grok)"
         else:
-            answer = self._ask_consensus(context, user_text)
-            engine = f"{q_data['name']} (Auto-Consensus)"
+            # Speculative Consensus v2: Drafter → Verifier pipeline
+            auto_answer, auto_engine = self._ask_auto_consensus(context, user_text)
+            if auto_answer:
+                answer = auto_answer
+                engine = f"{q_data['name']} ({auto_engine})"
+            else:
+                answer = self._ask_consensus(context, user_text)
+                engine = f"{q_data['name']} (Auto-Consensus)"
 
         if not answer:
             if self.ai_mode == "gemini":
@@ -2142,8 +2148,8 @@ class ArgosCore:
         if any(k in t for k in ["включи wake word", "wake word вкл"]):
             return self.start_wake_word(admin, flasher)
 
-        # ── Навыки ────────────────────────────────────────
-        if self.skill_loader and any(k in t for k in ["навыки v2", "skills v2", "skillloader"]):
+        # ── Навыки (скиллы) ────────────────────────────────
+        if self.skill_loader and any(k in t for k in ["навыки v2", "skills v2", "skillloader", "скиллы v2"]):
             return self.skill_loader.list_skills()
         if self.skill_loader and t.startswith("загрузи навык "):
             name = text.split("загрузи навык ", 1)[-1].strip()
@@ -2167,7 +2173,7 @@ class ArgosCore:
         if any(k in t for k in ["сканируй сеть", "сетевой призрак"]):
             from src.skills.net_scanner import NetGhost
             return NetGhost().scan()
-        if any(k in t for k in ["список навыков", "навыки аргоса"]):
+        if any(k in t for k in ["список навыков", "навыки аргоса", "скиллы", "список скиллов"]):
             if self.skill_loader:
                 return self.skill_loader.list_skills()
             from src.skills.evolution import ArgosEvolution

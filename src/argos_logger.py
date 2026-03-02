@@ -68,3 +68,7 @@ def get_logger(name: str) -> logging.Logger:
 
 # Глобальный логгер
 log = get_logger("argos.core")
+
+# README alias
+setup_logging = get_logger
+ArgosLogger = type("ArgosLogger", (), {"get": staticmethod(get_logger)})

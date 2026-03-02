@@ -47,3 +47,11 @@ try:
     st.text_area("Последние строки", logs, height=300)
 except Exception as e:
     st.error(f"Не удалось получить логи: {e}")
+
+
+# README-совместимые обёртки
+def run_streamlit():
+    """Точка входа (для импорта); реальный запуск: streamlit run <этот файл>."""
+    pass
+
+StreamlitDashboard = type("StreamlitDashboard", (), {"run": staticmethod(run_streamlit)})

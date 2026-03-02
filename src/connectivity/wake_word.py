@@ -106,3 +106,7 @@ class WakeWordListener:
                 return text or ""
             except Exception:
                 return ""
+
+
+# README alias
+WakeWordDetector = WakeWordListener

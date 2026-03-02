@@ -264,3 +264,7 @@ class ArgosVision:
         if not any(path.lower().endswith(ext) for ext in supported):
             return f"❌ Неподдерживаемый формат. Поддерживаю: {', '.join(supported)}"
         return self.analyze_image(path)
+
+
+# README alias
+VisionEngine = ArgosVision

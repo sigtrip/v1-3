@@ -141,3 +141,7 @@ class ArgosSyscalls:
         cols = info.srWindow.Right - info.srWindow.Left + 1
         rows = info.srWindow.Bottom - info.srWindow.Top + 1
         return f"📐 Консоль: {cols}x{rows} (WinAPI)"
+
+
+# README alias
+SyscallManager = ArgosSyscalls
