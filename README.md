@@ -12,7 +12,7 @@
 
 | Слой | Что умеет |
 |------|-----------|
-| 🧠 **Интеллект** | Gemini / GigaChat / YandexGPT / LM Studio → Ollama/Llama3 / **IBM Watsonx** (Llama-3.1-70B), multi-turn + Tool Calling по JSON-схемам |
+| 🧠 **Интеллект** | Gemini / GigaChat / YandexGPT / LM Studio / OpenAI / Grok / Pupi API → Ollama/Llama3 / **IBM Watsonx** (Llama-3.1-70B), multi-turn + Tool Calling по JSON-схемам |
 | 🗣️ **Голос** | TTS (pyttsx3) + STT (SpeechRecognition) + Wake Word «Аргос» |
 | 🤖 **Агент** | Цепочки задач: «скан сети → запиши → отправь в Telegram» |
 | 👁️ **Vision** | Анализ экрана / камеры / файлов через Gemini Vision |
@@ -213,6 +213,16 @@ LMSTUDIO_MODEL=local-model
 WATSONX_API_KEY=ключ_от_ibm_watsonx
 WATSONX_PROJECT_ID=project_id_из_watsonx
 WATSONX_URL=https://us-south.ml.cloud.ibm.com
+OPENAI_API_KEY=ключ_openai
+# опционально: OPENAI_MODEL=gpt-4o-mini
+# опционально: OPENAI_API_URL=https://api.openai.com/v1/chat/completions
+GROK_API_KEY=ключ_grok_xai
+# опционально: GROK_MODEL=grok-2-latest
+# опционально: GROK_API_URL=https://api.x.ai/v1/chat/completions
+PUPI_API_TOKEN=токен_pupi_api
+PUPI_API_URL=https://your-pupi-endpoint/v1/chat/completions
+# опционально: PUPI_MODEL=pupi-latest
+# опционально: GEMINI_REST_URL=https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent
 ARGOS_HOMEOSTASIS=on
 ARGOS_HOMEOSTASIS_INTERVAL=8
 ARGOS_HOMEOSTASIS_PROTECT_CPU=78
@@ -250,6 +260,11 @@ ARGOS_ACCEPTANCE_FLOOR=0.55
 Примечание по лимитам:
 - Для Gemini включён лимит: 15 запросов в минуту (включая Tool Calling и Vision).
 - Лимит применяется только к Gemini; GigaChat, YandexGPT, LM Studio и Ollama не ограничиваются этим правилом.
+
+Примечание по Gemini REST:
+- Если Python SDK `google-genai` недоступен, Аргос использует REST fallback.
+- Для REST-запроса применяется заголовок `X-goog-api-key: GEMINI_API_KEY`.
+- Базовый endpoint по умолчанию: `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent`.
 
 Примечание по Auto-режиму:
 - По умолчанию включён Auto-Consensus: модели отвечают по очереди с учётом предыдущих ответов, затем формируется единый итог.

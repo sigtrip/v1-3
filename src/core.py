@@ -756,6 +756,12 @@ class ArgosCore:
             return "ollama"
         if value in {"watson", "watsonx", "ibm", "w"}:
             return "watsonx"
+        if value in {"openai", "gpt", "oai"}:
+            return "openai"
+        if value in {"grok", "xai", "x.ai"}:
+            return "grok"
+        if value in {"pupi", "pupiapi", "pupi_api"}:
+            return "pupi"
         return "auto"
 
     def set_ai_mode(self, mode: str) -> str:
@@ -775,6 +781,12 @@ class ArgosCore:
             return "Ollama"
         if self.ai_mode == "watsonx":
             return "Watsonx"
+        if self.ai_mode == "openai":
+            return "OpenAI"
+        if self.ai_mode == "grok":
+            return "Grok"
+        if self.ai_mode == "pupi":
+            return "Pupi API"
         return "Auto"
 
     def _setup_ai(self):
@@ -784,7 +796,10 @@ class ArgosCore:
             log.info("Gemini: OK")
         else:
             self.model = None
-            log.info("Gemini недоступен — используется Ollama")
+            if key:
+                log.info("Gemini SDK недоступен — будет REST fallback")
+            else:
+                log.info("Gemini недоступен — используется Ollama")
 
         if self._has_gigachat_config():
             log.info("GigaChat: конфигурация обнаружена")
@@ -800,6 +815,21 @@ class ArgosCore:
             log.info("LM Studio: конфигурация обнаружена (%s)", self.lmstudio_url)
         else:
             log.info("LM Studio недоступен — нет BASE_URL")
+
+        if self._has_openai_config():
+            log.info("OpenAI: конфигурация обнаружена")
+        else:
+            log.info("OpenAI недоступен — нет OPENAI_API_KEY")
+
+        if self._has_grok_config():
+            log.info("Grok/xAI: конфигурация обнаружена")
+        else:
+            log.info("Grok/xAI недоступен — нет GROK_API_KEY")
+
+        if self._has_pupi_config():
+            log.info("Pupi API: конфигурация обнаружена")
+        else:
+            log.info("Pupi API недоступен — нет PUPI_API_TOKEN/PUPI_API_URL")
 
     def _setup_watsonx(self):
         """IBM Watsonx AI — Llama-3 70B через инфраструктуру IBM."""
@@ -848,6 +878,66 @@ class ArgosCore:
 
     def _has_lmstudio_config(self) -> bool:
         return bool((self.lmstudio_url or "").strip())
+
+    def _has_openai_config(self) -> bool:
+        return bool((os.getenv("OPENAI_API_KEY", "") or "").strip())
+
+    def _has_grok_config(self) -> bool:
+        return bool((os.getenv("GROK_API_KEY", "") or "").strip())
+
+    def _has_pupi_config(self) -> bool:
+        token = (os.getenv("PUPI_API_TOKEN", "") or "").strip()
+        url = (os.getenv("PUPI_API_URL", "") or "").strip()
+        return bool(token and url)
+
+    def _ask_gemini_rest(self, context: str, user_text: str) -> str | None:
+        key = (os.getenv("GEMINI_API_KEY", "") or "").strip()
+        if not key:
+            return None
+        endpoint = (
+            os.getenv(
+                "GEMINI_REST_URL",
+                "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
+            )
+            or ""
+        ).strip()
+        if not endpoint:
+            return None
+        try:
+            hist = self.context.get_prompt_context()
+            prompt = f"{context}\n\n{hist}\n\nUser: {user_text}\nArgos:"
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": prompt}
+                        ]
+                    }
+                ]
+            }
+            response = requests.post(
+                endpoint,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-goog-api-key": key,
+                },
+                json=payload,
+                timeout=25,
+            )
+            if not response.ok:
+                log.error("Gemini REST: HTTP %s %s", response.status_code, response.text[:400])
+                return None
+            data = response.json()
+            candidates = data.get("candidates") or []
+            if not candidates:
+                return None
+            content = candidates[0].get("content") or {}
+            parts = content.get("parts") or []
+            texts = [str(p.get("text", "")).strip() for p in parts if isinstance(p, dict) and p.get("text")]
+            return "\n".join(t for t in texts if t).strip() or None
+        except Exception as e:
+            log.error("Gemini REST: %s", e)
+            return None
 
     def _lmstudio_status(self) -> str:
         if not self._has_lmstudio_config():
@@ -930,7 +1020,7 @@ class ArgosCore:
     def _ask_gemini(self, context: str, user_text: str) -> str | None:
         self._last_gemini_rate_limited = False
         if not self.model:
-            return None
+            return self._ask_gemini_rest(context, user_text)
         if not self._gemini_limiter.allow():
             self._last_gemini_rate_limited = True
             log.warning(self._gemini_rate_limit_text())
@@ -942,6 +1032,137 @@ class ArgosCore:
             return res.text
         except Exception as e:
             log.error("Gemini: %s", e)
+            return self._ask_gemini_rest(context, user_text)
+
+    def _ask_openai(self, context: str, user_text: str) -> str | None:
+        api_key = (os.getenv("OPENAI_API_KEY", "") or "").strip()
+        if not api_key:
+            return None
+        url = (os.getenv("OPENAI_API_URL", "https://api.openai.com/v1/chat/completions") or "").strip()
+        model = (os.getenv("OPENAI_MODEL", "gpt-4o-mini") or "").strip() or "gpt-4o-mini"
+        try:
+            hist = self.context.get_prompt_context()
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": context},
+                    {"role": "user", "content": f"{hist}\n\n{user_text}"},
+                ],
+                "temperature": 0.4,
+                "max_tokens": 1200,
+            }
+            response = requests.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=25,
+            )
+            if not response.ok:
+                log.error("OpenAI: HTTP %s %s", response.status_code, response.text[:400])
+                return None
+            data = response.json()
+            choices = data.get("choices") or []
+            if not choices:
+                return None
+            message = choices[0].get("message") or {}
+            content = message.get("content")
+            if isinstance(content, str):
+                return content.strip()
+            return None
+        except Exception as e:
+            log.error("OpenAI: %s", e)
+            return None
+
+    def _ask_grok(self, context: str, user_text: str) -> str | None:
+        api_key = (os.getenv("GROK_API_KEY", "") or "").strip()
+        if not api_key:
+            return None
+        url = (os.getenv("GROK_API_URL", "https://api.x.ai/v1/chat/completions") or "").strip()
+        model = (os.getenv("GROK_MODEL", "grok-2-latest") or "").strip() or "grok-2-latest"
+        try:
+            hist = self.context.get_prompt_context()
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": context},
+                    {"role": "user", "content": f"{hist}\n\n{user_text}"},
+                ],
+                "temperature": 0.4,
+                "max_tokens": 1200,
+            }
+            response = requests.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=25,
+            )
+            if not response.ok:
+                log.error("Grok: HTTP %s %s", response.status_code, response.text[:400])
+                return None
+            data = response.json()
+            choices = data.get("choices") or []
+            if not choices:
+                return None
+            message = choices[0].get("message") or {}
+            content = message.get("content")
+            if isinstance(content, str):
+                return content.strip()
+            return None
+        except Exception as e:
+            log.error("Grok: %s", e)
+            return None
+
+    def _ask_pupi(self, context: str, user_text: str) -> str | None:
+        token = (os.getenv("PUPI_API_TOKEN", "") or "").strip()
+        url = (os.getenv("PUPI_API_URL", "") or "").strip()
+        if not (token and url):
+            return None
+        model = (os.getenv("PUPI_MODEL", "pupi-latest") or "").strip() or "pupi-latest"
+        try:
+            hist = self.context.get_prompt_context()
+            payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": context},
+                    {"role": "user", "content": f"{hist}\n\n{user_text}"},
+                ],
+                "temperature": 0.4,
+                "max_tokens": 1200,
+            }
+            response = requests.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=25,
+            )
+            if not response.ok:
+                log.error("Pupi API: HTTP %s %s", response.status_code, response.text[:400])
+                return None
+            data = response.json()
+            choices = data.get("choices") or []
+            if choices:
+                message = choices[0].get("message") or {}
+                content = message.get("content")
+                if isinstance(content, str):
+                    return content.strip()
+            content = data.get("content")
+            if isinstance(content, str):
+                return content.strip()
+            text = data.get("text")
+            if isinstance(text, str):
+                return text.strip()
+            return None
+        except Exception as e:
+            log.error("Pupi API: %s", e)
             return None
 
     def _ask_gigachat(self, context: str, user_text: str) -> str | None:
@@ -1174,10 +1395,16 @@ class ArgosCore:
 
     def _cloud_verifier_providers(self) -> list[tuple[str, callable]]:
         providers = []
-        if self.model:
+        if self.model or (os.getenv("GEMINI_API_KEY", "") or "").strip():
             providers.append(("Gemini", self._ask_gemini))
         if self._has_gigachat_config():
             providers.append(("GigaChat", self._ask_gigachat))
+        if self._has_openai_config():
+            providers.append(("OpenAI", self._ask_openai))
+        if self._has_grok_config():
+            providers.append(("Grok", self._ask_grok))
+        if self._has_pupi_config():
+            providers.append(("Pupi", self._ask_pupi))
         return providers[:self.auto_collab_max_models]
 
     def _all_auto_providers(self) -> list[tuple[str, callable]]:
@@ -1438,6 +1665,15 @@ class ArgosCore:
         elif self.ai_mode == "watsonx":
             answer = self._ask_watsonx(context, user_text)
             engine = f"{q_data['name']} (Watsonx)"
+        elif self.ai_mode == "openai":
+            answer = self._ask_openai(context, user_text)
+            engine = f"{q_data['name']} (OpenAI)"
+        elif self.ai_mode == "grok":
+            answer = self._ask_grok(context, user_text)
+            engine = f"{q_data['name']} (Grok)"
+        elif self.ai_mode == "pupi":
+            answer = self._ask_pupi(context, user_text)
+            engine = f"{q_data['name']} (Pupi API)"
         else:
             answer = self._ask_consensus(context, user_text)
             engine = f"{q_data['name']} (Auto-Consensus)"
@@ -1458,6 +1694,12 @@ class ArgosCore:
                 answer = "Ollama недоступен в текущем режиме. Проверьте локальный сервер Ollama или переключите режим ИИ."
             elif self.ai_mode == "watsonx":
                 answer = "Watsonx недоступен. Проверьте WATSONX_API_KEY/WATSONX_PROJECT_ID или переключите режим ИИ."
+            elif self.ai_mode == "openai":
+                answer = "OpenAI недоступен. Проверьте OPENAI_API_KEY/OPENAI_MODEL или переключите режим ИИ."
+            elif self.ai_mode == "grok":
+                answer = "Grok/xAI недоступен. Проверьте GROK_API_KEY/GROK_MODEL или переключите режим ИИ."
+            elif self.ai_mode == "pupi":
+                answer = "Pupi API недоступен. Проверьте PUPI_API_TOKEN/PUPI_API_URL/PUPI_MODEL или переключите режим ИИ."
             else:
                 answer = "Связь с ядрами ИИ разорвана. Режим оффлайн."
             engine = "Offline"
@@ -1785,6 +2027,12 @@ class ArgosCore:
             return self.set_ai_mode("lmstudio")
         if any(k in t for k in ["режим ии ollama", "модель ollama", "ai mode ollama"]):
             return self.set_ai_mode("ollama")
+        if any(k in t for k in ["режим ии openai", "модель openai", "ai mode openai", "режим ии gpt"]):
+            return self.set_ai_mode("openai")
+        if any(k in t for k in ["режим ии grok", "модель grok", "ai mode grok", "режим ии xai"]):
+            return self.set_ai_mode("grok")
+        if any(k in t for k in ["режим ии pupi", "модель pupi", "ai mode pupi"]):
+            return self.set_ai_mode("pupi")
         if any(k in t for k in ["текущий режим ии", "какая модель", "ai mode"]):
             return f"🤖 Текущий режим ИИ: {self.ai_mode_label()}"
         if any(k in t for k in ["включи wake word", "wake word вкл"]):
@@ -2781,7 +3029,7 @@ class ArgosCore:
 
 🎤 ГОЛОС
   голос вкл/выкл · включи wake word
-    режим ии авто/gemini/gigachat/yandexgpt/lmstudio/ollama/watsonx
+        режим ии авто/gemini/gigachat/yandexgpt/lmstudio/ollama/watsonx/openai/grok/pupi
 
 💬 ДИАЛОГ
   контекст диалога · сброс контекста
