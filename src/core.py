@@ -73,6 +73,74 @@ class _SlidingWindowRateLimiter:
             return True
 
 
+class _ProviderCircuitBreaker:
+    """Per-provider circuit breaker with exponential backoff.
+
+    When a provider returns an error (429, 401, timeout, connection refused),
+    it is placed on cooldown.  Subsequent calls are blocked until the cooldown
+    expires.  Default cooldown durations (seconds):
+        429 / RESOURCE_EXHAUSTED  → 60   (or retryDelay from API response)
+        401 / Unauthorized        → 300
+        connection refused        → 120
+        timeout / other           → 30
+    Each consecutive failure doubles the cooldown (capped at 600 s).
+    """
+
+    _DEFAULT_COOLDOWNS = {
+        "rate_limit": 60,
+        "auth": 300,
+        "connection": 120,
+        "timeout": 30,
+        "generic": 30,
+    }
+
+    def __init__(self):
+        self._cooldowns: dict[str, float] = {}       # provider → resume_at
+        self._fail_streak: dict[str, int] = {}        # consecutive failures
+        self._lock = threading.Lock()
+
+    def available(self, provider: str) -> bool:
+        with self._lock:
+            resume_at = self._cooldowns.get(provider, 0.0)
+            if time.time() >= resume_at:
+                return True
+            return False
+
+    def record_failure(self, provider: str, kind: str = "generic",
+                       retry_after_seconds: float | None = None):
+        base = retry_after_seconds or self._DEFAULT_COOLDOWNS.get(kind, 30)
+        with self._lock:
+            streak = self._fail_streak.get(provider, 0) + 1
+            self._fail_streak[provider] = streak
+            multiplier = min(2 ** (streak - 1), 10)  # cap at 10×
+            cooldown = min(base * multiplier, 600)
+            self._cooldowns[provider] = time.time() + cooldown
+        log.warning("⏸ Провайдер [%s] приостановлен на %.0f с (причина: %s, серия: %d)",
+                     provider, cooldown, kind, streak)
+
+    def record_success(self, provider: str):
+        with self._lock:
+            self._fail_streak.pop(provider, None)
+            self._cooldowns.pop(provider, None)
+
+    def seconds_until_available(self, provider: str) -> float:
+        with self._lock:
+            resume_at = self._cooldowns.get(provider, 0.0)
+            remaining = resume_at - time.time()
+            return max(0.0, remaining)
+
+    def status_summary(self) -> str:
+        """Human-readable summary of cooled-down providers."""
+        now = time.time()
+        lines = []
+        with self._lock:
+            for prov, resume_at in sorted(self._cooldowns.items()):
+                remaining = resume_at - now
+                if remaining > 0:
+                    lines.append(f"  • {prov}: ⏸ ещё {remaining:.0f} с")
+        return "\n".join(lines) if lines else "  Все провайдеры доступны."
+
+
 class _GeminiResponse:
     def __init__(self, text: str = ""):
         self.text = text or ""
@@ -207,6 +275,7 @@ class ArgosCore:
         self.gemini_rpm_limit = 15
         self._gemini_limiter = _SlidingWindowRateLimiter(max_calls=self.gemini_rpm_limit, window_seconds=60)
         self._last_gemini_rate_limited = False
+        self._circuit = _ProviderCircuitBreaker()
         self._gigachat_access_token = self._clean_secret(os.getenv("GIGACHAT_ACCESS_TOKEN", "")) or None
         self._gigachat_verify_ssl = (os.getenv("GIGACHAT_VERIFY_SSL", "1") or "1").strip().lower() not in {
             "0", "off", "false", "no", "нет"
@@ -988,7 +1057,19 @@ class ArgosCore:
             log.info("YandexGPT: Отключен (проверь YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID в .env)")
 
     def _gemini_rate_limit_text(self) -> str:
+        remain = self._circuit.seconds_until_available("Gemini")
+        if remain > 0:
+            return f"Gemini: превышен лимит запросов. Повтор через ~{remain:.0f} с."
         return f"Gemini: превышен лимит {self.gemini_rpm_limit} запросов в минуту. Повтори чуть позже или переключи режим ИИ."
+
+    @staticmethod
+    def _parse_retry_delay(text: str) -> float | None:
+        """Extract retryDelay value (seconds) from API error body."""
+        import re as _re
+        m = _re.search(r'"retryDelay"\s*:\s*"(\d+)s?"', text)
+        if m:
+            return float(m.group(1))
+        return None
 
     def _has_gigachat_config(self) -> bool:
         if self._clean_secret(self._gigachat_access_token or ""):
@@ -1012,6 +1093,8 @@ class ArgosCore:
         return bool(self._env_secret("GROK_API_KEY"))
 
     def _ask_gemini_rest(self, context: str, user_text: str) -> str | None:
+        if not self._circuit.available("Gemini"):
+            return None
         key = self._env_secret("GEMINI_API_KEY")
         if not key:
             return None
@@ -1046,8 +1129,17 @@ class ArgosCore:
                 timeout=25,
             )
             if not response.ok:
-                log.error("Gemini REST: HTTP %s %s", response.status_code, response.text[:400])
+                body = response.text[:600]
+                log.error("Gemini REST: HTTP %s %s", response.status_code, body[:400])
+                if response.status_code == 429:
+                    delay = self._parse_retry_delay(body)
+                    self._circuit.record_failure("Gemini", "rate_limit", delay)
+                elif response.status_code in (401, 403):
+                    self._circuit.record_failure("Gemini", "auth")
+                else:
+                    self._circuit.record_failure("Gemini", "generic")
                 return None
+            self._circuit.record_success("Gemini")
             data = response.json()
             candidates = data.get("candidates") or []
             if not candidates:
@@ -1056,8 +1148,17 @@ class ArgosCore:
             parts = content.get("parts") or []
             texts = [str(p.get("text", "")).strip() for p in parts if isinstance(p, dict) and p.get("text")]
             return "\n".join(t for t in texts if t).strip() or None
+        except requests.exceptions.ConnectionError:
+            self._circuit.record_failure("Gemini", "connection")
+            log.error("Gemini REST: connection refused")
+            return None
+        except requests.exceptions.Timeout:
+            self._circuit.record_failure("Gemini", "timeout")
+            log.error("Gemini REST: timeout")
+            return None
         except Exception as e:
             log.error("Gemini REST: %s", e)
+            self._circuit.record_failure("Gemini", "generic")
             return None
 
     def _lmstudio_status(self) -> str:
@@ -1148,6 +1249,9 @@ class ArgosCore:
 
     def _ask_gemini(self, context: str, user_text: str) -> str | None:
         self._last_gemini_rate_limited = False
+        if not self._circuit.available("Gemini"):
+            self._last_gemini_rate_limited = True
+            return None
         if not self.model:
             return self._ask_gemini_rest(context, user_text)
         if not self._gemini_limiter.allow():
@@ -1158,12 +1262,21 @@ class ArgosCore:
             hist = self.context.get_prompt_context()
             payload = f"{context}\n\n{hist}\n\nUser: {user_text}\nArgos:"
             res = self.model.generate_content(payload)
+            self._circuit.record_success("Gemini")
             return res.text
         except Exception as e:
+            err_str = str(e)
             log.error("Gemini: %s", e)
+            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                delay = self._parse_retry_delay(err_str)
+                self._circuit.record_failure("Gemini", "rate_limit", delay)
+                self._last_gemini_rate_limited = True
+                return None
             return self._ask_gemini_rest(context, user_text)
 
     def _ask_openai(self, context: str, user_text: str) -> str | None:
+        if not self._circuit.available("OpenAI"):
+            return None
         api_key = self._env_secret("OPENAI_API_KEY")
         if not api_key:
             return None
@@ -1191,7 +1304,14 @@ class ArgosCore:
             )
             if not response.ok:
                 log.error("OpenAI: HTTP %s %s", response.status_code, response.text[:400])
+                if response.status_code == 429:
+                    self._circuit.record_failure("OpenAI", "rate_limit")
+                elif response.status_code in (401, 403):
+                    self._circuit.record_failure("OpenAI", "auth")
+                else:
+                    self._circuit.record_failure("OpenAI", "generic")
                 return None
+            self._circuit.record_success("OpenAI")
             data = response.json()
             choices = data.get("choices") or []
             if not choices:
@@ -1201,11 +1321,22 @@ class ArgosCore:
             if isinstance(content, str):
                 return content.strip()
             return None
+        except requests.exceptions.ConnectionError:
+            self._circuit.record_failure("OpenAI", "connection")
+            log.error("OpenAI: connection refused")
+            return None
+        except requests.exceptions.Timeout:
+            self._circuit.record_failure("OpenAI", "timeout")
+            log.error("OpenAI: timeout")
+            return None
         except Exception as e:
             log.error("OpenAI: %s", e)
+            self._circuit.record_failure("OpenAI", "generic")
             return None
 
     def _ask_grok(self, context: str, user_text: str) -> str | None:
+        if not self._circuit.available("Grok"):
+            return None
         api_key = self._env_secret("GROK_API_KEY")
         if not api_key:
             return None
@@ -1240,7 +1371,14 @@ class ArgosCore:
                     log.warning("Grok: модель '%s' недоступна (Model not found), провайдер временно отключён", model)
                     return None
                 log.error("Grok: HTTP %s %s", response.status_code, body)
+                if response.status_code == 429:
+                    self._circuit.record_failure("Grok", "rate_limit")
+                elif response.status_code in (401, 403):
+                    self._circuit.record_failure("Grok", "auth")
+                else:
+                    self._circuit.record_failure("Grok", "generic")
                 return None
+            self._circuit.record_success("Grok")
             data = response.json()
             choices = data.get("choices") or []
             if not choices:
@@ -1250,13 +1388,21 @@ class ArgosCore:
             if isinstance(content, str):
                 return content.strip()
             return None
+        except requests.exceptions.ConnectionError:
+            self._circuit.record_failure("Grok", "connection")
+            log.error("Grok: connection refused")
+            return None
         except Exception as e:
             log.error("Grok: %s", e)
+            self._circuit.record_failure("Grok", "generic")
             return None
 
     def _ask_gigachat(self, context: str, user_text: str) -> str | None:
+        if not self._circuit.available("GigaChat"):
+            return None
         token = self._get_gigachat_token()
         if not token:
+            self._circuit.record_failure("GigaChat", "auth")
             return None
         try:
             hist = self.context.get_prompt_context()
@@ -1282,8 +1428,15 @@ class ArgosCore:
             )
             if not response.ok:
                 log.error("GigaChat: HTTP %s %s", response.status_code, response.text[:400])
+                if response.status_code == 429:
+                    self._circuit.record_failure("GigaChat", "rate_limit")
+                elif response.status_code in (401, 403):
+                    self._circuit.record_failure("GigaChat", "auth")
+                else:
+                    self._circuit.record_failure("GigaChat", "generic")
                 self._gigachat_retry_after = time.time() + 60
                 return None
+            self._circuit.record_success("GigaChat")
 
             data = response.json()
             choices = data.get("choices") or []
@@ -1296,9 +1449,12 @@ class ArgosCore:
             return None
         except Exception as e:
             log.error("GigaChat: %s", e)
+            self._circuit.record_failure("GigaChat", "generic")
             return None
 
     def _ask_yandexgpt(self, context: str, user_text: str) -> str | None:
+        if not self._circuit.available("YandexGPT"):
+            return None
         if not getattr(self, "yandex_api_key", None) or not getattr(self, "yandex_folder_id", None):
             return None
 
@@ -1333,12 +1489,30 @@ class ArgosCore:
             response.raise_for_status()
             result = response.json()
             # Извлекаем текст ответа из сложного JSON Яндекса
+            self._circuit.record_success("YandexGPT")
             return result.get("result", {}).get("alternatives", [{}])[0].get("message", {}).get("text", "").strip()
+        except requests.exceptions.ConnectionError:
+            self._circuit.record_failure("YandexGPT", "connection")
+            log.error("YandexGPT: connection refused")
+            return None
+        except requests.exceptions.HTTPError as e:
+            status = getattr(e.response, 'status_code', 0)
+            if status == 429:
+                self._circuit.record_failure("YandexGPT", "rate_limit")
+            elif status in (401, 403):
+                self._circuit.record_failure("YandexGPT", "auth")
+            else:
+                self._circuit.record_failure("YandexGPT", "generic")
+            log.error("YandexGPT: %s", e)
+            return None
         except Exception as e:
             log.error("YandexGPT: %s", e)
+            self._circuit.record_failure("YandexGPT", "generic")
             return None
 
     def _ask_ollama(self, context: str, user_text: str) -> str | None:
+        if not self._circuit.available("Ollama"):
+            return None
         try:
             # Добавляем историю в промпт
             hist = self.context.get_prompt_context()
@@ -1348,12 +1522,24 @@ class ArgosCore:
                 json={"model": "llama3", "prompt": full_prompt, "stream": False},
                 timeout=150
             )
+            self._circuit.record_success("Ollama")
             return res.json().get('response')
+        except requests.exceptions.ConnectionError:
+            self._circuit.record_failure("Ollama", "connection")
+            log.error("Ollama: connection refused")
+            return None
+        except requests.exceptions.Timeout:
+            self._circuit.record_failure("Ollama", "timeout")
+            log.error("Ollama: timeout")
+            return None
         except Exception as e:
             log.error("Ollama: %s", e)
+            self._circuit.record_failure("Ollama", "generic")
             return None
 
     def _ask_lmstudio(self, context: str, user_text: str) -> str | None:
+        if not self._circuit.available("LMStudio"):
+            return None
         if not self._has_lmstudio_config():
             return None
         try:
@@ -1375,8 +1561,13 @@ class ArgosCore:
             )
             if not response.ok:
                 log.error("LM Studio: HTTP %s %s", response.status_code, response.text[:400])
+                if response.status_code in (429,):
+                    self._circuit.record_failure("LMStudio", "rate_limit")
+                else:
+                    self._circuit.record_failure("LMStudio", "generic")
                 return None
 
+            self._circuit.record_success("LMStudio")
             data = response.json()
             choices = data.get("choices") or []
             if not choices:
@@ -1386,11 +1577,18 @@ class ArgosCore:
             if isinstance(content, str):
                 return content.strip()
             return None
+        except requests.exceptions.ConnectionError:
+            self._circuit.record_failure("LMStudio", "connection")
+            log.error("LM Studio: connection refused")
+            return None
         except Exception as e:
             log.error("LM Studio: %s", e)
+            self._circuit.record_failure("LMStudio", "generic")
             return None
 
     def _ask_watsonx(self, context: str, user_text: str) -> str | None:
+        if not self._circuit.available("Watsonx"):
+            return None
         if not self.watsonx_model:
             return None
         try:
@@ -1403,9 +1601,11 @@ class ArgosCore:
                 f"<|start_header_id|>assistant<|end_header_id|>\n"
             )
             res = self.watsonx_model.generate_text(prompt=full_prompt)
+            self._circuit.record_success("Watsonx")
             return res.strip() if res else None
         except Exception as e:
             log.error("Watsonx: %s", e)
+            self._circuit.record_failure("Watsonx", "generic")
             return None
 
     def _ask_consensus(self, context: str, user_text: str) -> str | None:
@@ -1419,14 +1619,19 @@ class ArgosCore:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = {}
-            if self.model:
+            if self.model and self._circuit.available("Gemini"):
                 futures[executor.submit(self._ask_gemini, context, user_text)] = "Gemini"
-            if getattr(self, "yandex_api_key", None):
+            if getattr(self, "yandex_api_key", None) and self._circuit.available("YandexGPT"):
                 futures[executor.submit(self._ask_yandexgpt, context, user_text)] = "YandexGPT"
-            if getattr(self, "watsonx_model", None):
+            if getattr(self, "watsonx_model", None) and self._circuit.available("Watsonx"):
                 futures[executor.submit(self._ask_watsonx, context, user_text)] = "Watsonx"
-            if self.ollama_url:
+            if self.ollama_url and self._circuit.available("Ollama"):
                 futures[executor.submit(self._ask_ollama, context, user_text)] = "Ollama"
+
+            if not futures:
+                log.warning("⚛️ Консенсус: все провайдеры на cooldown\n%s",
+                            self._circuit.status_summary())
+                return None
 
             for future in concurrent.futures.as_completed(futures):
                 model_name = futures[future]
@@ -1469,20 +1674,21 @@ class ArgosCore:
 
     def _local_drafter_providers(self) -> list[tuple[str, callable]]:
         providers = []
-        if self._has_lmstudio_config():
+        if self._has_lmstudio_config() and self._circuit.available("LMStudio"):
             providers.append(("LMStudio", self._ask_lmstudio))
-        providers.append(("Ollama", self._ask_ollama))
+        if self._circuit.available("Ollama"):
+            providers.append(("Ollama", self._ask_ollama))
         return providers[:self.auto_collab_max_models]
 
     def _cloud_verifier_providers(self) -> list[tuple[str, callable]]:
         providers = []
-        if self.model or (os.getenv("GEMINI_API_KEY", "") or "").strip():
+        if (self.model or (os.getenv("GEMINI_API_KEY", "") or "").strip()) and self._circuit.available("Gemini"):
             providers.append(("Gemini", self._ask_gemini))
-        if self._has_gigachat_config():
+        if self._has_gigachat_config() and self._circuit.available("GigaChat"):
             providers.append(("GigaChat", self._ask_gigachat))
-        if self._has_openai_config():
+        if self._has_openai_config() and self._circuit.available("OpenAI"):
             providers.append(("OpenAI", self._ask_openai))
-        if self._has_grok_config():
+        if self._has_grok_config() and self._circuit.available("Grok"):
             providers.append(("Grok", self._ask_grok))
         return providers[:self.auto_collab_max_models]
 
@@ -1761,6 +1967,7 @@ class ArgosCore:
                 engine = f"{q_data['name']} (Auto-Consensus)"
 
         if not answer:
+            cooldown_info = self._circuit.status_summary()
             if self.ai_mode == "gemini":
                 if self._last_gemini_rate_limited:
                     answer = self._gemini_rate_limit_text()
@@ -1781,7 +1988,11 @@ class ArgosCore:
             elif self.ai_mode == "grok":
                 answer = "Grok/xAI недоступен. Проверьте GROK_API_KEY/GROK_MODEL или переключите режим ИИ."
             else:
-                answer = "Связь с ядрами ИИ разорвана. Режим оффлайн."
+                answer = (
+                    "⚠️ Все ядра ИИ временно недоступны (circuit breaker).\n"
+                    f"{cooldown_info}\n"
+                    "Повтори запрос через минуту или переключи режим ИИ."
+                )
             engine = "Offline"
 
         # Сохраняем в контекст и БД
