@@ -45,6 +45,9 @@
 | 🔋 **Power Sentry** | Мониторинг UPS (NUT/upsc), PZEM датчики, аварийное отключение |
 | 🗑️ **Emergency Purge** | Экстренное уничтожение данных (logs/data/full), 3-уровневая очистка + подтверждение кодом |
 | 📦 **Container Isolation** | Docker/LXD изоляция модулей, watchdog, авто-рестарт, очистка |
+| 🔐 **Master Auth** | SHA-256 авторизация администратора через ARGOS_MASTER_KEY, сессии, revoke |
+| 🌿 **Biosphere DAG** | DAG-контроллер биосферы (incubator/greenhouse/aquarium/terrarium), авто-регуляция датчиков |
+| 🌌 **IBM Quantum Bridge** | Мост к IBM Quantum (активация в состоянии All-Seeing), доступ к реальному квантовому железу |
 | 🧰 **GitOps** | Встроенные команды `git статус`, `git коммит`, `git пуш`, `git автокоммит и пуш` |
 
 ---
@@ -89,7 +92,11 @@ ArgosUniversal/
     ├── evolution.py              # Эволюция (базовый)
     ├── icon_generator.py         # Генератор иконок
     │
-    ├── quantum/logic.py          # 5 квантовых состояний
+    ├── modules/
+    │   ├── biosphere_tools.py    # ★ Датчики/актуаторы биосферы (temp/humidity/light)
+    │   └── biosphere_dag.py      # ★ DAG-контроллер биосферы
+    │
+    ├── quantum/logic.py          # 5 квантовых состояний + IBM Quantum Bridge
     │
     ├── security/
     │   ├── encryption.py         # AES-256-GCM (cryptography)
@@ -99,6 +106,7 @@ ArgosUniversal/
     │   ├── zkp.py                # ZKP roadmap helper (privacy/proof сценарии)
     │   ├── emergency_purge.py    # ★ Экстренное уничтожение данных
     │   ├── container_isolation.py # ★ Docker/LXD изоляция модулей
+    │   ├── master_auth.py        # ★ SHA-256 авторизация администратора
     │   └── bootloader_manager.py # BCD/EFI/GRUB/persistence
     │
     ├── connectivity/
@@ -735,16 +743,17 @@ Roadmap:
 ## 📊 Аудит v1.0.0-Absolute
 
 ```
-80 файл Python · 80/80 синтаксис ✅
+83 файла Python · 83/83 синтаксис ✅
 30/30 функциональных тестов ✅
 50+ импортируемых модулей
-120+ голосовых/текстовых команд
+130+ голосовых/текстовых команд
 7 умных систем · 5 IoT-протоколов · 5 шаблонов шлюзов
 NFC / USB / Bluetooth подсистемы
 AWA-Core · Adaptive Drafter · Self-Healing · AirSnitch · WiFi Sentinel
 SmartHome Override · Power Sentry · Emergency Purge · Container Isolation
+Master Auth · Biosphere DAG · IBM Quantum Bridge
 Speculative Consensus v2 · Batch Idle Learning · P2P Role Routing
-~13300 строк кода
+~14100 строк кода
 ```
 
 ---

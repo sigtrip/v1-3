@@ -185,6 +185,8 @@ class ArgosCore:
         self.power_sentry = None
         self.purge = None
         self.containers = None
+        self.master_auth = None
+        self.biosphere_dag = None
         self._runtime_admin = None
         self._runtime_flasher = None
         self.gemini_rpm_limit = 15
@@ -229,6 +231,8 @@ class ArgosCore:
         self._init_power_sentry()
         self._init_emergency_purge()
         self._init_container_isolation()
+        self._init_master_auth()
+        self._init_biosphere_dag()
         self._init_modules()
         self._init_tool_calling()
         self._init_git_ops()
@@ -340,7 +344,7 @@ class ArgosCore:
             log.warning("Gateway Manager: %s", e)
 
     def _init_smart_systems(self):
-        """Smart Systems Manager — умные среды."""
+        """Smart Systems Manager — умные среды + DAG Bio-Control."""
         try:
             from src.smart_systems import SmartSystemsManager, SYSTEM_PROFILES
             self.smart_sys = SmartSystemsManager(on_alert=self._on_alert)
@@ -474,6 +478,28 @@ class ArgosCore:
             log.info("Container Isolation: OK (runtime=%s)", self.containers.runtime.value)
         except Exception as e:
             log.warning("Container Isolation: %s", e)
+
+    def _init_master_auth(self):
+        """MasterKeyValidator — авторизация администратора."""
+        try:
+            from src.security.master_auth import get_auth
+            self.master_auth = get_auth()
+            log.info("Master Auth: %s", "configured" if self.master_auth.is_configured else "pass-through")
+        except Exception as e:
+            log.warning("Master Auth: %s", e)
+
+    def _init_biosphere_dag(self):
+        """BiosphereDAG — DAG-контроллер биосферы."""
+        try:
+            from src.modules.biosphere_dag import BiosphereDAG
+            env = os.getenv("ARGOS_BIOSPHERE_ENV", "generic").strip().lower()
+            self.biosphere_dag = BiosphereDAG(environment=env)
+            # Подключаем к idle-циклу если есть task_queue
+            if self.task_queue:
+                self.task_queue.register_idle_learning_handler(self.biosphere_dag.run_cycle)
+            log.info("BiosphereDAG: OK (env=%s)", env)
+        except Exception as e:
+            log.warning("BiosphereDAG: %s", e)
 
     def _init_tool_calling(self):
         try:
@@ -2313,6 +2339,53 @@ class ArgosCore:
             if any(k in t for k in ["контейнер очистка", "container cleanup"]):
                 return self.containers.cleanup()
 
+        # ── Master Auth ───────────────────────────────────
+        if self.master_auth:
+            if any(k in t for k in ["auth статус", "авторизация статус", "auth status"]):
+                return self.master_auth.status()
+            if t.startswith("auth ключ ") or t.startswith("auth verify "):
+                key = t.split(maxsplit=2)[-1]
+                ok = self.master_auth.verify(key)
+                return "🔓 Доступ разрешён." if ok else "🔒 Доступ запрещён."
+            if any(k in t for k in ["auth разлогин", "auth revoke", "авторизация сброс"]):
+                return self.master_auth.revoke()
+
+        # ── Biosphere DAG ─────────────────────────────────
+        if self.biosphere_dag:
+            if any(k in t for k in ["биосфера статус", "biosphere статус", "biosphere status"]):
+                return self.biosphere_dag.status()
+            if any(k in t for k in ["биосфера цикл", "biosphere cycle", "биосфера сейчас"]):
+                return self.biosphere_dag.run_cycle()
+            if any(k in t for k in ["биосфера старт", "biosphere start"]):
+                interval = 30.0
+                for p in t.split():
+                    try:
+                        interval = float(p)
+                        break
+                    except ValueError:
+                        pass
+                return self.biosphere_dag.start(interval)
+            if any(k in t for k in ["биосфера стоп", "biosphere stop"]):
+                return self.biosphere_dag.stop()
+            if any(k in t for k in ["биосфера результат", "biosphere last"]):
+                return self.biosphere_dag.get_last_result()
+            if t.startswith("биосфера цель ") or t.startswith("biosphere target "):
+                parts = t.split()
+                if len(parts) >= 4:
+                    key = parts[2]
+                    try:
+                        val = float(parts[3])
+                        return self.biosphere_dag.set_target(key, val)
+                    except ValueError:
+                        return "Формат: биосфера цель [ключ] [значение]"
+
+        # ── IBM Quantum ───────────────────────────────────
+        if any(k in t for k in ["ibm квантовый", "ibm quantum", "квантовый мост"]):
+            try:
+                return self.quantum.check_ibm_status()
+            except Exception as e:
+                return f"⚠️ IBM Quantum: {e}"
+
         # ── Помощь ────────────────────────────────────────
         if t.strip() in ("помощь", "команды", "что умеешь", "help", "?"):
             return self._help()
@@ -2482,13 +2555,24 @@ class ArgosCore:
   контейнер запуск [module] · контейнер стоп [name]
   контейнер логи [name] · контейнер watchdog · контейнер очистка
 
-�🧩 МОДУЛИ
+🔐 АВТОРИЗАЦИЯ
+  auth статус · auth ключ [мастер-ключ] · auth разлогин
+
+🌿 БИОСФЕРА (DAG Bio-Control)
+  биосфера статус · биосфера цикл · биосфера старт [сек]
+  биосфера стоп · биосфера результат
+  биосфера цель [ключ] [значение]
+
+🌌 IBM QUANTUM
+  ibm квантовый · квантовый мост
+
+🧩 МОДУЛИ
     список модулей
 
 🧠 LM STUDIO
     lmstudio статус
 
-�🎤 ГОЛОС
+🎤 ГОЛОС
   голос вкл/выкл · включи wake word
     режим ии авто/gemini/gigachat/yandexgpt/lmstudio/ollama
 

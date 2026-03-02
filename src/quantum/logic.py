@@ -1,8 +1,10 @@
+import os
 import random
 import math
 import time
 import threading
 import psutil
+import requests
 from datetime import datetime
 
 class BayesianNode:
@@ -172,3 +174,51 @@ class ArgosQuantum:
         res = self.infer_state()
         vector_list = [res["probabilities"].get(s, 0.0) for s in self.states]
         return {"name": res["state"], "vector": vector_list, "probabilities": res["probabilities"]}
+
+    # ── IBM Quantum Bridge ────────────────────────────────
+
+    def check_ibm_status(self) -> str:
+        """
+        Автономный квантовый мост.
+        Вызывается планировщиком (idle_learning_handler) в моменты простоя.
+        Активируется только в состоянии All-Seeing для экономии трафика.
+        """
+        current_state = self.infer_state()
+
+        if current_state["state"] != "All-Seeing":
+            return f"Квантовый мост спит (Текущее состояние: {current_state['state']})"
+
+        api_key = os.getenv("IBM_QUANTUM_KEY")
+        if not api_key:
+            return "[⚠️] IBM_QUANTUM_KEY не найден в .env"
+
+        auth_url = "https://iam.cloud.ibm.com/identity/token"
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        data = f"grant_type=urn:ibm:params:oauth:grant-type:apikey&apikey={api_key}"
+
+        try:
+            resp = requests.post(auth_url, headers=headers, data=data, timeout=7)
+            if resp.status_code != 200:
+                return "[❌] Отказ авторизации на IBM Cloud."
+
+            bearer = resp.json().get("access_token", "")
+            q_url = "https://quantum-computing.ibm.com/api/backends"
+            q_headers = {
+                "Authorization": f"Bearer {bearer}",
+                "Content-Type": "application/json",
+            }
+            q_resp = requests.get(q_url, headers=q_headers, timeout=7)
+
+            if q_resp.status_code == 200:
+                backends = q_resp.json()
+                real_hw = [b["name"] for b in backends
+                           if "simulator" not in b.get("name", "")]
+                hw_preview = ", ".join(real_hw[:3]) + ("…" if len(real_hw) > 3 else "")
+                return (f"[🌌] КВАНТОВЫЙ ЛИНК OK. "
+                        f"Узлов IBM: {len(backends)}. "
+                        f"Реальное железо: {hw_preview}")
+
+            return f"[⚠️] IBM backends: HTTP {q_resp.status_code}"
+        except Exception as e:
+            return f"[⚠️] Сетевая аномалия при запросе к IBM: {e}"
+

@@ -1,4 +1,6 @@
 .env
+*.env
+.env.*
 *.pyc
 __pycache__/
 data/
@@ -9,3 +11,8 @@ dist/
 *.egg-info
 venv/
 .venv/
+env/
+.vscode/
+*.log
+*.py[cod]
+*$py.class
