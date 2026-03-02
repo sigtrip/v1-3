@@ -217,6 +217,7 @@ class ArgosCore:
         self._init_voice()
         self._setup_ai()
         self._setup_watsonx()
+        self._setup_yandex()
         self._init_memory()
         self._init_homeostasis()
         self._init_curiosity()
@@ -748,7 +749,7 @@ class ArgosCore:
             return "gemini"
         if value in {"gigachat", "giga", "sber", "gc"}:
             return "gigachat"
-        if value in {"yandexgpt", "yandex", "ya", "yg"}:
+        if value in {"yandexgpt", "yandex", "ya", "yg", "яндекс"}:
             return "yandexgpt"
         if canonical in {"lmstudio", "lm", "lms", "studio"}:
             return "lmstudio"
@@ -861,6 +862,25 @@ class ArgosCore:
         else:
             log.info("Watsonx: отключён (pip install ibm-watsonx-ai + ключи в .env)")
 
+    def _setup_yandex(self):
+        # Используем IAM_TOKEN как постоянный Api-Key для стабильности
+        self.yandex_api_key = (os.getenv("YANDEX_IAM_TOKEN", "") or "").strip()
+        self.yandex_folder_id = (os.getenv("YANDEX_FOLDER_ID", "") or "").strip()
+
+        # По умолчанию берем тяжелую модель, если URI не задан в .env
+        self.yandex_model_uri = (
+            os.getenv(
+                "YANDEXGPT_MODEL_URI",
+                f"gpt://{self.yandex_folder_id}/yandexgpt/latest"
+            )
+            or ""
+        ).strip()
+
+        if self.yandex_api_key and self.yandex_folder_id:
+            log.info("YandexGPT: OK (Api-Key mode)")
+        else:
+            log.info("YandexGPT: Отключен (проверь YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID в .env)")
+
     def _gemini_rate_limit_text(self) -> str:
         return f"Gemini: превышен лимит {self.gemini_rpm_limit} запросов в минуту. Повтори чуть позже или переключи режим ИИ."
 
@@ -872,8 +892,8 @@ class ArgosCore:
         return bool(client_id and client_secret)
 
     def _has_yandexgpt_config(self) -> bool:
-        iam = (os.getenv("YANDEX_IAM_TOKEN", "") or "").strip()
-        folder = (os.getenv("YANDEX_FOLDER_ID", "") or "").strip()
+        iam = (getattr(self, "yandex_api_key", "") or (os.getenv("YANDEX_IAM_TOKEN", "") or "")).strip()
+        folder = (getattr(self, "yandex_folder_id", "") or (os.getenv("YANDEX_FOLDER_ID", "") or "")).strip()
         return bool(iam and folder)
 
     def _has_lmstudio_config(self) -> bool:
@@ -1208,53 +1228,41 @@ class ArgosCore:
             return None
 
     def _ask_yandexgpt(self, context: str, user_text: str) -> str | None:
-        iam = (os.getenv("YANDEX_IAM_TOKEN", "") or "").strip()
-        folder = (os.getenv("YANDEX_FOLDER_ID", "") or "").strip()
-        if not (iam and folder):
+        if not getattr(self, "yandex_api_key", None) or not getattr(self, "yandex_folder_id", None):
             return None
 
-        model_uri = (os.getenv("YANDEXGPT_MODEL_URI", "") or "").strip()
-        if not model_uri:
-            model_uri = f"gpt://{folder}/yandexgpt-lite/latest"
+        url = "https://llm.api.cloud.yandex.net/foundationModels/v1/completion"
+        headers = {
+            "Authorization": f"Api-Key {self.yandex_api_key}",
+            "x-folder-id": self.yandex_folder_id,
+            "Content-Type": "application/json"
+        }
 
         try:
             hist = self.context.get_prompt_context()
+            prompt_text = f"{hist}\n\nUser: {user_text}" if hist else user_text
             payload = {
-                "modelUri": model_uri,
+                "modelUri": self.yandex_model_uri,
                 "completionOptions": {
                     "stream": False,
-                    "temperature": 0.4,
-                    "maxTokens": "1200",
+                    "temperature": 0.3,
+                    "maxTokens": "2000",
                 },
                 "messages": [
                     {"role": "system", "text": context},
-                    {"role": "user", "text": f"{hist}\n\n{user_text}"},
+                    {"role": "user", "text": prompt_text},
                 ],
             }
             response = requests.post(
-                "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
-                headers={
-                    "Authorization": f"Bearer {iam}",
-                    "x-folder-id": folder,
-                    "Content-Type": "application/json",
-                },
+                url,
+                headers=headers,
                 json=payload,
-                timeout=25,
+                timeout=15,
             )
-            if not response.ok:
-                log.error("YandexGPT: HTTP %s %s", response.status_code, response.text[:400])
-                return None
-
-            data = response.json()
-            result = data.get("result") or {}
-            alternatives = result.get("alternatives") or []
-            if not alternatives:
-                return None
-            message = alternatives[0].get("message") or {}
-            text = message.get("text")
-            if isinstance(text, str):
-                return text.strip()
-            return None
+            response.raise_for_status()
+            result = response.json()
+            # Извлекаем текст ответа из сложного JSON Яндекса
+            return result.get("result", {}).get("alternatives", [{}])[0].get("message", {}).get("text", "").strip()
         except Exception as e:
             log.error("YandexGPT: %s", e)
             return None
@@ -1342,6 +1350,8 @@ class ArgosCore:
             futures = {}
             if self.model:
                 futures[executor.submit(self._ask_gemini, context, user_text)] = "Gemini"
+            if getattr(self, "yandex_api_key", None):
+                futures[executor.submit(self._ask_yandexgpt, context, user_text)] = "YandexGPT"
             if getattr(self, "watsonx_model", None):
                 futures[executor.submit(self._ask_watsonx, context, user_text)] = "Watsonx"
             if self.ollama_url:
