@@ -17,6 +17,32 @@ from src.observability import log_iot, trace
 log = get_logger("argos.iot")
 bus = get_bus()
 
+SUPPORTED_ZIGBEE_HUBS = [
+    "Aqara Hub M2",
+    "Aqara Hub M1S Gen 2",
+    "Xiaomi Mi Smart Home Hub (Multi-mode)",
+    "Xiaomi Smart Home Hub 2",
+    "Яндекс Станция Миди (со встроенным хабом)",
+    "Яндекс Станция 2 (со встроенным хабом)",
+    "Яндекс Станция Макс (с Zigbee)",
+    "Tuya / Moes Multi-mode Gateway",
+    "Digma Smart Zigbee Gateway",
+    "Hubitat Elevation C-8",
+]
+
+SUPPORTED_ZIGBEE_COORDINATORS = [
+    "Sonoff Zigbee 3.0 USB Dongle Plus (ZBDongle-P)",
+    "Sonoff Zigbee 3.0 USB Dongle Plus (ZBDongle-E)",
+    "SMLIGHT SLZB-06 / 06M (Ethernet/PoE/USB)",
+    "Home Assistant SkyConnect",
+    "ConBee II / ConBee III",
+    "ZigStar Stick v4",
+    "JetHome USB Zigbee Stick",
+    "Aeotec Zi-Stick",
+    "Ugreen Zigbee USB Adapter",
+    "CC2531 (устаревшая бюджетная модель)",
+]
+
 # Реестр всех устройств
 DEVICES_FILE = "data/iot_devices.json"
 IOT_DB_PATH = "data/argos.db"
@@ -781,6 +807,14 @@ class IoTBridge:
         lines.append("\nАвторасширение шаблонов:")
         lines.append("  • изучи протокол [шаблон] [протокол] [прошивка?] [описание?]")
         lines.append("  • изучи устройство [шаблон] [протокол] [hardware?]")
+
+        lines.append("\nПоддерживаемые Zigbee-шлюзы (экосистемные хабы):")
+        for model in SUPPORTED_ZIGBEE_HUBS:
+            lines.append(f"  • {model}")
+
+        lines.append("\nПоддерживаемые Zigbee-координаторы (стики/адаптеры):")
+        for model in SUPPORTED_ZIGBEE_COORDINATORS:
+            lines.append(f"  • {model}")
         return "\n".join(lines)
 
     def device_status(self, dev_id: str) -> str:

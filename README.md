@@ -652,6 +652,30 @@ ha mqtt home/livingroom/light/set state=ON brightness=180
 | Modbus RTU/TCP | ✅ Implemented (minimal) | Runtime-адаптер в IoTBridge: serial/tcp + read/write holding registers |
 | BACnet / KNX / LonWorks / M-Bus / OPC UA | 🧭 Planned/Template | Протоколы декларированы, отдельные runtime-адаптеры в IoTBridge пока не реализованы |
 
+Поддерживаемые Zigbee-шлюзы (хабы экосистем):
+- Aqara Hub M2
+- Aqara Hub M1S Gen 2
+- Xiaomi Mi Smart Home Hub (Multi-mode)
+- Xiaomi Smart Home Hub 2
+- Яндекс Станция Миди (со встроенным хабом)
+- Яндекс Станция 2 (со встроенным хабом)
+- Яндекс Станция Макс (с Zigbee)
+- Tuya / Moes Multi-mode Gateway
+- Digma Smart Zigbee Gateway
+- Hubitat Elevation C-8
+
+Поддерживаемые Zigbee-координаторы (стики/адаптеры):
+- Sonoff Zigbee 3.0 USB Dongle Plus (ZBDongle-P)
+- Sonoff Zigbee 3.0 USB Dongle Plus (ZBDongle-E)
+- SMLIGHT SLZB-06 / 06M (Ethernet/PoE/USB)
+- Home Assistant SkyConnect
+- ConBee II / ConBee III
+- ZigStar Stick v4
+- JetHome USB Zigbee Stick
+- Aeotec Zi-Stick
+- Ugreen Zigbee USB Adapter
+- CC2531 (устаревшая бюджетная модель)
+
 ```
 # Команды
 iot статус                    # список всех IoT-устройств
