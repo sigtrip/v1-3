@@ -58,6 +58,16 @@ class FastAPIDashboard:
             "window._logEtag=window._logEtag||'';const lg=await fetch('/api/log',{headers:window._logEtag?{'If-None-Match':window._logEtag}:{}});if(lg.status===200){window._logEtag=lg.headers.get('ETag')||window._logEtag;const j=await lg.json();document.getElementById('log').textContent=j.lines||'';}",
             1,
         )
+        html = html.replace(
+            "const r=await fetch('/api/status');const d=await r.json();",
+            "const r=await fetch('/api/dashboard');const d=await r.json();",
+            1,
+        )
+        html = html.replace(
+            "window._logEtag=window._logEtag||'';const lg=await fetch('/api/log',{headers:window._logEtag?{'If-None-Match':window._logEtag}:{}});if(lg.status===200){window._logEtag=lg.headers.get('ETag')||window._logEtag;const j=await lg.json();document.getElementById('log').textContent=j.lines||'';}",
+            "document.getElementById('log').textContent=d.log_lines||'';",
+            1,
+        )
 
         @app.get("/", response_class=HTMLResponse)
         async def index():
@@ -116,6 +126,50 @@ class FastAPIDashboard:
                 return Response(status_code=304, headers={"ETag": self._log_etag, "Cache-Control": "no-cache"})
 
             return JSONResponse({"lines": self._log_cache}, headers={"ETag": self._log_etag, "Cache-Control": "no-cache"})
+
+        @app.get("/api/dashboard")
+        async def dashboard():
+            now = time.time()
+            if self._status_cache is None or (now - self._status_cache_ts) >= 1.0:
+                uptime_s = int(time.time() - self._start_t)
+                h, m = divmod(uptime_s // 60, 60)
+                uptime = f"{h}ч {m}мин"
+                cpu = psutil.cpu_percent(interval=None)
+                ram = psutil.virtual_memory().percent
+                disk = psutil.disk_usage('/').percent
+                state = self.core.quantum.generate_state()["name"] if self.core else "Offline"
+                voice = bool(self.core.voice_on) if self.core else False
+                p2p_nodes = len(self.core.p2p.registry.all()) if self.core and self.core.p2p else 0
+                self._history.append({"ts": time.time(), "cpu": cpu, "ram": ram, "disk": disk})
+                self._status_cache = {
+                    "state": state,
+                    "voice_on": voice,
+                    "uptime": uptime,
+                    "cpu": cpu,
+                    "ram": ram,
+                    "disk": disk,
+                    "p2p_nodes": p2p_nodes,
+                    "history": list(self._history),
+                }
+                self._status_cache_ts = now
+
+            try:
+                log_path = "logs/argos.log"
+                if os.path.exists(log_path):
+                    mtime = os.path.getmtime(log_path)
+                    if mtime != self._log_mtime or (now - self._log_cache_ts) > 1.0:
+                        with open(log_path, encoding="utf-8") as f:
+                            self._log_cache = "".join(f.readlines()[-120:])
+                        self._log_cache_ts = now
+                        self._log_mtime = mtime
+                        self._log_etag = hashlib.md5(f"{mtime}:{len(self._log_cache)}".encode("utf-8")).hexdigest()
+            except Exception:
+                pass
+
+            payload = dict(self._status_cache)
+            payload["log_lines"] = self._log_cache
+            payload["log_etag"] = self._log_etag
+            return JSONResponse(payload)
 
         @app.post("/api/cmd")
         async def cmd(payload: dict):

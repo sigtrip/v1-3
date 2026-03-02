@@ -114,7 +114,7 @@ let voiceOn = false;
 
 async function fetch_status() {
   try {
-    const r = await fetch('/api/status');
+    const r = await fetch('/api/dashboard');
     const d = await r.json();
 
     document.getElementById('ts').textContent = new Date().toLocaleTimeString('ru');
@@ -149,6 +149,12 @@ async function fetch_status() {
       ).join('');
     } else {
       p2p.innerHTML = '<div style="color:#445">Ноды не обнаружены</div>';
+    }
+
+    const el = document.getElementById('log');
+    if (el && typeof d.log_lines === 'string') {
+      el.textContent = d.log_lines;
+      el.scrollTop = el.scrollHeight;
     }
   } catch(e) {}
 }
@@ -262,9 +268,7 @@ function quickCreateFirmware() {
 }
 
 setInterval(fetch_status, 3000);
-setInterval(fetch_log, 5000);
 fetch_status();
-fetch_log();
 </script>
 </body>
 </html>"""
@@ -285,20 +289,22 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, *args): pass  # Отключаем стандартный вывод
 
     def do_GET(self):
-        path = urlparse(self.path).path
-        if path == "/":
-            self._send(200, "text/html", HTML.encode())
-        elif path == "/api/status":
-            self._send(200, "application/json", self._status_json())
-        elif path == "/api/log":
-            payload, etag = self._log_json()
-            inm = (self.headers.get("If-None-Match") or "").strip('"')
-            if inm and etag and inm == etag:
-                self._send(304, "application/json", b"", headers={"ETag": etag, "Cache-Control": "no-cache"})
-            else:
-                self._send(200, "application/json", payload, headers={"ETag": etag, "Cache-Control": "no-cache"})
+      path = urlparse(self.path).path
+      if path == "/":
+        self._send(200, "text/html", HTML.encode())
+      elif path == "/api/status":
+        self._send(200, "application/json", self._status_json())
+      elif path == "/api/dashboard":
+        self._send(200, "application/json", self._dashboard_json())
+      elif path == "/api/log":
+        payload, etag = self._log_json()
+        inm = (self.headers.get("If-None-Match") or "").strip('"')
+        if inm and etag and inm == etag:
+          self._send(304, "application/json", b"", headers={"ETag": etag, "Cache-Control": "no-cache"})
         else:
-            self._send(404, "text/plain", b"Not found")
+          self._send(200, "application/json", payload, headers={"ETag": etag, "Cache-Control": "no-cache"})
+      else:
+        self._send(404, "text/plain", b"Not found")
 
     def do_POST(self):
         if self.path == "/api/cmd":
@@ -402,6 +408,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as e:
             log.warning("Dashboard log read error: %s", e)
         return json.dumps({"lines": self._log_cache}, ensure_ascii=False).encode(), self._log_etag
+
+    def _dashboard_json(self) -> bytes:
+        import json
+        status_payload = self._status_json()
+        log_payload, log_etag = self._log_json()
+        status_data = json.loads(status_payload.decode("utf-8"))
+        log_data = json.loads(log_payload.decode("utf-8"))
+        status_data["log_lines"] = log_data.get("lines", "")
+        status_data["log_etag"] = log_etag
+        return json.dumps(status_data, ensure_ascii=False).encode()
 
 
 class WebDashboard:
