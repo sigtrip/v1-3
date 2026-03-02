@@ -3,6 +3,7 @@ import asyncio
 import tempfile
 import subprocess
 import shlex
+import requests
 from pathlib import Path
 from telegram import Update
 from telegram.error import InvalidToken, TelegramError
@@ -355,9 +356,6 @@ class ArgosTelegram:
             print(f"[TG-BRIDGE]: Telegram-мост отключён: {reason}.")
             return
 
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
         self.app = Application.builder().token(self.token).build()
 
         # Команды
@@ -386,20 +384,21 @@ class ArgosTelegram:
         )
 
         try:
-            loop.run_until_complete(self.app.bot.get_me())
-        except InvalidToken:
-            print("[TG-BRIDGE]: Telegram-мост отключён: токен отклонён сервером.")
-            return
-        except TelegramError as e:
-            print(f"[TG-BRIDGE]: Telegram preflight error: {e}")
-            return
+            r = requests.get(
+                f"https://api.telegram.org/bot{self.token}/getMe",
+                timeout=15,
+            )
+            data = r.json() if r.ok else {}
+            if not data.get("ok"):
+                print("[TG-BRIDGE]: Telegram-мост отключён: токен отклонён сервером.")
+                return
         except Exception as e:
-            print(f"[TG-BRIDGE]: Telegram preflight unexpected error: {e}")
+            print(f"[TG-BRIDGE]: Telegram preflight error: {e}")
             return
 
         print(f"[TG-BRIDGE]: Мост активен. USER_ID={self.user_id}")
         try:
-            self.app.run_polling(close_loop=False)
+            self.app.run_polling(stop_signals=None)
         except InvalidToken:
             print("[TG-BRIDGE]: Telegram-мост отключён: токен отклонён сервером.")
         except TelegramError as e:
