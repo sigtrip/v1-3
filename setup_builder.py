@@ -64,6 +64,7 @@ Section "Argos Core" SecCore
 
     SetOutPath "${INSTALL_DIR}"
     File /r "dist\argos\*.*"
+    File /nonfatal "assets\nssm.exe"
 
     ; Копируем конфиги
     SetOutPath "${INSTALL_DIR}\config"
@@ -172,6 +173,17 @@ def generate_nsis() -> str:
 
 def build_setup() -> str:
     nsi = generate_nsis()
+    if not os.path.isdir(os.path.join("dist", "argos")):
+        if os.path.isfile(os.path.join("dist", "argos.exe")):
+            return (
+                "❌ Для NSIS-установщика нужна onedir-сборка. "
+                "Выполни: python build_exe.py --onedir, затем python setup_builder.py --build"
+            )
+        return "❌ Не найден dist/argos. Сначала собери проект: python build_exe.py --onedir"
+
+    if not os.path.exists(os.path.join("assets", "nssm.exe")):
+        print("⚠️ assets/nssm.exe не найден — секция Windows Service может не работать.")
+
     nsis_paths = [
         r"C:\Program Files (x86)\NSIS\makensis.exe",
         r"C:\Program Files\NSIS\makensis.exe",

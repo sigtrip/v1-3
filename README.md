@@ -418,14 +418,19 @@ python build_exe.py
 # → dist/argos.exe
 
 # Установщик (нужен NSIS: nsis.sourceforge.io)
+# Важно: для setup нужен режим --onedir (dist/argos)
 python build_exe.py --onedir
 python setup_builder.py --build
 # → setup_argos.exe
 
 # Android APK
 pip install buildozer
+# требуется buildozer.spec в корне проекта
 buildozer android debug
 # → bin/*.apk
+
+# Telegram /apk использует внешнюю команду
+# ARGOS_APK_BUILD_CMD="buildozer -v android debug"
 ```
 
 ---
@@ -520,7 +525,7 @@ p2p протокол          libp2p          zkp
 сканируй сеть   список навыков  напиши навык [описание]
 репликация      веб-панель
 голос вкл/выкл  включи wake word
-режим ии авто|gemini|gigachat|yandexgpt|lmstudio|ollama
+режим ии авто|gemini|gigachat|yandexgpt|lmstudio|ollama|watsonx
 lmstudio статус
 контекст диалога  сброс контекста
 история         помощь

@@ -300,12 +300,6 @@ def drafter_quality_report(window: int = 300) -> str:
     lines.append(f"\n  GLOBAL: {global_rate*100:.0f}% ({total_accepted}/{total})")
 
     return "\n".join(lines)
-        "drafter": row[2],
-        "verifier": row[3],
-        "similarity": sim,
-        "acceptance_rate": snap.get("rate", 1.0),
-        "samples": snap.get("samples", 0),
-    }, source="consensus")
 
 
 # ── ЧТЕНИЕ ПОСЛЕДНИХ ЗАПИСЕЙ ──────────────────────────────

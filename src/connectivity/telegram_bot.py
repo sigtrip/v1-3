@@ -2,6 +2,7 @@ import os
 import asyncio
 import tempfile
 import subprocess
+import shlex
 from pathlib import Path
 from telegram import Update
 from telegram.error import InvalidToken, TelegramError
@@ -34,8 +35,14 @@ class ArgosTelegram:
         if not cmd:
             return False, "ARGOS_APK_BUILD_CMD не задан. Пример: buildozer -v android debug"
 
+        cmd_parts = shlex.split(cmd)
+        if not cmd_parts:
+            return False, "ARGOS_APK_BUILD_CMD пуст после разбора."
+        if cmd_parts[0].lower() == "buildozer" and not Path("buildozer.spec").exists():
+            return False, "Не найден buildozer.spec в корне проекта."
+
         try:
-            subprocess.run(cmd, shell=True, check=True)
+            subprocess.run(cmd_parts, shell=False, check=True)
         except subprocess.CalledProcessError as e:
             return False, f"Сборка APK завершилась с ошибкой: {e}"
         except Exception as e:
