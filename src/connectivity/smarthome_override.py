@@ -434,6 +434,11 @@ class SmartHomeOverride:
         with self._lock:
             return [asdict(d) for d in self._devices.values()]
 
+    @property
+    def devices(self) -> Dict[str, OverrideDevice]:
+        with self._lock:
+            return dict(self._devices)
+
     def get_device(self, device_id: str) -> Optional[dict]:
         with self._lock:
             d = self._devices.get(device_id)

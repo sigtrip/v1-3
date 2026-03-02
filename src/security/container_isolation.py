@@ -328,6 +328,10 @@ class ContainerIsolation:
             "default_image": self._default_image,
         }
 
+    @property
+    def runtime(self) -> Runtime:
+        return self._runtime
+
     def status(self) -> str:
         """Человекочитаемый статус."""
         s = self.get_status()

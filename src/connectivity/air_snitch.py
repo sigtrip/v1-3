@@ -529,6 +529,10 @@ class AirSnitch:
             "numpy_available": NP_OK,
         }
 
+    @property
+    def backend(self) -> str:
+        return self._backend
+
     def status(self) -> str:
         s = self.get_status()
         lines = [
