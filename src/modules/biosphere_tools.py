@@ -121,6 +121,7 @@ class BiosphereTools:
         defaults = self.ENVIRONMENT_DEFAULTS.get(environment,
                                                   self.ENVIRONMENT_DEFAULTS["generic"])
         self.state: Dict[str, float] = dict(defaults)
+        self.targets: Dict[str, float] = dict(defaults)
         self._lock = threading.Lock()
         self._history: List[Dict[str, Any]] = []
 
@@ -146,6 +147,61 @@ class BiosphereTools:
 
         log.info("BiosphereTools: environment=%s, sensors=%d, actuators=%d",
                  environment, len(self.state), len(self.actuators))
+
+    def set_target(self, metric: str, value: float) -> str:
+        with self._lock:
+            if metric not in self.state and metric not in self.targets:
+                return f"⚠️ Метрика '{metric}' не поддерживается."
+            self.targets[metric] = float(value)
+        return f"✅ Цель обновлена: {metric}={value}"
+
+    def get_targets(self) -> Dict[str, float]:
+        with self._lock:
+            return {k: round(v, 2) for k, v in self.targets.items()}
+
+    def control_tick(self) -> str:
+        """Один цикл автоматического управления по целям среды."""
+        with self._lock:
+            temp = self.state.get("temperature_c")
+            temp_target = self.targets.get("temperature_c")
+            hum = self.state.get("humidity_percent")
+            hum_target = self.targets.get("humidity_percent")
+            lux = self.state.get("light_lux")
+            lux_target = self.targets.get("light_lux")
+
+        actions: List[str] = []
+
+        if temp is not None and temp_target is not None:
+            if temp < (temp_target - 0.4):
+                actions.append(self.toggle("heater", True, 70))
+            elif temp > (temp_target + 0.4):
+                actions.append(self.toggle("heater", False))
+                if "fan" in self.actuators:
+                    actions.append(self.toggle("fan", True, 60))
+            elif "fan" in self.actuators:
+                actions.append(self.toggle("fan", False))
+
+        if hum is not None and hum_target is not None:
+            if hum < (hum_target - 3):
+                if "humidifier" in self.actuators:
+                    actions.append(self.toggle("humidifier", True, 65))
+                elif "mister" in self.actuators:
+                    actions.append(self.toggle("mister", True, 65))
+            elif hum > (hum_target + 3):
+                if "humidifier" in self.actuators:
+                    actions.append(self.toggle("humidifier", False))
+                if "mister" in self.actuators:
+                    actions.append(self.toggle("mister", False))
+
+        if lux is not None and lux_target is not None and "light" in self.actuators:
+            if lux < (lux_target - 40):
+                actions.append(self.toggle("light", True, 75))
+            elif lux > (lux_target + 40):
+                actions.append(self.toggle("light", False))
+
+        if not actions:
+            return "🟢 Biosphere: параметры в норме, корректировки не требуются."
+        return "\n".join(actions)
 
     # ── СЕНСОРЫ ───────────────────────────────────────────
 
@@ -256,10 +312,12 @@ class BiosphereTools:
     def get_status(self) -> dict:
         with self._lock:
             sensors = {k: round(v, 2) for k, v in self.state.items()}
+            targets = {k: round(v, 2) for k, v in self.targets.items()}
         acts = {k: v.to_dict() for k, v in self.actuators.items()}
         return {
             "environment": self.environment,
             "sensors": sensors,
+            "targets": targets,
             "actuators": acts,
             "history_len": len(self._history),
         }
@@ -270,6 +328,9 @@ class BiosphereTools:
         lines = [f"🌿 БИОСФЕРА [{self.environment.upper()}]:"]
         lines.append("  Датчики:")
         for k, v in info["sensors"].items():
+            lines.append(f"    {k}: {v}")
+        lines.append("  Цели:")
+        for k, v in info.get("targets", {}).items():
             lines.append(f"    {k}: {v}")
         lines.append("  Актуаторы:")
         for k, v in info["actuators"].items():

@@ -71,13 +71,19 @@ class AWACore:
         self.core = core
         self._modules: Dict[str, ModuleDescriptor] = {}
         self._capability_index: Dict[str, List[str]] = defaultdict(list)
+        self._pipelines: Dict[str, List[Dict[str, Any]]] = {}
         self._decision_log: deque[DecisionRecord] = deque(maxlen=500)
         self._cascade_depth_limit = int(os.getenv("AWA_CASCADE_DEPTH", "8") or "8")
+        self._heartbeat_max_age_sec = float(os.getenv("AWA_HEARTBEAT_MAX_AGE", "120") or "120")
+        self._heartbeat_check_interval_sec = float(os.getenv("AWA_HEARTBEAT_CHECK_INTERVAL", "15") or "15")
         self._lock = threading.Lock()
         self._running = True
 
         # policy: bypass, confirm, restrict
         self._policy = os.getenv("AWA_POLICY", "bypass").strip().lower()
+
+        self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        self._heartbeat_thread.start()
 
         log.info("AWA-Core v%s init | policy=%s | cascade_depth=%d",
                  self.VERSION, self._policy, self._cascade_depth_limit)
@@ -152,6 +158,36 @@ class AWACore:
         return str(result)
 
     # ── Каскады ──────────────────────────────────────────
+    def register_pipeline(self, name: str, steps: List[Dict[str, Any]]) -> str:
+        """Регистрирует каскадный pipeline по имени."""
+        if not name.strip():
+            return "⚠️ AWA: имя pipeline пустое"
+        if not isinstance(steps, list) or not steps:
+            return "⚠️ AWA: pipeline должен содержать хотя бы один шаг"
+        with self._lock:
+            self._pipelines[name.strip()] = steps
+        return f"✅ AWA pipeline '{name.strip()}' зарегистрирован ({len(steps)} шагов)"
+
+    def run_pipeline(self, name: str, payload: Any = None) -> List[str]:
+        """Запускает зарегистрированный каскадный pipeline."""
+        with self._lock:
+            steps = list(self._pipelines.get(name, []))
+        if not steps:
+            return [f"⚠️ AWA: pipeline '{name}' не найден"]
+
+        prepared: List[Dict[str, Any]] = []
+        for step in steps:
+            step_intent = str(step.get("intent", "")).strip()
+            if not step_intent:
+                continue
+            step_payload = step.get("payload")
+            if step_payload is None:
+                step_payload = payload
+            prepared.append({"intent": step_intent, "payload": step_payload})
+        if not prepared:
+            return [f"⚠️ AWA: pipeline '{name}' не содержит валидных шагов"]
+        return self.cascade(prepared)
+
     def cascade(self, steps: List[Dict[str, Any]]) -> List[str]:
         """
         Выполняет каскад действий последовательно.
@@ -199,21 +235,45 @@ class AWACore:
                     desc.health = "stale"
         return stale
 
+    def _heartbeat_loop(self) -> None:
+        """Фоновая проверка heartbeat модулей."""
+        while self._running:
+            try:
+                stale = self.check_stale(self._heartbeat_max_age_sec)
+                if stale:
+                    log.warning("AWA heartbeat stale: %s", ", ".join(stale))
+            except Exception as e:
+                log.warning("AWA heartbeat loop error: %s", e)
+            time.sleep(max(1.0, self._heartbeat_check_interval_sec))
+
     # ── Статус ───────────────────────────────────────────
     def status(self) -> str:
         with self._lock:
             total = len(self._modules)
             healthy = sum(1 for d in self._modules.values() if d.health == "ok")
+            stale = sum(1 for d in self._modules.values() if d.health == "stale")
             caps = len(self._capability_index)
+            pipelines = len(self._pipelines)
             decisions = len(self._decision_log)
         lines = [
             "🧠 AWA-CORE (Absolute Workflow Agent)",
             f"  Версия: {self.VERSION} | Policy: {self._policy}",
-            f"  Модулей: {total} (healthy: {healthy})",
+            f"  Модулей: {total} (healthy: {healthy}, stale: {stale})",
             f"  Capabilities: {caps}",
+            f"  Pipelines: {pipelines}",
             f"  Решений: {decisions}",
         ]
         return "\n".join(lines)
+
+    def pipeline_list(self) -> str:
+        with self._lock:
+            if not self._pipelines:
+                return "🧠 AWA — PIPELINES: (нет зарегистрированных)"
+            lines = ["🧠 AWA — CASCADE PIPELINES"]
+            for name, steps in sorted(self._pipelines.items()):
+                intents = [str(step.get("intent", "")) for step in steps if step.get("intent")]
+                lines.append(f"  • {name}: {len(steps)} шагов → {', '.join(intents[:6])}")
+            return "\n".join(lines)
 
     def module_list(self) -> str:
         with self._lock:

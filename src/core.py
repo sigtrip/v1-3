@@ -2024,7 +2024,7 @@ class ArgosCore:
             if any(k in t for k in ["iot статус", "iot устройства", "устройства iot"]):
                 return self.iot_bridge.status()
             if any(k in t for k in ["iot возможности", "iot capability", "iot матрица", "возможности iot"]):
-                return self.iot_bridge.capability_report()
+                return self.iot_bridge.get_capabilities()
             if any(k in t for k in ["iot протоколы", "протоколы iot", "пром протоколы", "какие протоколы"]):
                 return self._iot_protocols_help()
             if "зарегистрируй устройство" in t or "добавь устройство" in t:
@@ -2059,39 +2059,33 @@ class ArgosCore:
                 port = int(parts[1]) if len(parts) > 1 else 1883
                 return self.iot_bridge.connect_mqtt(host, port)
             if "подключи modbus tcp" in t:
-                parts = text.split("подключи modbus tcp")[-1].strip().split()
+                parts = text.split("tcp")[-1].strip().split()
                 host = parts[0] if parts else "127.0.0.1"
                 port = int(parts[1]) if len(parts) > 1 else 502
-                return self.iot_bridge.connect_modbus_tcp(host, port)
-            if "подключи modbus" in t:
+                return self.iot_bridge.modbus.connect_tcp(host, port)
+            if "подключи modbus" in t and "tcp" not in t:
                 parts = text.split("подключи modbus")[-1].strip().split()
                 port = parts[0] if parts else "/dev/ttyUSB0"
                 baud = int(parts[1]) if len(parts) > 1 else 9600
-                return self.iot_bridge.connect_modbus_serial(port, baud)
+                return self.iot_bridge.modbus.connect_rtu(port, baud)
             if "modbus чтение" in t or "modbus read" in t:
-                parts = text.split("modbus", 1)[-1].strip().split()
-                # modbus чтение [address] [count] [unit]
-                if len(parts) >= 2:
-                    try:
-                        address = int(parts[1])
-                        count = int(parts[2]) if len(parts) > 2 else 1
-                        unit = int(parts[3]) if len(parts) > 3 else 1
-                        return self.iot_bridge.modbus_read(address=address, count=count, unit=unit)
-                    except Exception:
-                        return "Формат: modbus чтение [address] [count=1] [unit=1]"
-                return "Формат: modbus чтение [address] [count=1] [unit=1]"
-            if "modbus запись" in t or "modbus write" in t:
-                parts = text.split("modbus", 1)[-1].strip().split()
-                # modbus запись [address] [value] [unit]
+                # Формат: modbus чтение [address] [count] [slave]
+                parts = text.split("чтение")[-1].strip().split()
                 if len(parts) >= 3:
                     try:
-                        address = int(parts[1])
-                        value = int(parts[2])
-                        unit = int(parts[3]) if len(parts) > 3 else 1
-                        return self.iot_bridge.modbus_write(address=address, value=value, unit=unit)
+                        return self.iot_bridge.modbus.read_holding(int(parts[0]), int(parts[1]), int(parts[2]))
                     except Exception:
-                        return "Формат: modbus запись [address] [value] [unit=1]"
-                return "Формат: modbus запись [address] [value] [unit=1]"
+                        return "Формат: modbus чтение [адрес] [количество] [unit_id]"
+                return "Формат: modbus чтение [адрес] [количество] [unit_id]"
+            if "modbus запись" in t or "modbus write" in t:
+                # Формат: modbus запись [address] [value] [slave]
+                parts = text.split("запись")[-1].strip().split()
+                if len(parts) >= 3:
+                    try:
+                        return self.iot_bridge.modbus.write_holding(int(parts[0]), int(parts[1]), int(parts[2]))
+                    except Exception:
+                        return "Формат: modbus запись [адрес] [значение] [unit_id]"
+                return "Формат: modbus запись [адрес] [значение] [unit_id]"
             if any(k in t for k in ["команда устройству", "отправь команду"]):
                 parts = text.split("устройству" if "устройству" in t else "команду")[-1].strip().split()
                 if len(parts) >= 2:

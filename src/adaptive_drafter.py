@@ -94,7 +94,7 @@ class AdaptiveDrafter:
     - ARGOS_TLT_OFFLINE_PATTERNS (json-файл с оффлайн-паттернами)
     """
 
-    VERSION = "1.0.0"
+    VERSION = "1.1.0"
 
     # Встроенные оффлайн-паттерны (GREEN)
     _BUILTIN_OFFLINE = {
@@ -110,9 +110,12 @@ class AdaptiveDrafter:
     def __init__(self, core=None):
         self.core = core
         cache_size = int(os.getenv("ARGOS_TLT_CACHE_SIZE", "512") or "512")
+        cache_size = max(64, min(512, cache_size))
         cache_ttl = float(os.getenv("ARGOS_TLT_CACHE_TTL", "3600") or "3600")
         self._cache = _LRUCache(capacity=cache_size, ttl_sec=cache_ttl)
         self._compress_threshold = int(os.getenv("ARGOS_TLT_COMPRESS_ABOVE", "2000") or "2000")
+        self._compress_max_lines = int(os.getenv("ARGOS_TLT_COMPRESS_MAX_LINES", "80") or "80")
+        self._compress_line_limit = int(os.getenv("ARGOS_TLT_COMPRESS_LINE_LIMIT", "280") or "280")
         self._offline_patterns: Dict[str, str] = {}
         self._load_offline_patterns()
 
@@ -123,8 +126,8 @@ class AdaptiveDrafter:
         self._bytes_saved = 0
         self._lock = threading.Lock()
 
-        log.info("TLT v%s init | cache=%d/%ds | compress>%d",
-                 self.VERSION, cache_size, int(cache_ttl), self._compress_threshold)
+        log.info("TLT v%s init | cache=%d/%ds | compress>%d max_lines=%d",
+             self.VERSION, cache_size, int(cache_ttl), self._compress_threshold, self._compress_max_lines)
 
     def _load_offline_patterns(self) -> None:
         """Загружает оффлайн-паттерны: builtin + custom из файла."""
@@ -217,9 +220,18 @@ class AdaptiveDrafter:
             if sig in seen:
                 continue
             seen.add(sig)
-            if len(stripped) > 500:
-                stripped = stripped[:200] + " [...] " + stripped[-200:]
+            if len(stripped) > self._compress_line_limit:
+                head = stripped[: self._compress_line_limit // 2]
+                tail = stripped[-(self._compress_line_limit // 2):]
+                stripped = head + " [...] " + tail
             out.append(stripped)
+            if len(out) >= self._compress_max_lines:
+                break
+
+        if len(out) >= 6:
+            head = out[:4]
+            tail = out[-2:]
+            out = head + ["[...] контекст сжат TLT ..."] + tail
         return "\n".join(out)
 
     def compress_for_api(self, context: str) -> str:

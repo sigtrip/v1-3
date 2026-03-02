@@ -7,6 +7,7 @@ iot_bridge.py — IoT-мост Аргоса
   инкубатор, аквариум, террариум.
 """
 import json, os, time, threading, socket, struct
+import logging
 import sqlite3
 import importlib.util
 from collections import defaultdict
@@ -15,7 +16,14 @@ from src.event_bus import get_bus, Events
 from src.observability import log_iot, trace
 
 log = get_logger("argos.iot")
+modbus_log = logging.getLogger("argos.iot_bridge")
 bus = get_bus()
+
+try:
+    from pymodbus.client import ModbusSerialClient, ModbusTcpClient
+    MODBUS_OK = True
+except ImportError:
+    MODBUS_OK = False
 
 SUPPORTED_ZIGBEE_HUBS = [
     "Aqara Hub M2",
@@ -398,9 +406,7 @@ class ModbusAdapter:
     def connect_serial(self, port: str = "/dev/ttyUSB0", baudrate: int = 9600,
                        parity: str = "N", stopbits: int = 1, bytesize: int = 8,
                        timeout: float = 2.0) -> str:
-        try:
-            from pymodbus.client import ModbusSerialClient
-        except ImportError:
+        if not MODBUS_OK:
             return "❌ Modbus: установи pip install pymodbus"
 
         try:
@@ -418,15 +424,19 @@ class ModbusAdapter:
             self._client = client
             self._mode = "rtu"
             self._endpoint = f"{port}:{baudrate}"
-            return f"✅ Modbus RTU подключён: {self._endpoint}"
+            modbus_log.info("Modbus RTU подключен: %s at %d baud", port, baudrate)
+            return f"✅ Modbus RTU успешно запущен на {port} ({baudrate} бод)."
         except Exception as e:
-            return f"❌ Modbus RTU: {e}"
+            modbus_log.error("Modbus RTU error: %s", e)
+            return f"❌ Ошибка Modbus RTU: {e}"
+
+    def connect_rtu(self, port: str, baudrate: int) -> str:
+        """Совместимость с командами core: подключи modbus [port] [baud]."""
+        return self.connect_serial(port=port, baudrate=baudrate)
 
     def connect_tcp(self, host: str = "127.0.0.1", port: int = 502,
                     timeout: float = 2.0) -> str:
-        try:
-            from pymodbus.client import ModbusTcpClient
-        except ImportError:
+        if not MODBUS_OK:
             return "❌ Modbus: установи pip install pymodbus"
 
         try:
@@ -436,9 +446,11 @@ class ModbusAdapter:
             self._client = client
             self._mode = "tcp"
             self._endpoint = f"{host}:{port}"
-            return f"✅ Modbus TCP подключён: {self._endpoint}"
+            modbus_log.info("Modbus TCP подключен: %s:%d", host, port)
+            return f"✅ Modbus TCP успешно подключен к {host}:{port}."
         except Exception as e:
-            return f"❌ Modbus TCP: {e}"
+            modbus_log.error("Modbus TCP error: %s", e)
+            return f"❌ Ошибка Modbus TCP: {e}"
 
     def _ensure_device(self, unit: int) -> IoTDevice:
         dev_id = f"modbus_u{unit}"
@@ -486,9 +498,13 @@ class ModbusAdapter:
 
             dev = self._ensure_device(unit)
             dev.update(f"hr_{address}", value)
-            return f"✅ Modbus U{unit} WRITE HR[{address}] = {value}"
+            return f"📤 Modbus (Slave {unit}): В регистр {address} успешно записано значение {value}."
         except Exception as e:
             return f"❌ Modbus write: {e}"
+
+    def write_holding(self, address: int, value: int, slave: int) -> str:
+        """Совместимость с требуемым API: write_holding(address, value, slave)."""
+        return self.write_register(address=address, value=value, unit=slave)
 
     def status(self) -> str:
         if not self._client:
@@ -816,6 +832,10 @@ class IoTBridge:
         for model in SUPPORTED_ZIGBEE_COORDINATORS:
             lines.append(f"  • {model}")
         return "\n".join(lines)
+
+    def get_capabilities(self) -> str:
+        """Совместимость с core-командой iot возможности."""
+        return self.capability_report()
 
     def device_status(self, dev_id: str) -> str:
         dev = self.registry.get(dev_id)
