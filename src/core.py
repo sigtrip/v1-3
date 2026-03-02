@@ -201,6 +201,7 @@ class ArgosCore:
         self.containers = None
         self.master_auth = None
         self.biosphere_dag = None
+        self.jarvis = None
         self._runtime_admin = None
         self._runtime_flasher = None
         self.gemini_rpm_limit = 15
@@ -259,6 +260,7 @@ class ArgosCore:
         self._init_git_ops()
         self._init_pupi_ops()
         self._init_task_queue()
+        self._init_jarvis()
         log.info("ArgosCore FINAL v2.0 инициализирован.")
 
     # ═══════════════════════════════════════════════════════
@@ -555,6 +557,14 @@ class ArgosCore:
                 log.info("PupiOps: OFF (нет PUPI_API_URL/PUPI_API_TOKEN)")
         except Exception as e:
             log.warning("PupiOps: %s", e)
+
+    def _init_jarvis(self):
+        try:
+            from src.jarvis_engine import JarvisEngine
+            self.jarvis = JarvisEngine(core=self)
+            log.info("JarvisEngine: OK")
+        except Exception as e:
+            log.warning("JarvisEngine: %s", e)
 
     def _init_task_queue(self):
         try:
@@ -2944,6 +2954,29 @@ class ArgosCore:
                 return self.quantum.check_ibm_status()
             except Exception as e:
                 return f"⚠️ IBM Quantum: {e}"
+
+        # ── JARVIS Engine (HuggingGPT) ─────────────────────
+        if self.jarvis and any(k in t for k in ["jarvis статус", "jarvis status", "статус jarvis"]):
+            return self.jarvis.status()
+        if self.jarvis and any(k in t for k in ["jarvis задача ", "jarvis task ", "jarvis выполни "]):
+            query = text
+            for prefix in ["jarvis задача ", "jarvis task ", "jarvis выполни "]:
+                if t.startswith(prefix):
+                    query = text[len(prefix):].strip()
+                    break
+            if query:
+                result = self.jarvis.process(query)
+                msg = result.get("message", "")
+                timing = result.get("timing", 0)
+                tasks_count = len(result.get("tasks", []))
+                return f"🤖 JARVIS ({tasks_count} задач, {timing:.1f}с)\n\n{msg}"
+            return "Формат: jarvis задача [запрос]"
+        if self.jarvis and any(k in t for k in ["jarvis модели", "jarvis models"]):
+            lines = ["🤖 JARVIS — Доступные типы задач:"]
+            for task_type, models in sorted(self.jarvis.models_map.items()):
+                ids = ", ".join(m["id"].split("/")[-1] for m in models[:3])
+                lines.append(f"  {task_type}: {ids}")
+            return "\n".join(lines)
 
         # ── Помощь ────────────────────────────────────────
         if t.strip() in ("помощь", "команды", "что умеешь", "help", "?"):

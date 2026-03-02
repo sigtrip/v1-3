@@ -48,7 +48,8 @@
 | 🔐 **Master Auth** | SHA-256 авторизация администратора через ARGOS_MASTER_KEY, сессии, revoke |
 | 🌿 **Biosphere DAG** | DAG-контроллер биосферы (incubator/greenhouse/aquarium/terrarium), авто-регуляция датчиков |
 | 🌌 **IBM Quantum Bridge** | Мост к IBM Quantum (активация в состоянии All-Seeing), доступ к реальному квантовому железу |
-| 🧰 **GitOps** | Встроенные команды `git статус`, `git коммит`, `git пуш`, `git автокоммит и пуш` |
+| � **JARVIS Engine** | HuggingGPT-конвейер: Task Planning → Model Selection → Task Execution → Response Synthesis, 15+ типов задач, HuggingFace Inference API + локальные модели, параллельное исполнение с DAG-зависимостями |
+| �🧰 **GitOps** | Встроенные команды `git статус`, `git коммит`, `git пуш`, `git автокоммит и пуш` |
 
 ---
 
@@ -89,6 +90,7 @@ ArgosUniversal/
     ├── hardware_guard.py         # Квантовый гомеостаз железа
     ├── git_ops.py                # Безопасные Git status/commit/push
     ├── task_queue.py             # Очередь задач + worker pool
+    ├── jarvis_engine.py          # ★ JARVIS/HuggingGPT 4-stage pipeline
     ├── evolution.py              # Эволюция (базовый)
     ├── icon_generator.py         # Генератор иконок
     │
@@ -569,6 +571,19 @@ git статус | git коммит [сообщение] | git пуш | git ав
 очередь воркеры [n]
 ```
 
+### JARVIS Engine (HuggingGPT)
+```
+jarvis статус              # состояние движка, кол-во запросов, средний latency
+jarvis задача [запрос]     # мульти-шаговый конвейер: планирование → выбор модели → исполнение → синтез
+jarvis модели              # список доступных типов задач и моделей
+```
+
+> JARVIS разбивает сложный запрос на подзадачи (Task Planning), подбирает
+> оптимальную ML-модель для каждой (Model Selection), исполняет параллельно
+> с учётом DAG-зависимостей (Task Execution), синтезирует финальный ответ
+> (Response Synthesis). Поддерживает HuggingFace Inference API и локальные
+> серверы моделей.
+
 ### NFC
 ```
 nfc статус                     # состояние NFC-подсистемы
@@ -853,9 +868,9 @@ Roadmap:
 NFC / USB / Bluetooth подсистемы
 AWA-Core · Adaptive Drafter · Self-Healing · AirSnitch · WiFi Sentinel
 SmartHome Override · Power Sentry · Emergency Purge · Container Isolation
-Master Auth · Biosphere DAG · IBM Quantum Bridge
+Master Auth · Biosphere DAG · IBM Quantum Bridge · JARVIS Engine
 Speculative Consensus v2 · Batch Idle Learning · P2P Role Routing
-~14100 строк кода
+~14600 строк кода
 ```
 
 ---
