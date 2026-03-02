@@ -4,7 +4,7 @@ core.py — ArgosCore FINAL v2.0
     ИИ + Контекст + Голос + Wake Word + Память + Планировщик +
     Алерты + Агент + Vision + P2P + Загрузчик + 50+ команд
 """
-import os, threading, requests, asyncio, tempfile, subprocess, shutil
+import os, sys, threading, requests, asyncio, tempfile, subprocess, shutil
 import concurrent.futures
 import json
 import time
@@ -53,6 +53,112 @@ from src.env_bootstrap               import bootstrap_env
 bootstrap_env()
 
 log = get_logger("argos.core")
+
+# ═══════════════════════════════════════════════════════════════════
+# MODEL_REGISTRY — единый реестр всех поддерживаемых AI-провайдеров
+# ═══════════════════════════════════════════════════════════════════
+MODEL_REGISTRY = {
+    # ── OLLAMA (локальный сервер) ────────────────────────────────────────
+    "ollama": {
+        "default":   "llama3",
+        "available": [
+            "llama3",
+            "llama3:8b",
+            "llama3:70b",
+            "phi3",
+            "gemma2:2b",
+            "gemma2:9b",
+            "gemma3:1b",
+            "qwen2.5:0.5b",
+            "qwen2.5:1.5b",
+            "qwen2.5:7b",
+            "mixtral:8x7b",
+            "mistral:7b",
+            "mistral:7b-instruct",
+            "deepseek-coder:6.7b",
+            "deepseek-llm:7b",
+        ],
+        "env_url":   "ARGOS_OLLAMA_URL",
+        "env_model": "ARGOS_OLLAMA_MODEL",
+        "health":    "ARGOS_OLLAMA_HEALTH_URL",
+        "autostart": "ARGOS_OLLAMA_AUTOSTART",
+    },
+
+    # ── GOOGLE GEMINI (SDK + REST) ───────────────────────────────────────
+    "gemini": {
+        "default":   "gemini-1.5-flash",
+        "available": [
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-lite",
+            "gemini-2.0-pro",
+        ],
+        "env_key":   "GEMINI_API_KEY",
+        "rest_url":  "GEMINI_REST_URL",
+    },
+
+    # ── OPENAI (ChatGPT) ──────────────────────────────────────────────────
+    "openai": {
+        "default":   "gpt-4o-mini",
+        "available": [
+            "gpt-4o", "gpt-4o-mini",
+            "gpt-4-turbo", "gpt-4",
+            "gpt-3.5-turbo", "gpt-3.5-turbo-16k",
+        ],
+        "env_key":   "OPENAI_API_KEY",
+        "base_url":  "OPENAI_API_URL",
+    },
+
+    # ── LM-STUDIO (локальный сервер OpenAI-совместимый) ───────────────────
+    "lmstudio": {
+        "default":   "local-model",
+        "available": [],
+        "env_url":   "LMSTUDIO_BASE_URL",
+        "env_model": "LMSTUDIO_MODEL",
+    },
+
+    # ── YANDEX GPT (Yandex.Cloud) ───────────────────────────────────────
+    "yandexgpt": {
+        "default":   "gpt://{folder_id}/yandexgpt/latest",
+        "available": [],
+        "env_token": "YANDEX_IAM_TOKEN",
+        "env_folder": "YANDEX_FOLDER_ID",
+        "env_model_uri": "YANDEXGPT_MODEL_URI",
+    },
+
+    # ── GIGACHAT (Сбер) ───────────────────────────────────────────────────
+    "gigachat": {
+        "default":   "GigaChat-2",
+        "available": ["GigaChat-2", "GigaChat-2.0", "GigaChat-Pro"],
+        "env_token": "GIGACHAT_ACCESS_TOKEN",
+        "env_client_id":     "GIGACHAT_CLIENT_ID",
+        "env_client_secret": "GIGACHAT_CLIENT_SECRET",
+    },
+
+    # ── GROK / X-AI ───────────────────────────────────────────────────────
+    "grok": {
+        "default":   "grok-2-latest",
+        "available": ["grok-1", "grok-2", "grok-2-latest"],
+        "env_key":   "GROK_API_KEY",
+        "env_url":   "GROK_API_URL",
+        "env_model": "GROK_MODEL",
+    },
+
+    # ── IBM WATSONX ─────────────────────────────────────────────────────
+    "watsonx": {
+        "default":   "meta-llama/llama-3-1-70b-instruct",
+        "available": [
+            "meta-llama/llama-3-1-70b-instruct",
+            "meta-llama/llama-3-1-8b-instruct",
+            "ibm/granite-13b-chat-v2",
+            "ibm/granite-20b-chat-v2",
+        ],
+        "env_key":   "WATSONX_API_KEY",
+        "env_project": "WATSONX_PROJECT_ID",
+        "env_url":   "WATSONX_URL",
+    },
+}
 
 
 class _SlidingWindowRateLimiter:
@@ -217,7 +323,7 @@ class ArgosCore:
         self.sensors    = ArgosSensorBridge()
         self.context    = DialogContext(max_turns=10)
         self.agent      = ArgosAgent(self)
-        self.ollama_url = "http://localhost:11434/api/generate"
+        self.ollama_url = (os.getenv("ARGOS_OLLAMA_URL", "http://localhost:11434/api/generate") or "").strip() or "http://localhost:11434/api/generate"
         self.ollama_health_url = (os.getenv("ARGOS_OLLAMA_HEALTH_URL", "http://localhost:11434/api/tags") or "").strip()
         self.lmstudio_url = (os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1/chat/completions") or "").strip()
         self.lmstudio_model = (os.getenv("LMSTUDIO_MODEL", "local-model") or "").strip() or "local-model"
@@ -1056,6 +1162,31 @@ class ArgosCore:
         else:
             log.info("YandexGPT: Отключен (проверь YANDEX_IAM_TOKEN и YANDEX_FOLDER_ID в .env)")
 
+    # ═══════════════════════════════════════════════════════
+    # ВЫБОР МОДЕЛИ — единая точка принятия решения
+    # ═══════════════════════════════════════════════════════
+    def _select_model(self, backend: str) -> str:
+        """Возвращает имя модели для backend, учитывая:
+          1) ENV-переменную (ARGOS_<BACKEND>_MODEL / OPENAI_MODEL / …)
+          2) self.ai_mode (пользователь написал «режим ии gemini:pro»)
+          3) дефолт из MODEL_REGISTRY
+        """
+        cfg = MODEL_REGISTRY.get(backend, {})
+        # 1. ENV — наивысший приоритет
+        for env_key in ("env_model", "env_model_uri"):
+            var = cfg.get(env_key)
+            if var:
+                val = os.getenv(var, "").strip()
+                if val:
+                    return val
+        # 2. Пользователь указал "<backend>:<model>" через ai_mode
+        if self.ai_mode.startswith(backend):
+            parts = self.ai_mode.split(":")
+            if len(parts) == 2 and parts[1]:
+                return parts[1]
+        # 3. Дефолт из реестра
+        return cfg.get("default", "")
+
     def _gemini_rate_limit_text(self) -> str:
         remain = self._circuit.seconds_until_available("Gemini")
         if remain > 0:
@@ -1281,7 +1412,7 @@ class ArgosCore:
         if not api_key:
             return None
         url = (os.getenv("OPENAI_API_URL", "https://api.openai.com/v1/chat/completions") or "").strip()
-        model = (os.getenv("OPENAI_MODEL", "gpt-4o-mini") or "").strip() or "gpt-4o-mini"
+        model = self._select_model("openai")
         try:
             hist = self.context.get_prompt_context()
             payload = {
@@ -1341,7 +1472,7 @@ class ArgosCore:
         if not api_key:
             return None
         url = (os.getenv("GROK_API_URL", "https://api.x.ai/v1/chat/completions") or "").strip()
-        model = (os.getenv("GROK_MODEL", "grok-2-latest") or "").strip() or "grok-2-latest"
+        model = self._select_model("grok")
         if model in self._grok_unavailable_models:
             return None
         try:
@@ -1407,7 +1538,7 @@ class ArgosCore:
         try:
             hist = self.context.get_prompt_context()
             payload = {
-                "model": (os.getenv("GIGACHAT_MODEL", "GigaChat-2") or "GigaChat-2").strip(),
+                "model": self._select_model("gigachat"),
                 "messages": [
                     {"role": "system", "content": context},
                     {"role": "user", "content": f"{hist}\n\n{user_text}"},
@@ -1519,7 +1650,7 @@ class ArgosCore:
             full_prompt = f"{context}\n\n{hist}\n\nUser: {user_text}\nArgos:"
             res = requests.post(
                 self.ollama_url,
-                json={"model": "llama3", "prompt": full_prompt, "stream": False},
+                json={"model": self._select_model("ollama"), "prompt": full_prompt, "stream": False},
                 timeout=150
             )
             self._circuit.record_success("Ollama")
@@ -1545,7 +1676,7 @@ class ArgosCore:
         try:
             hist = self.context.get_prompt_context()
             payload = {
-                "model": self.lmstudio_model,
+                "model": self._select_model("lmstudio") or self.lmstudio_model,
                 "messages": [
                     {"role": "system", "content": context},
                     {"role": "user", "content": f"{hist}\n\n{user_text}"},
@@ -2013,6 +2144,136 @@ class ArgosCore:
         return await asyncio.to_thread(self.process_logic, user_text, admin, flasher)
 
     # ═══════════════════════════════════════════════════════
+    # СБОРКА — APK / EXE / Setup / Auto
+    # ═══════════════════════════════════════════════════════
+    def _intent_build_apk(self) -> str:
+        """Сборка APK через ARGOS_APK_BUILD_CMD (buildozer / gradle)."""
+        cmd = os.getenv("ARGOS_APK_BUILD_CMD", "").strip()
+        if not cmd:
+            return (
+                "📦 Сборка APK:\n"
+                "  ARGOS_APK_BUILD_CMD не задан в .env\n"
+                "  Пример: ARGOS_APK_BUILD_CMD=buildozer -v android debug\n\n"
+                "Также проверь:\n"
+                "  • buildozer.spec в корне проекта\n"
+                "  • Java JDK, Android SDK, NDK\n"
+                "  • pip install buildozer"
+            )
+        import shlex as _shlex2
+        parts = _shlex2.split(cmd)
+        if not parts:
+            return "❌ ARGOS_APK_BUILD_CMD пуст после разбора."
+        if parts[0].lower() == "buildozer" and not os.path.exists("buildozer.spec"):
+            return "❌ Не найден buildozer.spec в корне проекта."
+        try:
+            log.info("📦 Запуск сборки APK: %s", cmd)
+            result = subprocess.run(parts, shell=False, check=True, capture_output=True, text=True, timeout=600)
+            # Ищем артефакт
+            from pathlib import Path as _Path
+            apk_files = []
+            for pattern in ["bin/*.apk", "dist/**/*.apk", "build/**/*.apk"]:
+                apk_files.extend(_Path(".").glob(pattern))
+            if apk_files:
+                apk_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                size_mb = apk_files[0].stat().st_size / (1024 * 1024)
+                return f"✅ APK собран: {apk_files[0]} ({size_mb:.1f} MB)"
+            return "⚠️ Сборка завершена без ошибок, но APK не найден (bin/dist/build)."
+        except subprocess.CalledProcessError as e:
+            return f"❌ Сборка APK завершилась с ошибкой:\n{(e.stderr or e.stdout or str(e))[:500]}"
+        except subprocess.TimeoutExpired:
+            return "❌ Сборка APK: превышен таймаут (10 мин)."
+        except Exception as e:
+            return f"❌ Ошибка запуска сборки APK: {e}"
+
+    def _intent_build_exe(self) -> str:
+        """Сборка argos.exe через build_exe.py (PyInstaller)."""
+        script = os.path.join(os.path.dirname(os.path.dirname(__file__)), "build_exe.py")
+        if not os.path.exists(script):
+            script = "build_exe.py"
+        if not os.path.exists(script):
+            return "❌ Файл build_exe.py не найден в корне проекта."
+        try:
+            log.info("📦 Запуск сборки EXE: python %s", script)
+            result = subprocess.run(
+                [sys.executable, script],
+                check=True, capture_output=True, text=True, timeout=300,
+            )
+            output = (result.stdout or "")[-500:]
+            # Проверяем артефакт
+            exe_candidates = []
+            for d in ["dist", "build/argos"]:
+                if os.path.isdir(d):
+                    for f in os.listdir(d):
+                        if f.endswith((".exe", "")) and "argos" in f.lower():
+                            exe_candidates.append(os.path.join(d, f))
+            if exe_candidates:
+                path = exe_candidates[0]
+                size_mb = os.path.getsize(path) / (1024 * 1024)
+                return f"✅ EXE собран: {path} ({size_mb:.1f} MB)\n{output}"
+            return f"⚠️ build_exe.py завершился, но argos.exe не найден.\n{output}"
+        except subprocess.CalledProcessError as e:
+            return f"❌ Сборка EXE завершилась с ошибкой:\n{(e.stderr or e.stdout or str(e))[:500]}"
+        except subprocess.TimeoutExpired:
+            return "❌ Сборка EXE: превышен таймаут (5 мин)."
+        except Exception as e:
+            return f"❌ Ошибка сборки EXE: {e}"
+
+    def _intent_build_setup(self) -> str:
+        """Сборка инсталлятора setup_argos.exe через setup_builder.py (NSIS)."""
+        script = os.path.join(os.path.dirname(os.path.dirname(__file__)), "setup_builder.py")
+        if not os.path.exists(script):
+            script = "setup_builder.py"
+        if not os.path.exists(script):
+            return "❌ Файл setup_builder.py не найден."
+        try:
+            log.info("📦 Запуск сборки инсталлятора: python %s --build", script)
+            result = subprocess.run(
+                [sys.executable, script, "--build"],
+                check=True, capture_output=True, text=True, timeout=300,
+            )
+            output = (result.stdout or "")[-500:]
+            if os.path.exists("setup_argos.exe"):
+                size_mb = os.path.getsize("setup_argos.exe") / (1024 * 1024)
+                return f"✅ Инсталлятор: setup_argos.exe ({size_mb:.1f} MB)\n{output}"
+            return f"⚠️ setup_builder.py завершился, но setup_argos.exe не найден.\n{output}"
+        except subprocess.CalledProcessError as e:
+            return f"❌ Сборка инсталлятора ошибка:\n{(e.stderr or e.stdout or str(e))[:500]}"
+        except subprocess.TimeoutExpired:
+            return "❌ Сборка инсталлятора: превышен таймаут (5 мин)."
+        except Exception as e:
+            return f"❌ Ошибка сборки инсталлятора: {e}"
+
+    def _intent_build_auto(self) -> str:
+        """Автоматическая сборка: EXE на Windows, реплика на остальных ОС."""
+        import platform as _pf
+        os_name = _pf.system()
+        lines = [f"📦 *Автосборка Argos* (ОС: {os_name})\n"]
+
+        # Всегда создаём ZIP-реплику
+        try:
+            replica_result = self.replicator.create_replica()
+            lines.append(f"1. Реплика: {replica_result}")
+        except Exception as e:
+            lines.append(f"1. Реплика: ❌ {e}")
+
+        # На Windows — собираем EXE
+        if os_name == "Windows":
+            exe_result = self._intent_build_exe()
+            lines.append(f"2. EXE: {exe_result}")
+        else:
+            lines.append(f"2. EXE: пропуск (не Windows, текущая ОС: {os_name})")
+
+        # Проверяем APK
+        apk_cmd = os.getenv("ARGOS_APK_BUILD_CMD", "").strip()
+        if apk_cmd:
+            apk_result = self._intent_build_apk()
+            lines.append(f"3. APK: {apk_result}")
+        else:
+            lines.append("3. APK: пропуск (ARGOS_APK_BUILD_CMD не задан)")
+
+        return "\n".join(lines)
+
+    # ═══════════════════════════════════════════════════════
     # ДИСПЕТЧЕР КОМАНД — 50+ интентов
     # ═══════════════════════════════════════════════════════
     def execute_intent(self, text: str, admin, flasher) -> str | None:
@@ -2020,7 +2281,8 @@ class ArgosCore:
 
         if self._homeostasis_block_heavy and any(k in t for k in [
             "посмотри на экран", "что на экране", "посмотри в камеру", "анализ фото",
-            "проанализируй изображение", "компиля", "compile", "создай прошивку", "прошей шлюз", "прошей gateway"
+            "проанализируй изображение", "компиля", "compile", "создай прошивку", "прошей шлюз", "прошей gateway",
+            "собрать", "собери", "build apk", "build exe", "build setup",
         ]):
             return "🔥 Гомеостаз: тяжёлая операция временно заблокирована (режим Protective/Unstable)."
 
@@ -2312,6 +2574,17 @@ class ArgosCore:
             return self.context.clear()
         if "контекст диалога" in t:
             return self.context.summary()
+
+        # ── Сборка APK / EXE / Setup ─────────────────────────
+        if any(k in t for k in ["собрать апк", "собери апк", "build apk", "сборка апк"]):
+            return self._intent_build_apk()
+        if any(k in t for k in ["собрать exe", "собери exe", "build exe", "сборка exe"]):
+            return self._intent_build_exe()
+        if any(k in t for k in ["собрать инсталлятор", "собери инсталлятор", "build setup", "сборка setup",
+                                 "собрать установщик", "собери установщик"]):
+            return self._intent_build_setup()
+        if any(k in t for k in ["собрать", "собери", "build", "сборка"]):
+            return self._intent_build_auto()
 
         # ── Репликация + IoT ──────────────────────────────
         if any(k in t for k in ["создай копию", "репликация"]):
