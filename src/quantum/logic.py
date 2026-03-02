@@ -7,6 +7,16 @@ import psutil
 import requests
 from datetime import datetime
 
+try:
+    from qiskit import QuantumCircuit, transpile
+    from qiskit_ibm_runtime import QiskitRuntimeService
+    IBM_QISKIT_OK = True
+except Exception:
+    QuantumCircuit = None
+    transpile = None
+    QiskitRuntimeService = None
+    IBM_QISKIT_OK = False
+
 class BayesianNode:
     def __init__(self, name, parents=None, cpt=None):
         self.name = name
@@ -175,6 +185,125 @@ class ArgosQuantum:
         vector_list = [res["probabilities"].get(s, 0.0) for s in self.states]
         return {"name": res["state"], "vector": vector_list, "probabilities": res["probabilities"]}
 
+    def _ibm_key(self) -> str:
+        return (os.getenv("IBM_QUANTUM_KEY") or os.getenv("IBM_CLOUD_API_KEY") or "").strip()
+
+    def _ibm_channel(self) -> str:
+        value = (os.getenv("IBM_QUANTUM_CHANNEL", "ibm_quantum") or "ibm_quantum").strip().lower()
+        if value in {"ibm_cloud", "cloud"}:
+            return "ibm_cloud"
+        return "ibm_quantum"
+
+    def _ibm_instance(self) -> str:
+        return (os.getenv("IBM_QUANTUM_INSTANCE") or "").strip()
+
+    def _ibm_service(self):
+        if not IBM_QISKIT_OK:
+            return None, "Qiskit Runtime не установлен (pip install qiskit qiskit-ibm-runtime)."
+
+        token = self._ibm_key()
+        if not token:
+            return None, "IBM_QUANTUM_KEY (или IBM_CLOUD_API_KEY) не найден в .env."
+
+        kwargs = {
+            "channel": self._ibm_channel(),
+            "token": token,
+        }
+        instance = self._ibm_instance()
+        if instance:
+            kwargs["instance"] = instance
+
+        try:
+            service = QiskitRuntimeService(**kwargs)
+            return service, ""
+        except Exception as e:
+            return None, f"Ошибка инициализации IBM Runtime: {e}"
+
+    @staticmethod
+    def _backend_name(backend) -> str:
+        name = getattr(backend, "name", "")
+        try:
+            return name() if callable(name) else str(name)
+        except Exception:
+            return str(name)
+
+    def list_ibm_backends(self, limit: int = 10) -> str:
+        service, err = self._ibm_service()
+        if not service:
+            return f"[⚠️] IBM Quantum Runtime недоступен: {err}"
+
+        try:
+            backends = service.backends()
+            if not backends:
+                return "[⚠️] IBM Quantum: backend'ы не найдены."
+
+            items = []
+            for backend in backends:
+                try:
+                    name = self._backend_name(backend)
+                    simulator = bool(getattr(backend, "simulator", False))
+                    operational = bool(getattr(backend, "operational", True))
+                    pending = getattr(backend, "pending_jobs", "?")
+                    items.append((name, simulator, operational, pending))
+                except Exception:
+                    continue
+
+            items.sort(key=lambda x: (not x[2], x[3] if isinstance(x[3], int) else 999999, x[0]))
+            head = items[:max(1, int(limit))]
+
+            lines = ["[🌌] IBM Quantum Runtime backend'ы:"]
+            for name, simulator, operational, pending in head:
+                kind = "SIM" if simulator else "QPU"
+                op = "ON" if operational else "OFF"
+                lines.append(f"  • {name} [{kind}] op={op} pending={pending}")
+            lines.append(f"  Всего backend'ов: {len(items)}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"[⚠️] Ошибка запроса backend'ов IBM: {e}"
+
+    def run_ibm_bell_test(self, shots: int = 256) -> str:
+        service, err = self._ibm_service()
+        if not service:
+            return f"[⚠️] IBM Quantum Runtime недоступен: {err}"
+
+        try:
+            backend_name = (os.getenv("IBM_QUANTUM_BACKEND") or "").strip()
+            backend = None
+
+            if backend_name:
+                backend = service.backend(backend_name)
+            else:
+                candidates = [
+                    b for b in service.backends()
+                    if bool(getattr(b, "operational", True))
+                ]
+                if not candidates:
+                    return "[⚠️] IBM Quantum: нет доступных operational backend'ов."
+
+                real_hw = [b for b in candidates if not bool(getattr(b, "simulator", False))]
+                pool = real_hw or candidates
+                pool.sort(key=lambda b: getattr(b, "pending_jobs", 10**9))
+                backend = pool[0]
+
+            backend_label = self._backend_name(backend)
+
+            qc = QuantumCircuit(2, 2)
+            qc.h(0)
+            qc.cx(0, 1)
+            qc.measure([0, 1], [0, 1])
+
+            tqc = transpile(qc, backend)
+            job = backend.run(tqc, shots=max(64, int(shots)))
+            result = job.result()
+            counts = result.get_counts()
+            return (
+                f"[🧪] IBM Bell test выполнен на {backend_label}.\n"
+                f"  job_id: {job.job_id()}\n"
+                f"  counts: {counts}"
+            )
+        except Exception as e:
+            return f"[⚠️] IBM Quantum Bell test ошибка: {e}"
+
     # ── IBM Quantum Bridge ────────────────────────────────
 
     def check_ibm_status(self) -> str:
@@ -188,9 +317,14 @@ class ArgosQuantum:
         if current_state["state"] != "All-Seeing":
             return f"Квантовый мост спит (Текущее состояние: {current_state['state']})"
 
-        api_key = os.getenv("IBM_QUANTUM_KEY")
+        api_key = self._ibm_key()
         if not api_key:
-            return "[⚠️] IBM_QUANTUM_KEY не найден в .env"
+            return "[⚠️] IBM_QUANTUM_KEY (или IBM_CLOUD_API_KEY) не найден в .env"
+
+        if IBM_QISKIT_OK:
+            runtime_status = self.list_ibm_backends(limit=5)
+            if "[⚠️]" not in runtime_status:
+                return runtime_status
 
         auth_url = "https://iam.cloud.ibm.com/identity/token"
         headers = {"Content-Type": "application/x-www-form-urlencoded"}

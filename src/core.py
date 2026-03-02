@@ -2927,6 +2927,18 @@ class ArgosCore:
             return TasmotaUpdater().execute()
 
         # ── IBM Quantum ───────────────────────────────────
+        if any(k in t for k in ["ibm backends", "ibm бэкенды", "ibm backend list", "список ibm backend"]):
+            try:
+                return self.quantum.list_ibm_backends(limit=10)
+            except Exception as e:
+                return f"⚠️ IBM Runtime backend list: {e}"
+
+        if any(k in t for k in ["ibm bell", "ibm тест", "ibm квант тест", "квантовый тест ibm"]):
+            try:
+                return self.quantum.run_ibm_bell_test(shots=256)
+            except Exception as e:
+                return f"⚠️ IBM Runtime Bell test: {e}"
+
         if any(k in t for k in ["ibm квантовый", "ibm quantum", "квантовый мост"]):
             try:
                 return self.quantum.check_ibm_status()

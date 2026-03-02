@@ -27,6 +27,10 @@ bleak>=0.22.3
 # ── Enterprise AI bridge (Watsonx) ────────────────────────
 ibm-watsonx-ai>=1.1.8
 
+# ── IBM Quantum Runtime bridge (optional) ─────────────────
+qiskit>=1.1.0
+qiskit-ibm-runtime>=0.32.0
+
 # ── Optional mobile build toolchain helper ────────────────
 # buildozer is typically installed separately in Android build env
 # buildozer>=1.5.0
