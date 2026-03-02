@@ -1272,7 +1272,7 @@ class ArgosCore:
             res = requests.post(
                 self.ollama_url,
                 json={"model": "llama3", "prompt": full_prompt, "stream": False},
-                timeout=15
+                timeout=150
             )
             return res.json().get('response')
         except Exception as e:
