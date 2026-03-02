@@ -96,3 +96,7 @@ class ArgosZKPEngine:
     def _hash_challenge(self, challenge: str, pub: int, commit: int) -> int:
         raw = f"{challenge}|{pub}|{commit}".encode("utf-8")
         return int(hashlib.sha256(raw).hexdigest(), 16) % self.Q
+
+
+# README alias
+ZKPHelper = ArgosZKPEngine

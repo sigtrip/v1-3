@@ -76,3 +76,7 @@ class P2PTransportClient:
             return data if isinstance(data, dict) else {"error": "invalid response"}
         finally:
             sock.close()
+
+
+# README alias
+P2PTransport = P2PTransportClient

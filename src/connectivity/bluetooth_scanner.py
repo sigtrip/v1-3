@@ -509,3 +509,7 @@ if __name__ == "__main__":
         # Сканирование по умолчанию
         asyncio.run(scanner.scan_ble(10.0))
         scanner.print_inventory()
+
+
+# README alias
+BluetoothScanner = ArgosBluetoothScanner

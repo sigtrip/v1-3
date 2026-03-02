@@ -356,3 +356,7 @@ class ArgosQuantum:
         except Exception as e:
             return f"[⚠️] Сетевая аномалия при запросе к IBM: {e}"
 
+
+
+# README alias
+QuantumLogic = ArgosQuantum

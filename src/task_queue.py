@@ -520,3 +520,7 @@ class TaskQueueManager:
                     "new_ai_rps": recovered_rps,
                     "baseline_rps": self._baseline_ai_rps,
                 }, source="task_queue")
+
+
+# README alias
+TaskQueue = TaskQueueManager

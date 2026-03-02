@@ -247,3 +247,7 @@ class DialogContext:
             ago = _ago(m["ts"])
             lines.append(f"  [{ago}] {m['text'][:60]}")
         return "\n".join(lines)
+
+
+# README alias
+ContextManager = DialogContext

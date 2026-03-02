@@ -1063,3 +1063,7 @@ class ArgosBridge:
             )
         except Exception as e:
             return f"❌ Не удалось подключиться к {ip}: {e}"
+
+
+# README alias
+P2PBridge = ArgosBridge

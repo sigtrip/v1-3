@@ -233,8 +233,15 @@ class SmartSystemsManager:
     def _load(self):
         if os.path.exists(SYSTEMS_DB):
             try:
-                data = json.load(open(SYSTEMS_DB, encoding="utf-8"))
+                raw = json.load(open(SYSTEMS_DB, encoding="utf-8"))
+                # Support both legacy flat format and new {type_definitions, systems}
+                if "systems" in raw and isinstance(raw["systems"], dict):
+                    data = raw["systems"]
+                else:
+                    data = raw
                 for sys_id, sdata in data.items():
+                    if sys_id == "type_definitions":
+                        continue
                     sys_type = sdata.get("type", sys_id)
                     ss = SmartSystem(sys_type, sys_id)
                     ss.sensors   = sdata.get("sensors", {})
@@ -249,13 +256,23 @@ class SmartSystemsManager:
 
     def _save(self):
         os.makedirs("config", exist_ok=True)
-        data = {
+        instances = {
             sid: {
                 "type": ss.type, "sensors": ss.sensors,
                 "actuators": ss.actuators, "custom_rules": ss.custom_rules,
             }
             for sid, ss in self.systems.items()
         }
+        # Preserve type_definitions if present
+        type_defs = {}
+        if os.path.exists(SYSTEMS_DB):
+            try:
+                old = json.load(open(SYSTEMS_DB, encoding="utf-8"))
+                if "type_definitions" in old:
+                    type_defs = old["type_definitions"]
+            except Exception:
+                pass
+        data = {"type_definitions": type_defs, "systems": instances} if type_defs else instances
         json.dump(data, open(SYSTEMS_DB, "w", encoding="utf-8"),
                   indent=2, ensure_ascii=False)
 
@@ -325,3 +342,7 @@ class SmartSystemsManager:
             lines.append(f"  {profile['icon']} {sys_type:15s} — {profile['name']}")
             lines.append(f"       Сенсоры: {', '.join(profile['sensors'][:4])}...")
         return "\n".join(lines)
+
+
+# README alias
+SmartSystems = SmartSystemsManager

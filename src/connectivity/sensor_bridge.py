@@ -72,3 +72,7 @@ class ArgosSensorBridge:
             f"• Память: {v['storage']['free_gb']} свободно"
         )
         return report
+
+
+# README alias
+SensorBridge = ArgosSensorBridge

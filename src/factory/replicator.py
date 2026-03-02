@@ -79,3 +79,7 @@ class Replicator:
             f"   Размер: {size_mb:.2f} MB\n"
             f"   Время:  {stamp}"
         )
+
+
+# README alias
+ArgosReplicator = Replicator

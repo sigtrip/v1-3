@@ -80,3 +80,11 @@ class ActuatorNode:
         log.info("⚙️ Исполнение [%s]: %s", sys_id, ", ".join(executed) if executed else "В норме")
         state["executed"] = executed
         return state
+
+
+# README alias
+class BiosphereTools:
+    """Facade for biosphere pipeline nodes."""
+    SensorReader = SensorReaderNode
+    ClimateAnalyzer = ClimateAnalyzerNode
+    Actuator = ActuatorNode

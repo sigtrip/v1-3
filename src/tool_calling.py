@@ -303,3 +303,7 @@ class ArgosToolCallingEngine:
             except Exception:
                 return None
         return None
+
+
+# README alias
+ToolCalling = ArgosToolCallingEngine

@@ -66,3 +66,7 @@ class SpatialAwareness:
         except Exception:
             pass
         return f"📍 {self.get_location()}"
+
+
+# README alias
+SpatialEngine = SpatialAwareness

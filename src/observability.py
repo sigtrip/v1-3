@@ -340,3 +340,7 @@ def _format_record(r: dict) -> str:
     if r.get("type") == "intent":
         return f"\"{r.get('text','')[:40]}\" → {r.get('intent','?')}"
     return str({k: v for k, v in r.items() if k not in ("type","ts","source")})[:80]
+
+
+# README alias
+Observability = Metrics

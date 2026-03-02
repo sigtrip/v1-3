@@ -184,3 +184,7 @@ class ArgosMobileUI(App):
 
 if __name__ == '__main__':
     ArgosMobileUI().run()
+
+
+# README alias
+ArgosMobileApp = ArgosMobileUI

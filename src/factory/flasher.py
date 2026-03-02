@@ -206,3 +206,7 @@ class AirFlasher:
             return "Порт недоступен."
         time.sleep(2)  # Обратная совместимость со старым API
         return self.smart_flash(port=port, target_name="air_tag")
+
+
+# README alias
+ArgosFlasher = AirFlasher

@@ -189,3 +189,7 @@ class HardwareHomeostasisGuard:
         if hasattr(self.core, "context") and self.core.context:
             self.core.context.set_quantum_state("Analytic")
         return "none"
+
+
+# README alias
+HardwareGuard = HardwareHomeostasisGuard

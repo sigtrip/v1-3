@@ -71,3 +71,7 @@ class ArgosShield:
         if self._aesgcm:
             return self._aesgcm.decrypt(data[:12], data[12:], None)
         return self._fernet.decrypt(data)
+
+
+# README alias
+ArgosEncryption = ArgosShield

@@ -470,3 +470,7 @@ class ArgosCuriosity:
             f"{last}"
             f"  Интервал: {self.min_interval//60}–{self.max_interval//60} мин"
         )
+
+
+# README alias
+CuriosityEngine = ArgosCuriosity

@@ -132,3 +132,7 @@ def get_auth() -> MasterKeyValidator:
             if _auth_instance is None:
                 _auth_instance = MasterKeyValidator()
     return _auth_instance
+
+
+# README alias
+MasterAuth = MasterKeyValidator

@@ -165,3 +165,7 @@ class ArgosGitOps:
             return commit_res
         push_res = self.push()
         return f"{commit_res}\n\n{push_res}"
+
+
+# README alias
+GitOps = ArgosGitOps

@@ -388,3 +388,7 @@ WantedBy=multi-user.target
             "  4. chmod +x ~/.termux/boot/argos.sh\n"
             "  Аргос запустится при загрузке Android."
         )
+
+
+# README alias
+AutostartManager = ArgosAutostart
