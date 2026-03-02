@@ -5,6 +5,7 @@ core.py — ArgosCore FINAL v2.0
     Алерты + Агент + Vision + P2P + Загрузчик + 50+ команд
 """
 import os, threading, requests, asyncio, tempfile
+import concurrent.futures
 import json
 import time
 import base64
@@ -533,6 +534,8 @@ class ArgosCore:
             self.task_queue.register_runner("logic.command", self._queue_run_logic)
             if self.curiosity and hasattr(self.curiosity, "run_idle_learning_cycle"):
                 self.task_queue.register_idle_learning_handler(self.curiosity.run_idle_learning_cycle)
+            if self.biosphere_dag and hasattr(self.biosphere_dag, "run_cycle"):
+                self.task_queue.register_idle_learning_handler(self.biosphere_dag.run_cycle)
             self.task_queue.start()
             log.info("TaskQueue: OK")
         except Exception as e:
@@ -1084,6 +1087,63 @@ class ArgosCore:
             log.error("Watsonx: %s", e)
             return None
 
+    def _ask_consensus(self, context: str, user_text: str) -> str | None:
+        """
+        Speculative Consensus v2:
+        Параллельно опрашивает все доступные ядра (Drafters),
+        затем использует Verifier для синтеза единого ответа.
+        """
+        drafts = {}
+        log.info("⚛️ Запуск консенсуса моделей...")
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {}
+            if self.model:
+                futures[executor.submit(self._ask_gemini, context, user_text)] = "Gemini"
+            if getattr(self, "watsonx_model", None):
+                futures[executor.submit(self._ask_watsonx, context, user_text)] = "Watsonx"
+            if self.ollama_url:
+                futures[executor.submit(self._ask_ollama, context, user_text)] = "Ollama"
+
+            for future in concurrent.futures.as_completed(futures):
+                model_name = futures[future]
+                try:
+                    res = future.result()
+                    if res:
+                        drafts[model_name] = res
+                        log.info("Drafter [%s] готов.", model_name)
+                except Exception as e:
+                    log.warning("Ошибка Drafter-а [%s]: %s", model_name, e)
+
+        if not drafts:
+            return None
+
+        if len(drafts) == 1:
+            return list(drafts.values())[0]
+
+        log.info("🧠 Синтез финального ответа (Verifier)...")
+        verifier_context = (
+            f"{context}\n\n"
+            "СИСТЕМНОЕ ЗАДАНИЕ: Ты — Verifier (Синтезатор) ОС Аргос. "
+            "Ниже представлены черновики ответов от разных нейросетевых ядер на запрос пользователя. "
+            "Твоя задача — проанализировать их, убрать противоречия, взять лучшие факты из каждого "
+            "и сформировать единый, краткий и точный ответ."
+        )
+
+        drafts_text = "\n\n".join([f"--- Вариант от {name} ---\n{text}" for name, text in drafts.items()])
+        verifier_prompt = f"Запрос пользователя: {user_text}\n\n{drafts_text}\n\nФинальный ответ Аргоса:"
+
+        final_answer = None
+        if getattr(self, "watsonx_model", None):
+            final_answer = self._ask_watsonx(verifier_context, verifier_prompt)
+        elif self.model:
+            final_answer = self._ask_gemini(verifier_context, verifier_prompt)
+
+        if not final_answer:
+            return list(drafts.values())[0]
+
+        return final_answer
+
     def _local_drafter_providers(self) -> list[tuple[str, callable]]:
         providers = []
         if self._has_lmstudio_config():
@@ -1358,9 +1418,8 @@ class ArgosCore:
             answer = self._ask_watsonx(context, user_text)
             engine = f"{q_data['name']} (Watsonx)"
         else:
-            answer, auto_engine = self._ask_auto_consensus(context, user_text)
-            if auto_engine:
-                engine = f"{q_data['name']} ({auto_engine})"
+            answer = self._ask_consensus(context, user_text)
+            engine = f"{q_data['name']} (Auto-Consensus)"
 
         if not answer:
             if self.ai_mode == "gemini":
