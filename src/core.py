@@ -168,6 +168,8 @@ class ArgosCore:
         self._wake      = None
         self._ollama_proc = None
         self._tts_engine = None
+        self._tts_lock = threading.Lock()
+        self._tts_busy = False
         self._whisper_model = None
         self.skill_loader = None
         self.dag_manager  = None
@@ -209,6 +211,8 @@ class ArgosCore:
             "0", "off", "false", "no", "нет"
         }
         self._gigachat_token_expires_at = 0.0
+        self._gigachat_retry_after = 0.0
+        self._grok_unavailable_models = set()
         self.auto_collab_enabled = os.getenv("ARGOS_AUTO_COLLAB", "on").strip().lower() not in {"0", "false", "off", "no", "нет"}
         self.auto_collab_max_models = max(2, min(int(os.getenv("ARGOS_AUTO_COLLAB_MAX_MODELS", "4") or "4"), 4))
         self.spec_draft_count = max(1, min(int(os.getenv("ARGOS_SPEC_DRAFT_COUNT", "3") or "3"), 3))
@@ -684,11 +688,17 @@ class ArgosCore:
         if not self.voice_on or not self._tts_engine:
             return
         def _speak():
-            try:
-                self._tts_engine.say(text[:300])
-                self._tts_engine.runAndWait()
-            except Exception as e:
-                log.warning("TTS runtime error: %s", e)
+            with self._tts_lock:
+                if self._tts_busy:
+                    return
+                self._tts_busy = True
+                try:
+                    self._tts_engine.say(text[:300])
+                    self._tts_engine.runAndWait()
+                except Exception as e:
+                    log.warning("TTS runtime error: %s", e)
+                finally:
+                    self._tts_busy = False
         threading.Thread(target=_speak, daemon=True).start()
 
     def listen(self) -> str:
@@ -827,6 +837,13 @@ class ArgosCore:
     def _env_secret(self, name: str) -> str:
         return self._clean_secret(os.getenv(name, "") or "")
 
+    def _looks_like_guid(self, value: str) -> bool:
+        try:
+            uuid.UUID((value or "").strip())
+            return True
+        except Exception:
+            return False
+
     def _setup_ai(self):
         key = self._env_secret("GEMINI_API_KEY")
         if GEMINI_OK and key and key != "your_key_here":
@@ -913,6 +930,10 @@ class ArgosCore:
         self.watsonx_project_id = self._env_secret("WATSONX_PROJECT_ID")
         self.watsonx_url = (os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com") or "").strip()
         self.watsonx_model = None
+
+        if self.watsonx_project_id and not self._looks_like_guid(self.watsonx_project_id):
+            log.warning("Watsonx: WATSONX_PROJECT_ID выглядит некорректно, модуль отключён")
+            self.watsonx_project_id = ""
 
         if WATSONX_OK and self.watsonx_api_key and self.watsonx_project_id:
             try:
@@ -1067,6 +1088,9 @@ class ArgosCore:
         if self._gigachat_access_token and time.time() < self._gigachat_token_expires_at - 30:
             return self._gigachat_access_token
 
+        if time.time() < self._gigachat_retry_after:
+            return None
+
         client_id = self._env_secret("GIGACHAT_CLIENT_ID")
         client_secret = self._env_secret("GIGACHAT_CLIENT_SECRET")
         if not (client_id and client_secret):
@@ -1089,11 +1113,13 @@ class ArgosCore:
             )
             if not response.ok:
                 log.error("GigaChat auth: HTTP %s %s", response.status_code, response.text[:400])
+                self._gigachat_retry_after = time.time() + 120
                 return None
 
             payload = response.json()
             token = (payload.get("access_token") or "").strip()
             if not token:
+                self._gigachat_retry_after = time.time() + 120
                 return None
 
             expires_at_ms = payload.get("expires_at")
@@ -1103,9 +1129,11 @@ class ArgosCore:
                 self._gigachat_token_expires_at = time.time() + 1800
 
             self._gigachat_access_token = token
+            self._gigachat_retry_after = 0.0
             return token
         except Exception as e:
             log.error("GigaChat auth error: %s", e)
+            self._gigachat_retry_after = time.time() + 120
             return None
 
     def _ask_gemini(self, context: str, user_text: str) -> str | None:
@@ -1173,6 +1201,8 @@ class ArgosCore:
             return None
         url = (os.getenv("GROK_API_URL", "https://api.x.ai/v1/chat/completions") or "").strip()
         model = (os.getenv("GROK_MODEL", "grok-2-latest") or "").strip() or "grok-2-latest"
+        if model in self._grok_unavailable_models:
+            return None
         try:
             hist = self.context.get_prompt_context()
             payload = {
@@ -1194,7 +1224,12 @@ class ArgosCore:
                 timeout=25,
             )
             if not response.ok:
-                log.error("Grok: HTTP %s %s", response.status_code, response.text[:400])
+                body = response.text[:400]
+                if response.status_code == 400 and "model not found" in body.lower():
+                    self._grok_unavailable_models.add(model)
+                    log.warning("Grok: модель '%s' недоступна (Model not found), провайдер временно отключён", model)
+                    return None
+                log.error("Grok: HTTP %s %s", response.status_code, body)
                 return None
             data = response.json()
             choices = data.get("choices") or []
@@ -1237,6 +1272,7 @@ class ArgosCore:
             )
             if not response.ok:
                 log.error("GigaChat: HTTP %s %s", response.status_code, response.text[:400])
+                self._gigachat_retry_after = time.time() + 60
                 return None
 
             data = response.json()

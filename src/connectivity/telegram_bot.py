@@ -303,8 +303,7 @@ class ArgosTelegram:
         state  = result['state']
 
         await update.message.reply_text(
-            f"👁️ *ARGOS* `[{state}]`\n\n{answer}",
-            parse_mode="Markdown"
+            f"👁️ ARGOS [{state}]\n\n{answer}"
         )
 
     async def handle_voice(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -337,8 +336,7 @@ class ArgosTelegram:
             answer = result['answer'][:4000]
             state = result['state']
             await update.message.reply_text(
-                f"👁️ *ARGOS* `[{state}]`\n\n{answer}",
-                parse_mode="Markdown"
+                f"👁️ ARGOS [{state}]\n\n{answer}"
             )
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка обработки голосового: {e}")
