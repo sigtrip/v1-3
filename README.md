@@ -307,6 +307,9 @@ ARGOS_P2P_FAILOVER_LIMIT=4
 ### 3. Первый запуск
 
 ```bash
+# Windows one-click (инициализация + запуск)
+run_windows.bat
+
 python genesis.py      # создаёт структуру папок
 python main.py         # Desktop GUI + всё остальное
 ```
