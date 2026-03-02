@@ -157,6 +157,9 @@ ArgosUniversal/
 ### 1. Установка
 
 ```bash
+# Windows (чистая система, авто-установка Python + все зависимости)
+install_windows.bat
+
 # Всё сразу (включая PyAudio + SpeechRecognition)
 python setup_builder.py --install
 
