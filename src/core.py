@@ -2509,7 +2509,7 @@ class ArgosCore:
         if self.biosphere_dag:
             if any(k in t for k in ["биосфера статус", "biosphere статус", "biosphere status"]):
                 return self.biosphere_dag.status()
-            if any(k in t for k in ["биосфера цикл", "biosphere cycle", "биосфера сейчас"]):
+            if any(k in t for k in ["биосфера цикл", "biosphere cycle", "биосфера сейчас", "биосфера тик", "biosphere tick"]):
                 return self.biosphere_dag.run_cycle()
             if any(k in t for k in ["биосфера старт", "biosphere start"]):
                 interval = 30.0
@@ -2533,6 +2533,11 @@ class ArgosCore:
                         return self.biosphere_dag.set_target(key, val)
                     except ValueError:
                         return "Формат: биосфера цель [ключ] [значение]"
+
+        # ── Загрузчик прошивок ─────────────────────────────────────
+        if any(k in t for k in ["обнови тасмота", "скачай прошивки", "обнови tasmota"]):
+            from src.skills.tasmota_updater import TasmotaUpdater
+            return TasmotaUpdater().execute()
 
         # ── IBM Quantum ───────────────────────────────────
         if any(k in t for k in ["ibm квантовый", "ibm quantum", "квантовый мост"]):
