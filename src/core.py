@@ -2147,24 +2147,36 @@ class ArgosCore:
     # СБОРКА — APK / EXE / Setup / Auto
     # ═══════════════════════════════════════════════════════
     def _intent_build_apk(self) -> str:
-        """Сборка APK через ARGOS_APK_BUILD_CMD (buildozer / gradle)."""
+        """Сборка APK через build_apk.py / ARGOS_APK_BUILD_CMD / buildozer."""
         cmd = os.getenv("ARGOS_APK_BUILD_CMD", "").strip()
+
+        # Авто-определение команды, если env не задан
         if not cmd:
-            return (
-                "📦 Сборка APK:\n"
-                "  ARGOS_APK_BUILD_CMD не задан в .env\n"
-                "  Пример: ARGOS_APK_BUILD_CMD=buildozer -v android debug\n\n"
-                "Также проверь:\n"
-                "  • buildozer.spec в корне проекта\n"
-                "  • Java JDK, Android SDK, NDK\n"
-                "  • pip install buildozer"
+            build_script = os.path.join(
+                os.path.dirname(os.path.dirname(__file__)), "build_apk.py"
             )
+            if not os.path.exists(build_script):
+                build_script = "build_apk.py"
+            if os.path.exists(build_script):
+                cmd = f"{sys.executable} {build_script}"
+            else:
+                cmd = "buildozer -v android debug"
+
         import shlex as _shlex2
         parts = _shlex2.split(cmd)
         if not parts:
-            return "❌ ARGOS_APK_BUILD_CMD пуст после разбора."
-        if parts[0].lower() == "buildozer" and not os.path.exists("buildozer.spec"):
-            return "❌ Не найден buildozer.spec в корне проекта."
+            return "❌ Команда сборки APK пуста после разбора."
+
+        # Проверяем buildozer.spec
+        is_buildozer = parts[0].lower() == "buildozer" or (
+            len(parts) >= 3 and "buildozer" in parts[-2]
+        )
+        if is_buildozer and not os.path.exists("buildozer.spec"):
+            return (
+                "❌ Не найден buildozer.spec в корне проекта.\n"
+                "  Создайте: python -m buildozer init\n"
+                "  Или используйте готовый из проекта."
+            )
         try:
             log.info("📦 Запуск сборки APK: %s", cmd)
             result = subprocess.run(parts, shell=False, check=True, capture_output=True, text=True, timeout=600)
@@ -2263,13 +2275,21 @@ class ArgosCore:
         else:
             lines.append(f"2. EXE: пропуск (не Windows, текущая ОС: {os_name})")
 
-        # Проверяем APK
-        apk_cmd = os.getenv("ARGOS_APK_BUILD_CMD", "").strip()
-        if apk_cmd:
+        # Проверяем APK (build_apk.py или buildozer)
+        build_apk_script = os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "build_apk.py"
+        )
+        has_apk_toolchain = (
+            os.getenv("ARGOS_APK_BUILD_CMD", "").strip()
+            or os.path.exists(build_apk_script)
+            or os.path.exists("build_apk.py")
+            or os.path.exists("buildozer.spec")
+        )
+        if has_apk_toolchain:
             apk_result = self._intent_build_apk()
             lines.append(f"3. APK: {apk_result}")
         else:
-            lines.append("3. APK: пропуск (ARGOS_APK_BUILD_CMD не задан)")
+            lines.append("3. APK: пропуск (нет build_apk.py / buildozer.spec)")
 
         return "\n".join(lines)
 

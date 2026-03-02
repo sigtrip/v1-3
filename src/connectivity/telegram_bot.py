@@ -34,21 +34,50 @@ class ArgosTelegram:
         return str(candidates[0])
 
     def _build_apk_sync(self) -> tuple[bool, str]:
-        """Собирает APK внешней командой из ARGOS_APK_BUILD_CMD."""
+        """Собирает APK через build_apk.py или ARGOS_APK_BUILD_CMD."""
+        import sys as _sys
+
+        # 1. Приоритет: env-переменная → build_apk.py → buildozer напрямую
         cmd = os.getenv("ARGOS_APK_BUILD_CMD", "").strip()
+
         if not cmd:
-            return False, "ARGOS_APK_BUILD_CMD не задан. Пример: buildozer -v android debug"
+            # Ищем build_apk.py рядом с проектом
+            build_script = Path(__file__).resolve().parent.parent.parent / "build_apk.py"
+            if build_script.exists():
+                cmd = f"{_sys.executable} {build_script}"
+            elif Path("build_apk.py").exists():
+                cmd = f"{_sys.executable} build_apk.py"
+            else:
+                cmd = "buildozer -v android debug"
 
         cmd_parts = shlex.split(cmd)
         if not cmd_parts:
-            return False, "ARGOS_APK_BUILD_CMD пуст после разбора."
-        if cmd_parts[0].lower() == "buildozer" and not Path("buildozer.spec").exists():
-            return False, "Не найден buildozer.spec в корне проекта."
+            return False, "Команда сборки APK пуста после разбора."
 
+        # Проверяем buildozer.spec если команда использует buildozer
+        is_buildozer = cmd_parts[0].lower() == "buildozer" or (
+            len(cmd_parts) >= 3 and cmd_parts[-3] == "-m" and "buildozer" in cmd_parts[-2]
+        )
+        if is_buildozer and not Path("buildozer.spec").exists():
+            return False, (
+                "Не найден buildozer.spec в корне проекта.\n"
+                "Создайте: python -m buildozer init"
+            )
+
+        log.info("[APK BUILD]: Запуск: %s", cmd)
         try:
-            subprocess.run(cmd_parts, shell=False, check=True)
+            result = subprocess.run(
+                cmd_parts, shell=False, check=True,
+                capture_output=True, text=True, timeout=1800
+            )
+            log.info("[APK BUILD]: stdout: %s", (result.stdout or "")[-300:])
         except subprocess.CalledProcessError as e:
-            return False, f"Сборка APK завершилась с ошибкой: {e}"
+            stderr = (e.stderr or e.stdout or str(e))[:500]
+            return False, f"Сборка APK завершилась с ошибкой:\n{stderr}"
+        except subprocess.TimeoutExpired:
+            return False, "Сборка APK: превышен таймаут (30 мин)."
+        except FileNotFoundError:
+            return False, f"Команда не найдена: {cmd_parts[0]}"
         except Exception as e:
             return False, f"Ошибка запуска сборки APK: {e}"
 

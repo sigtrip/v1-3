@@ -8,6 +8,7 @@ logs/
 builds/
 dist/
 *.spec
+!buildozer.spec
 *.egg-info
 venv/
 .venv/
