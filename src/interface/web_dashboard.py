@@ -7,6 +7,8 @@ import threading
 import json
 import time
 import os
+import hashlib
+from urllib.parse import urlparse
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from src.argos_logger import get_logger
 
@@ -165,7 +167,12 @@ function setMetric(id, val, suffix) {
 
 async function fetch_log() {
   try {
-    const r = await fetch('/api/log');
+    window._logEtag = window._logEtag || '';
+    const hdr = window._logEtag ? {'If-None-Match': window._logEtag} : {};
+    const r = await fetch('/api/log', {headers: hdr});
+    if (r.status === 304) return;
+    const etag = r.headers.get('ETag');
+    if (etag) window._logEtag = etag;
     const d = await r.json();
     const el = document.getElementById('log');
     el.textContent = d.lines || '';
@@ -268,16 +275,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
     admin   = None
     flasher = None
     start_t = time.time()
+    _status_cache = None
+    _status_cache_ts = 0.0
+    _log_cache = ""
+    _log_cache_ts = 0.0
+    _log_mtime = 0.0
+    _log_etag = ""
 
     def log_message(self, *args): pass  # Отключаем стандартный вывод
 
     def do_GET(self):
-        if self.path == "/":
+        path = urlparse(self.path).path
+        if path == "/":
             self._send(200, "text/html", HTML.encode())
-        elif self.path == "/api/status":
+        elif path == "/api/status":
             self._send(200, "application/json", self._status_json())
-        elif self.path == "/api/log":
-            self._send(200, "application/json", self._log_json())
+        elif path == "/api/log":
+            payload, etag = self._log_json()
+            inm = (self.headers.get("If-None-Match") or "").strip('"')
+            if inm and etag and inm == etag:
+                self._send(304, "application/json", b"", headers={"ETag": etag, "Cache-Control": "no-cache"})
+            else:
+                self._send(200, "application/json", payload, headers={"ETag": etag, "Cache-Control": "no-cache"})
         else:
             self._send(404, "text/plain", b"Not found")
 
@@ -294,20 +313,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._send(200, "application/json",
                            json.dumps({"answer": f"Ошибка: {e}"}).encode())
 
-    def _send(self, code, ctype, data):
+    def _send(self, code, ctype, data, headers: dict | None = None):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", len(data))
+        if headers:
+            for k, v in headers.items():
+                self.send_header(str(k), str(v))
         self.end_headers()
         self.wfile.write(data)
 
     def _status_json(self) -> bytes:
         import psutil, json
+        now = time.time()
+        if self._status_cache is not None and (now - self._status_cache_ts) < 1.0:
+            return self._status_cache
+
         uptime_s = int(time.time() - self.start_t)
         h, m = divmod(uptime_s // 60, 60)
         uptime = f"{h}ч {m}мин"
 
-        cpu  = psutil.cpu_percent(interval=0.3)
+        cpu  = psutil.cpu_percent(interval=None)
         ram  = psutil.virtual_memory().percent
         disk = psutil.disk_usage('/').percent
 
@@ -353,19 +379,29 @@ class DashboardHandler(BaseHTTPRequestHandler):
         data = dict(state=state, voice_on=voice, p2p_nodes=p2p_nodes,
                     p2p_list=p2p_list, uptime=uptime, cpu=cpu, ram=ram,
                     disk=disk, net=net, bat=bat)
-        return json.dumps(data, ensure_ascii=False).encode()
+        payload = json.dumps(data, ensure_ascii=False).encode()
+        self._status_cache = payload
+        self._status_cache_ts = now
+        return payload
 
-    def _log_json(self) -> bytes:
-        lines = ""
+    def _log_json(self) -> tuple[bytes, str]:
+        lines = self._log_cache
+        now = time.time()
         try:
             log_path = "logs/argos.log"
             if os.path.exists(log_path):
-                with open(log_path, encoding="utf-8") as f:
-                    all_lines = f.readlines()
-                lines = "".join(all_lines[-50:])  # Последние 50 строк
+                mtime = os.path.getmtime(log_path)
+                if mtime != self._log_mtime or (now - self._log_cache_ts) > 1.0:
+                    with open(log_path, encoding="utf-8") as f:
+                        all_lines = f.readlines()
+                    lines = "".join(all_lines[-50:])
+                    self._log_cache = lines
+                    self._log_cache_ts = now
+                    self._log_mtime = mtime
+                    self._log_etag = hashlib.md5(f"{mtime}:{len(lines)}".encode("utf-8")).hexdigest()
         except Exception as e:
-          log.warning("Dashboard log read error: %s", e)
-        return json.dumps({"lines": lines}, ensure_ascii=False).encode()
+            log.warning("Dashboard log read error: %s", e)
+        return json.dumps({"lines": self._log_cache}, ensure_ascii=False).encode(), self._log_etag
 
 
 class WebDashboard:
