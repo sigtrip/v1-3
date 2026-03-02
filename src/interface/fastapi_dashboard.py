@@ -2,11 +2,11 @@
 fastapi_dashboard.py — современный dashboard Аргоса на FastAPI.
 Если FastAPI/uvicorn недоступны, core автоматически использует legacy dashboard.
 """
+import hashlib
 import json
 import os
 import threading
 import time
-import hashlib
 from collections import deque
 
 from src.argos_logger import get_logger
@@ -30,6 +30,7 @@ class FastAPIDashboard:
         self._log_cache_ts = 0.0
         self._log_etag = ""
         self._log_mtime = 0.0
+        self._dashboard_rev = 0
 
     def start(self) -> str:
         try:
@@ -54,31 +55,24 @@ class FastAPIDashboard:
             1,
         )
         html = html.replace(
-            "const lg=await fetch('/api/log');const j=await lg.json();document.getElementById('log').textContent=j.lines||'';",
-            "window._logEtag=window._logEtag||'';const lg=await fetch('/api/log',{headers:window._logEtag?{'If-None-Match':window._logEtag}:{}});if(lg.status===200){window._logEtag=lg.headers.get('ETag')||window._logEtag;const j=await lg.json();document.getElementById('log').textContent=j.lines||'';}",
+            "let voiceOn=false;",
+            "let voiceOn=false;let dashboardRev=0;",
             1,
         )
         html = html.replace(
             "const r=await fetch('/api/status');const d=await r.json();",
-            "const r=await fetch('/api/dashboard');const d=await r.json();",
+            "const r=await fetch('/api/dashboard?since='+dashboardRev);const d=await r.json();if(d.changed===false){dashboardRev=d.rev||dashboardRev;return;}dashboardRev=d.rev||dashboardRev;",
             1,
         )
         html = html.replace(
-            "window._logEtag=window._logEtag||'';const lg=await fetch('/api/log',{headers:window._logEtag?{'If-None-Match':window._logEtag}:{}});if(lg.status===200){window._logEtag=lg.headers.get('ETag')||window._logEtag;const j=await lg.json();document.getElementById('log').textContent=j.lines||'';}",
+            "const lg=await fetch('/api/log');const j=await lg.json();document.getElementById('log').textContent=j.lines||'';",
             "document.getElementById('log').textContent=d.log_lines||'';",
             1,
         )
 
-        @app.get("/", response_class=HTMLResponse)
-        async def index():
-            return HTMLResponse(content=html)
-
-        @app.get("/api/status")
-        async def status():
-            now = time.time()
+        def _refresh_status(now: float):
             if self._status_cache is not None and (now - self._status_cache_ts) < 1.0:
-                return JSONResponse(self._status_cache)
-
+                return
             uptime_s = int(time.time() - self._start_t)
             h, m = divmod(uptime_s // 60, 60)
             uptime = f"{h}ч {m}мин"
@@ -99,27 +93,43 @@ class FastAPIDashboard:
                 "p2p_nodes": p2p_nodes,
                 "history": list(self._history),
             }
+            if payload != self._status_cache:
+                self._dashboard_rev += 1
             self._status_cache = payload
             self._status_cache_ts = now
-            return JSONResponse(payload)
 
-        @app.get("/api/log")
-        async def logs(request: Request):
-            lines = self._log_cache
-            now = time.time()
+        def _refresh_logs(now: float):
             try:
                 log_path = "logs/argos.log"
                 if os.path.exists(log_path):
                     mtime = os.path.getmtime(log_path)
                     if mtime != self._log_mtime or (now - self._log_cache_ts) > 1.0:
+                        prev = self._log_cache
                         with open(log_path, encoding="utf-8") as f:
                             lines = "".join(f.readlines()[-120:])
                         self._log_cache = lines
                         self._log_cache_ts = now
                         self._log_mtime = mtime
                         self._log_etag = hashlib.md5(f"{mtime}:{len(lines)}".encode("utf-8")).hexdigest()
+                        if self._log_cache != prev:
+                            self._dashboard_rev += 1
             except Exception:
                 pass
+
+        @app.get("/", response_class=HTMLResponse)
+        async def index():
+            return HTMLResponse(content=html)
+
+        @app.get("/api/status")
+        async def status():
+            now = time.time()
+            _refresh_status(now)
+            return JSONResponse(self._status_cache)
+
+        @app.get("/api/log")
+        async def logs(request: Request):
+            now = time.time()
+            _refresh_logs(now)
 
             inm = (request.headers.get("if-none-match") or "").strip('"')
             if inm and self._log_etag and inm == self._log_etag:
@@ -128,45 +138,22 @@ class FastAPIDashboard:
             return JSONResponse({"lines": self._log_cache}, headers={"ETag": self._log_etag, "Cache-Control": "no-cache"})
 
         @app.get("/api/dashboard")
-        async def dashboard():
+        async def dashboard(request: Request):
             now = time.time()
-            if self._status_cache is None or (now - self._status_cache_ts) >= 1.0:
-                uptime_s = int(time.time() - self._start_t)
-                h, m = divmod(uptime_s // 60, 60)
-                uptime = f"{h}ч {m}мин"
-                cpu = psutil.cpu_percent(interval=None)
-                ram = psutil.virtual_memory().percent
-                disk = psutil.disk_usage('/').percent
-                state = self.core.quantum.generate_state()["name"] if self.core else "Offline"
-                voice = bool(self.core.voice_on) if self.core else False
-                p2p_nodes = len(self.core.p2p.registry.all()) if self.core and self.core.p2p else 0
-                self._history.append({"ts": time.time(), "cpu": cpu, "ram": ram, "disk": disk})
-                self._status_cache = {
-                    "state": state,
-                    "voice_on": voice,
-                    "uptime": uptime,
-                    "cpu": cpu,
-                    "ram": ram,
-                    "disk": disk,
-                    "p2p_nodes": p2p_nodes,
-                    "history": list(self._history),
-                }
-                self._status_cache_ts = now
+            _refresh_status(now)
+            _refresh_logs(now)
 
             try:
-                log_path = "logs/argos.log"
-                if os.path.exists(log_path):
-                    mtime = os.path.getmtime(log_path)
-                    if mtime != self._log_mtime or (now - self._log_cache_ts) > 1.0:
-                        with open(log_path, encoding="utf-8") as f:
-                            self._log_cache = "".join(f.readlines()[-120:])
-                        self._log_cache_ts = now
-                        self._log_mtime = mtime
-                        self._log_etag = hashlib.md5(f"{mtime}:{len(self._log_cache)}".encode("utf-8")).hexdigest()
+                since = int((request.query_params.get("since") or "0").strip() or 0)
             except Exception:
-                pass
+                since = 0
+
+            if since >= self._dashboard_rev:
+                return JSONResponse({"changed": False, "rev": self._dashboard_rev})
 
             payload = dict(self._status_cache)
+            payload["changed"] = True
+            payload["rev"] = self._dashboard_rev
             payload["log_lines"] = self._log_cache
             payload["log_etag"] = self._log_etag
             return JSONResponse(payload)
