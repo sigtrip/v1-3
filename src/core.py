@@ -1813,6 +1813,19 @@ class ArgosCore:
         if self.curiosity and any(k in t for k in ["любопытство сейчас", "curiosity now"]):
             return self.curiosity.ask_now()
 
+        if any(k in t for k in [
+            "голос вкл", "включи голос", "голос включи", "voice on", "voice_on"
+        ]):
+            self.voice_on = True
+            return "🔊 Голосовой модуль активирован."
+        if any(k in t for k in [
+            "голос выкл", "выключи голос", "голос отключи", "voice off", "voice_off"
+        ]):
+            self.voice_on = False
+            return "🔇 Голосовой модуль отключён."
+        if any(k in t for k in ["голос статус", "voice status", "voice_state"]):
+            return f"🔈 Голосовой режим: {'ВКЛ' if self.voice_on else 'ВЫКЛ'}"
+
         if self.task_queue and any(k in t for k in ["очередь статус", "queue status"]):
             return self.task_queue.status()
         if self.task_queue and any(k in t for k in ["очередь результаты", "queue results"]):

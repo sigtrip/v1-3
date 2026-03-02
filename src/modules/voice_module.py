@@ -6,17 +6,21 @@ class VoiceModule(BaseModule):
     title = "Voice"
 
     def can_handle(self, text: str, lowered: str) -> bool:
-        return any(k in lowered for k in ["голос вкл", "включи голос", "голос выкл", "выключи голос", "включи wake word", "wake word вкл"])
+        return any(k in lowered for k in [
+            "голос вкл", "включи голос", "голос включи", "voice on", "voice_on",
+            "голос выкл", "выключи голос", "голос отключи", "voice off", "voice_off",
+            "включи wake word", "wake word вкл"
+        ])
 
     def handle(self, text: str, lowered: str, admin=None, flasher=None) -> str | None:
         if not self.core:
             return None
 
-        if any(k in lowered for k in ["голос вкл", "включи голос"]):
+        if any(k in lowered for k in ["голос вкл", "включи голос", "голос включи", "voice on", "voice_on"]):
             self.core.voice_on = True
             return "🔊 Голосовой модуль активирован."
 
-        if any(k in lowered for k in ["голос выкл", "выключи голос"]):
+        if any(k in lowered for k in ["голос выкл", "выключи голос", "голос отключи", "voice off", "voice_off"]):
             self.core.voice_on = False
             return "🔇 Голосовой модуль отключён."
 
