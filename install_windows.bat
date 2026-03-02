@@ -23,6 +23,7 @@ if errorlevel 1 (
 call :detect_python
 if errorlevel 1 (
     echo [ERROR] Python не найден даже после установки.
+    echo [HINT] Перезапусти терминал/ПК и запусти install_windows.bat повторно.
     goto :fail
 )
 
@@ -52,7 +53,9 @@ if exist "requirements.txt" (
 if exist "requirements-optional.txt" (
     echo [INFO] Устанавливаю optional зависимости requirements-optional.txt
     "%VENV_PY%" -m pip install -r requirements-optional.txt
-    if errorlevel 1 goto :fail
+    if errorlevel 1 (
+        echo [WARN] Optional-зависимости установились не полностью. Продолжаю.
+    )
 )
 
 echo [INFO] Проверяю голосовые пакеты (SpeechRecognition + PyAudio)
@@ -63,15 +66,21 @@ if errorlevel 1 goto :fail
 if errorlevel 1 (
     echo [WARN] PyAudio не установился через pip. Пробую pipwin...
     "%VENV_PY%" -m pip install pipwin
-    if errorlevel 1 goto :fail
+    if errorlevel 1 (
+        echo [WARN] pipwin не установился. Голосовые функции могут быть недоступны.
+        goto :post_install
+    )
     "%VENV_PY%" -m pipwin install pyaudio
-    if errorlevel 1 goto :fail
+    if errorlevel 1 (
+        echo [WARN] pipwin не смог поставить pyaudio. Голосовые функции могут быть недоступны.
+    )
 )
 
+:post_install
 echo.
 echo [OK] Установка завершена.
 echo [INFO] Далее:
-echo        1) copy .env.example .env   (или создай .env вручную)
+echo        1) создай .env вручную (или запусти python genesis.py)
 echo        2) .venv\Scripts\activate
 echo        3) python genesis.py
 echo        4) python main.py
@@ -80,36 +89,33 @@ goto :done
 
 :detect_python
 set "PYTHON_CMD="
-where py >nul 2>&1
-if not errorlevel 1 (
-    set "PYTHON_CMD=py -3"
+for /f "delims=" %%P in ('py -3 -c "import sys; print(sys.executable)" 2^>nul') do set "PYTHON_CMD=%%P"
+if defined PYTHON_CMD (
     exit /b 0
 )
 
-where python >nul 2>&1
-if not errorlevel 1 (
-    set "PYTHON_CMD=python"
+for /f "delims=" %%P in ('python -c "import sys; print(sys.executable)" 2^>nul') do set "PYTHON_CMD=%%P"
+if defined PYTHON_CMD (
     exit /b 0
 )
 
-if exist "%LOCALAPPDATA%\Programs\Python\Python311\python.exe" (
-    set "PYTHON_CMD=%LOCALAPPDATA%\Programs\Python\Python311\python.exe"
-    exit /b 0
+for %%V in (313 312 311 310) do (
+    if exist "%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe" (
+        set "PYTHON_CMD=%LOCALAPPDATA%\Programs\Python\Python%%V\python.exe"
+        exit /b 0
+    )
 )
 
-if exist "%ProgramFiles%\Python311\python.exe" (
-    set "PYTHON_CMD=%ProgramFiles%\Python311\python.exe"
-    exit /b 0
+for %%V in (313 312 311 310) do (
+    if exist "%ProgramFiles%\Python%%V\python.exe" (
+        set "PYTHON_CMD=%ProgramFiles%\Python%%V\python.exe"
+        exit /b 0
+    )
 )
 
 exit /b 1
 
 :run_py
-if /I "%PYTHON_CMD%"=="py -3" (
-    py -3 %*
-    exit /b %errorlevel%
-)
-
 "%PYTHON_CMD%" %*
 exit /b %errorlevel%
 
