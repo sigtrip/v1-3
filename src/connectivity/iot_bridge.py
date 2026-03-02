@@ -803,7 +803,7 @@ class IoTBridge:
             ("MQTT Broker Bridge", "IMPLEMENTED", "READY" if has("paho.mqtt.client") else "MISSING dep: paho-mqtt"),
             ("Tasmota Discovery", "IMPLEMENTED", "READY" if has("paho.mqtt.client") else "MISSING dep: paho-mqtt"),
             ("Modbus RTU/TCP", "TEMPLATE-BASED", "Gateway templates + external runtime"),
-            ("BACnet", "PLANNED/TEMPLATE", "Protocol listed; adapter code not implemented in IoTBridge"),
+            ("BACnet", "IMPLEMENTED", "Adapter available via src.connectivity.bacnet_bridge.BACnetBridge"),
             ("KNX", "PLANNED/TEMPLATE", "Protocol listed; adapter code not implemented in IoTBridge"),
             ("LonWorks", "PLANNED/TEMPLATE", "Protocol listed; adapter code not implemented in IoTBridge"),
             ("M-Bus", "PLANNED/TEMPLATE", "Protocol listed; adapter code not implemented in IoTBridge"),

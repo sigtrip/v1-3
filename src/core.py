@@ -327,6 +327,14 @@ class ArgosCore:
         self.ollama_health_url = (os.getenv("ARGOS_OLLAMA_HEALTH_URL", "http://localhost:11434/api/tags") or "").strip()
         self.lmstudio_url = (os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1/chat/completions") or "").strip()
         self.lmstudio_model = (os.getenv("LMSTUDIO_MODEL", "local-model") or "").strip() or "local-model"
+        try:
+            self.ollama_timeout_sec = max(10.0, min(float(os.getenv("ARGOS_OLLAMA_TIMEOUT_SEC", "45") or "45"), 300.0))
+        except Exception:
+            self.ollama_timeout_sec = 45.0
+        try:
+            self.ollama_max_prompt_chars = max(2000, min(int(os.getenv("ARGOS_OLLAMA_MAX_PROMPT_CHARS", "16000") or "16000"), 200000))
+        except Exception:
+            self.ollama_max_prompt_chars = 16000
         self.ai_mode    = self._normalize_ai_mode(os.getenv("ARGOS_AI_MODE", "auto"))
         self.voice_on   = os.getenv("ARGOS_VOICE_DEFAULT", "off").strip().lower() in (
             "1", "true", "on", "yes", "да", "вкл"
@@ -349,6 +357,7 @@ class ArgosCore:
         self.dag_manager  = None
         self.marketplace  = None
         self.iot_bridge   = None
+        self.bacnet_bridge = None
         self.mesh_net     = None
         self.smart_sys    = None
         self.gateway_mgr  = None
@@ -520,13 +529,20 @@ class ArgosCore:
             log.warning("GitHub Marketplace: %s", e)
 
     def _init_iot(self):
-        """IoT Bridge + Mesh Network + Gateway Manager."""
+        """IoT Bridge + BACnet + Mesh Network + Gateway Manager."""
         try:
             from src.connectivity.iot_bridge import IoTBridge
             self.iot_bridge = IoTBridge()
             log.info("IoT Bridge: OK (%d устройств)", len(self.iot_bridge.registry.all()))
         except Exception as e:
             log.warning("IoT Bridge: %s", e)
+
+        try:
+            from src.connectivity.bacnet_bridge import BACnetBridge
+            self.bacnet_bridge = BACnetBridge()
+            log.info("BACnet Bridge: OK (%s)", "simulation" if self.bacnet_bridge.simulation else "live")
+        except Exception as e:
+            log.warning("BACnet Bridge: %s", e)
 
         try:
             from src.connectivity.mesh_network import MeshNetwork
@@ -1647,14 +1663,23 @@ class ArgosCore:
         try:
             # Добавляем историю в промпт
             hist = self.context.get_prompt_context()
+            if len(hist) > self.ollama_max_prompt_chars:
+                hist = hist[-self.ollama_max_prompt_chars:]
             full_prompt = f"{context}\n\n{hist}\n\nUser: {user_text}\nArgos:"
             res = requests.post(
                 self.ollama_url,
                 json={"model": self._select_model("ollama"), "prompt": full_prompt, "stream": False},
-                timeout=150
+                timeout=self.ollama_timeout_sec
             )
+            res.raise_for_status()
+            data = res.json()
+            answer = (data.get("response") or "").strip()
+            if not answer:
+                self._circuit.record_failure("Ollama", "generic")
+                log.error("Ollama: empty response body")
+                return None
             self._circuit.record_success("Ollama")
-            return res.json().get('response')
+            return answer
         except requests.exceptions.ConnectionError:
             self._circuit.record_failure("Ollama", "connection")
             log.error("Ollama: connection refused")
@@ -1662,6 +1687,15 @@ class ArgosCore:
         except requests.exceptions.Timeout:
             self._circuit.record_failure("Ollama", "timeout")
             log.error("Ollama: timeout")
+            return None
+        except requests.exceptions.HTTPError as e:
+            status = getattr(e.response, "status_code", 0)
+            if status in (429, 503, 504):
+                self._circuit.record_failure("Ollama", "timeout")
+            else:
+                self._circuit.record_failure("Ollama", "generic")
+            body = (getattr(e.response, "text", "") or "")[:300]
+            log.error("Ollama: HTTP %s %s", status, body)
             return None
         except Exception as e:
             log.error("Ollama: %s", e)
@@ -1895,8 +1929,8 @@ class ArgosCore:
         drafts: list[tuple[str, str]] = []
         if drafters:
             draft_slots: list[dict] = []
-            for idx in range(self.spec_draft_count):
-                provider_name, fn = drafters[idx % len(drafters)]
+            effective_count = min(self.spec_draft_count, len(drafters))
+            for idx, (provider_name, fn) in enumerate(drafters[:effective_count]):
                 draft_slots.append({"idx": idx, "name": provider_name, "fn": fn, "result": None})
 
             def _gen_draft(slot: dict):
@@ -2978,6 +3012,51 @@ class ArgosCore:
                                                        parts[2] if len(parts) > 2 else None)
                 return "Формат: команда устройству [id] [команда] [значение]"
 
+        if self.bacnet_bridge:
+            if any(k in t for k in ["bacnet статус", "статус bacnet"]):
+                return self.bacnet_bridge.status()
+            if any(k in t for k in ["bacnet скан", "скан bacnet", "bacnet scan"]):
+                return self.bacnet_bridge.scan()
+            if "bacnet регистрация" in t or "bacnet register" in t:
+                # Формат: bacnet регистрация [device_id] [address] [name]
+                parts = text.split("регистрация", 1)[-1].strip().split()
+                if len(parts) >= 2:
+                    try:
+                        dev_id = int(parts[0])
+                    except Exception:
+                        return "Формат: bacnet регистрация [device_id:int] [address] [name?]"
+                    address = parts[1]
+                    name = " ".join(parts[2:]) if len(parts) > 2 else ""
+                    return self.bacnet_bridge.register_device(dev_id, address, name=name)
+                return "Формат: bacnet регистрация [device_id:int] [address] [name?]"
+            if "bacnet чтение" in t or "bacnet read" in t:
+                # Формат: bacnet чтение [device_id] [obj_type] [obj_instance] [prop_name]
+                parts = text.split("чтение", 1)[-1].strip().split()
+                if len(parts) >= 4:
+                    try:
+                        dev_id = int(parts[0])
+                        obj_instance = int(parts[2])
+                    except Exception:
+                        return "Формат: bacnet чтение [device_id:int] [obj_type] [obj_instance:int] [property]"
+                    obj_type = parts[1]
+                    prop_name = parts[3]
+                    return self.bacnet_bridge.read_property(dev_id, obj_type, obj_instance, prop_name)
+                return "Формат: bacnet чтение [device_id:int] [obj_type] [obj_instance:int] [property]"
+            if "bacnet запись" in t or "bacnet write" in t:
+                # Формат: bacnet запись [device_id] [obj_type] [obj_instance] [prop_name] [value]
+                parts = text.split("запись", 1)[-1].strip().split()
+                if len(parts) >= 5:
+                    try:
+                        dev_id = int(parts[0])
+                        obj_instance = int(parts[2])
+                    except Exception:
+                        return "Формат: bacnet запись [device_id:int] [obj_type] [obj_instance:int] [property] [value]"
+                    obj_type = parts[1]
+                    prop_name = parts[3]
+                    value = parts[4]
+                    return self.bacnet_bridge.write_property(dev_id, obj_type, obj_instance, prop_name, value)
+                return "Формат: bacnet запись [device_id:int] [obj_type] [obj_instance:int] [property] [value]"
+
         # ══════════════════════════════════════════════════
         # MESH-СЕТЬ (Zigbee, LoRa, WiFi Mesh)
         # ══════════════════════════════════════════════════
@@ -3512,6 +3591,8 @@ class ArgosCore:
         lines.append(self.sensors.get_full_report())
         if self.iot_bridge:
             lines.append(self.iot_bridge.status())
+        if self.bacnet_bridge:
+            lines.append(self.bacnet_bridge.status())
         if self.mesh_net:
             lines.append(self.mesh_net.status_report())
         if self.gateway_mgr:
@@ -3589,6 +3670,8 @@ class ArgosCore:
     статус устройства [id] · iot протоколы
     подключи zigbee/lora/mqtt/modbus · подключи modbus tcp [host] [port]
     modbus чтение [address] [count] [unit] · modbus запись [address] [value] [unit]
+    bacnet статус · bacnet скан · bacnet регистрация [id] [address] [name]
+    bacnet чтение [id] [obj] [instance] [property] · bacnet запись [id] [obj] [instance] [property] [value]
     запусти mesh
   статус mesh · запусти zigbee/lora [порт]
   запусти wifi mesh [SSID]
@@ -3707,6 +3790,12 @@ class ArgosCore:
     • Zigbee mesh
     • LoRa mesh (включая SX1276)
     • WiFi mesh / gateway bridge
+
+🏢 BACnet Bridge:
+    • Команды: bacnet статус · bacnet скан
+               bacnet регистрация [id] [address] [name]
+               bacnet чтение [id] [obj] [instance] [property]
+               bacnet запись [id] [obj] [instance] [property] [value]
 
 🔧 Прошивка устройств:
     • STM32H503, ESP8266, RP2040

@@ -671,11 +671,16 @@ class JarvisEngine:
                 pass
         # Ollama
         try:
+            try:
+                ollama_timeout = max(10.0, min(float(os.getenv("ARGOS_OLLAMA_TIMEOUT_SEC", "45") or "45"), 300.0))
+            except Exception:
+                ollama_timeout = 45.0
             r = requests.post(
                 "http://localhost:11434/api/generate",
                 json={"model": "llama3", "prompt": f"{system}\n\n{prompt}", "stream": False},
-                timeout=60,
+                timeout=ollama_timeout,
             )
+            r.raise_for_status()
             if r.status_code == 200:
                 return r.json().get("response", "")
         except Exception:
