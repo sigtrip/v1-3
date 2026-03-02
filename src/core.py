@@ -242,7 +242,7 @@ class ArgosCore:
         self._init_emergency_purge()
         self._init_container_isolation()
         self._init_master_auth()
-        self._init_biosphere_dag()
+        self._init_biosphere()
         self._init_modules()
         self._init_tool_calling()
         self._init_git_ops()
@@ -498,18 +498,24 @@ class ArgosCore:
         except Exception as e:
             log.warning("Master Auth: %s", e)
 
-    def _init_biosphere_dag(self):
-        """BiosphereDAG — DAG-контроллер биосферы."""
+    def _init_biosphere(self):
+        """Biosphere DAG — DAG-контроллер биосферы."""
         try:
-            from src.modules.biosphere_dag import BiosphereDAG
-            env = os.getenv("ARGOS_BIOSPHERE_ENV", "generic").strip().lower()
-            self.biosphere_dag = BiosphereDAG(environment=env)
+            from src.modules.biosphere_dag import BiosphereDAGController
+            self.biosphere_dag = BiosphereDAGController(core=self)
+            auto_sys_id = (os.getenv("ARGOS_BIOSPHERE_SYS_ID", "") or "").strip()
+            if auto_sys_id:
+                self.biosphere_dag._auto_sys_id = auto_sys_id
             # Подключаем к idle-циклу если есть task_queue
-            if self.task_queue:
-                self.task_queue.register_idle_learning_handler(self.biosphere_dag.run_cycle)
-            log.info("BiosphereDAG: OK (env=%s)", env)
+            if self.task_queue and auto_sys_id:
+                self.task_queue.register_idle_learning_handler(self._run_biosphere_idle_cycle)
+            log.info("Biosphere DAG: OK")
         except Exception as e:
-            log.warning("BiosphereDAG: %s", e)
+            log.warning("Biosphere DAG недоступен: %s", e)
+
+    def _init_biosphere_dag(self):
+        """Backward-compat shim."""
+        self._init_biosphere()
 
     def _init_tool_calling(self):
         try:
@@ -535,11 +541,26 @@ class ArgosCore:
             if self.curiosity and hasattr(self.curiosity, "run_idle_learning_cycle"):
                 self.task_queue.register_idle_learning_handler(self.curiosity.run_idle_learning_cycle)
             if self.biosphere_dag and hasattr(self.biosphere_dag, "run_cycle"):
-                self.task_queue.register_idle_learning_handler(self.biosphere_dag.run_cycle)
+                auto_sys_id = (os.getenv("ARGOS_BIOSPHERE_SYS_ID", "") or "").strip()
+                if auto_sys_id:
+                    self.task_queue.register_idle_learning_handler(self._run_biosphere_idle_cycle)
             self.task_queue.start()
             log.info("TaskQueue: OK")
         except Exception as e:
             log.warning("TaskQueue: %s", e)
+
+    def _run_biosphere_idle_cycle(self) -> str:
+        if not self.biosphere_dag:
+            return "Biosphere DAG недоступен"
+        sys_id = (os.getenv("ARGOS_BIOSPHERE_SYS_ID", "") or "").strip()
+        if not sys_id:
+            return "Biosphere idle: ARGOS_BIOSPHERE_SYS_ID не задан"
+        profile = getattr(self.biosphere_dag, "default_profile", {
+            "temp_min": 22.0,
+            "temp_max": 26.0,
+            "hum_min": 60.0,
+        })
+        return self.biosphere_dag.run_cycle(sys_id, dict(profile))
 
     def _queue_run_logic(self, task) -> str:
         command = str(task.payload.get("command", "") or "").strip()
@@ -2506,11 +2527,31 @@ class ArgosCore:
                 return self.master_auth.revoke()
 
         # ── Biosphere DAG ─────────────────────────────────
+        if t.startswith("биосфера цикл "):
+            if not self.biosphere_dag:
+                return "❌ Модуль Biosphere DAG не загружен."
+
+            sys_id = text.split("биосфера цикл ")[-1].strip()
+            target_profile = {
+                "temp_min": 22.0,
+                "temp_max": 26.0,
+                "hum_min": 60.0,
+            }
+            return self.biosphere_dag.run_cycle(sys_id, target_profile)
+
         if self.biosphere_dag:
             if any(k in t for k in ["биосфера статус", "biosphere статус", "biosphere status"]):
                 return self.biosphere_dag.status()
             if any(k in t for k in ["биосфера цикл", "biosphere cycle", "биосфера сейчас", "биосфера тик", "biosphere tick"]):
-                return self.biosphere_dag.run_cycle()
+                auto_sys_id = (os.getenv("ARGOS_BIOSPHERE_SYS_ID", "") or "").strip()
+                if not auto_sys_id:
+                    return "Формат: биосфера цикл [system_id]"
+                profile = getattr(self.biosphere_dag, "default_profile", {
+                    "temp_min": 22.0,
+                    "temp_max": 26.0,
+                    "hum_min": 60.0,
+                })
+                return self.biosphere_dag.run_cycle(auto_sys_id, dict(profile))
             if any(k in t for k in ["биосфера старт", "biosphere start"]):
                 interval = 30.0
                 for p in t.split():
@@ -2519,7 +2560,10 @@ class ArgosCore:
                         break
                     except ValueError:
                         pass
-                return self.biosphere_dag.start(interval)
+                auto_sys_id = (os.getenv("ARGOS_BIOSPHERE_SYS_ID", "") or "").strip()
+                if not auto_sys_id:
+                    return "Для автоцикла задай ARGOS_BIOSPHERE_SYS_ID или используй: биосфера цикл [system_id]"
+                return self.biosphere_dag.start(interval, auto_sys_id)
             if any(k in t for k in ["биосфера стоп", "biosphere stop"]):
                 return self.biosphere_dag.stop()
             if any(k in t for k in ["биосфера результат", "biosphere last"]):
@@ -2533,6 +2577,7 @@ class ArgosCore:
                         return self.biosphere_dag.set_target(key, val)
                     except ValueError:
                         return "Формат: биосфера цель [ключ] [значение]"
+                return "Формат: биосфера цель [ключ] [значение]"
 
         # ── Загрузчик прошивок ─────────────────────────────────────
         if any(k in t for k in ["обнови тасмота", "скачай прошивки", "обнови tasmota"]):
