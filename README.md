@@ -12,7 +12,7 @@
 
 | Слой | Что умеет |
 |------|-----------|
-| 🧠 **Интеллект** | Gemini / GigaChat / YandexGPT / LM Studio → Ollama/Llama3, multi-turn + Tool Calling по JSON-схемам |
+| 🧠 **Интеллект** | Gemini / GigaChat / YandexGPT / LM Studio → Ollama/Llama3 / **IBM Watsonx** (Llama-3.1-70B), multi-turn + Tool Calling по JSON-схемам |
 | 🗣️ **Голос** | TTS (pyttsx3) + STT (SpeechRecognition) + Wake Word «Аргос» |
 | 🤖 **Агент** | Цепочки задач: «скан сети → запиши → отправь в Telegram» |
 | 👁️ **Vision** | Анализ экрана / камеры / файлов через Gemini Vision |
@@ -202,6 +202,9 @@ WHISPER_DEVICE=cpu
 WHISPER_COMPUTE_TYPE=int8
 LMSTUDIO_BASE_URL=http://127.0.0.1:1234/v1/chat/completions
 LMSTUDIO_MODEL=local-model
+WATSONX_API_KEY=ключ_от_ibm_watsonx
+WATSONX_PROJECT_ID=project_id_из_watsonx
+WATSONX_URL=https://us-south.ml.cloud.ibm.com
 ARGOS_HOMEOSTASIS=on
 ARGOS_HOMEOSTASIS_INTERVAL=8
 ARGOS_HOMEOSTASIS_PROTECT_CPU=78

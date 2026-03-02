@@ -28,6 +28,14 @@ try:
 except ImportError:
     sr = None; SR_OK = False
 
+try:
+    from ibm_watsonx_ai.foundation_models import ModelInference
+    from ibm_watsonx_ai.metanames import GenTextParamsMetaNames as GenParams
+    from ibm_watsonx_ai import Credentials
+    WATSONX_OK = True
+except ImportError:
+    WATSONX_OK = False
+
 from src.quantum.logic               import ArgosQuantum
 from src.skills.web_scrapper         import ArgosScrapper
 from src.factory.replicator          import Replicator
@@ -207,6 +215,7 @@ class ArgosCore:
 
         self._init_voice()
         self._setup_ai()
+        self._setup_watsonx()
         self._init_memory()
         self._init_homeostasis()
         self._init_curiosity()
@@ -721,6 +730,8 @@ class ArgosCore:
             return "lmstudio"
         if value in {"ollama", "local", "o"}:
             return "ollama"
+        if value in {"watson", "watsonx", "ibm", "w"}:
+            return "watsonx"
         return "auto"
 
     def set_ai_mode(self, mode: str) -> str:
@@ -738,6 +749,8 @@ class ArgosCore:
             return "LM Studio"
         if self.ai_mode == "ollama":
             return "Ollama"
+        if self.ai_mode == "watsonx":
+            return "Watsonx"
         return "Auto"
 
     def _setup_ai(self):
@@ -763,6 +776,36 @@ class ArgosCore:
             log.info("LM Studio: конфигурация обнаружена (%s)", self.lmstudio_url)
         else:
             log.info("LM Studio недоступен — нет BASE_URL")
+
+    def _setup_watsonx(self):
+        """IBM Watsonx AI — Llama-3 70B через инфраструктуру IBM."""
+        self.watsonx_api_key = (os.getenv("WATSONX_API_KEY", "") or "").strip()
+        self.watsonx_project_id = (os.getenv("WATSONX_PROJECT_ID", "") or "").strip()
+        self.watsonx_url = (os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com") or "").strip()
+        self.watsonx_model = None
+
+        if WATSONX_OK and self.watsonx_api_key and self.watsonx_project_id:
+            try:
+                credentials = Credentials(
+                    api_key=self.watsonx_api_key,
+                    url=self.watsonx_url
+                )
+                parameters = {
+                    GenParams.DECODING_METHOD: "greedy",
+                    GenParams.MAX_NEW_TOKENS: 1024,
+                    GenParams.REPETITION_PENALTY: 1.05
+                }
+                self.watsonx_model = ModelInference(
+                    model_id="meta-llama/llama-3-1-70b-instruct",
+                    params=parameters,
+                    credentials=credentials,
+                    project_id=self.watsonx_project_id
+                )
+                log.info("Watsonx: OK (Llama-3.1-70B)")
+            except Exception as e:
+                log.warning("Watsonx недоступен: %s", e)
+        else:
+            log.info("Watsonx: отключён (pip install ibm-watsonx-ai + ключи в .env)")
 
     def _gemini_rate_limit_text(self) -> str:
         return f"Gemini: превышен лимит {self.gemini_rpm_limit} запросов в минуту. Повтори чуть позже или переключи режим ИИ."
@@ -1021,6 +1064,24 @@ class ArgosCore:
             return None
         except Exception as e:
             log.error("LM Studio: %s", e)
+            return None
+
+    def _ask_watsonx(self, context: str, user_text: str) -> str | None:
+        if not self.watsonx_model:
+            return None
+        try:
+            hist = self.context.get_prompt_context()
+            full_prompt = (
+                f"<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n"
+                f"{context}\n<|eot_id|>"
+                f"<|start_header_id|>user<|end_header_id|>\n"
+                f"{hist}\nUser: {user_text}\n<|eot_id|>"
+                f"<|start_header_id|>assistant<|end_header_id|>\n"
+            )
+            res = self.watsonx_model.generate_text(prompt=full_prompt)
+            return res.strip() if res else None
+        except Exception as e:
+            log.error("Watsonx: %s", e)
             return None
 
     def _local_drafter_providers(self) -> list[tuple[str, callable]]:
@@ -1293,6 +1354,9 @@ class ArgosCore:
         elif self.ai_mode == "ollama":
             answer = self._ask_ollama(context, user_text)
             engine = f"{q_data['name']} (Ollama)"
+        elif self.ai_mode == "watsonx":
+            answer = self._ask_watsonx(context, user_text)
+            engine = f"{q_data['name']} (Watsonx)"
         else:
             answer, auto_engine = self._ask_auto_consensus(context, user_text)
             if auto_engine:
@@ -1303,7 +1367,7 @@ class ArgosCore:
                 if self._last_gemini_rate_limited:
                     answer = self._gemini_rate_limit_text()
                 else:
-                    answer = "Gemini недоступен в текущем режиме. Переключите режим ИИ на Auto, GigaChat, YandexGPT, LM Studio или Ollama."
+                    answer = "Gemini недоступен в текущем режиме. Переключите режим ИИ на Auto, GigaChat, YandexGPT, LM Studio, Watsonx или Ollama."
             elif self.ai_mode == "gigachat":
                 answer = "GigaChat недоступен в текущем режиме. Проверьте токен/credentials или переключите режим ИИ."
             elif self.ai_mode == "yandexgpt":
@@ -1312,6 +1376,8 @@ class ArgosCore:
                 answer = "LM Studio недоступен в текущем режиме. Проверьте LMSTUDIO_BASE_URL/LMSTUDIO_MODEL или переключите режим ИИ."
             elif self.ai_mode == "ollama":
                 answer = "Ollama недоступен в текущем режиме. Проверьте локальный сервер Ollama или переключите режим ИИ."
+            elif self.ai_mode == "watsonx":
+                answer = "Watsonx недоступен. Проверьте WATSONX_API_KEY/WATSONX_PROJECT_ID или переключите режим ИИ."
             else:
                 answer = "Связь с ядрами ИИ разорвана. Режим оффлайн."
             engine = "Offline"
@@ -2574,7 +2640,7 @@ class ArgosCore:
 
 🎤 ГОЛОС
   голос вкл/выкл · включи wake word
-    режим ии авто/gemini/gigachat/yandexgpt/lmstudio/ollama
+    режим ии авто/gemini/gigachat/yandexgpt/lmstudio/ollama/watsonx
 
 💬 ДИАЛОГ
   контекст диалога · сброс контекста
