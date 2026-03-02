@@ -1,16 +1,19 @@
 import os
 import asyncio
+import logging
 import tempfile
 import subprocess
 import shlex
 import requests
 from pathlib import Path
 from telegram import Update
-from telegram.error import InvalidToken, TelegramError
+from telegram.error import InvalidToken, TelegramError, NetworkError, TimedOut
 from telegram.ext import (
     Application, MessageHandler, CommandHandler,
     filters, ContextTypes
 )
+
+log = logging.getLogger("argos.telegram")
 
 class ArgosTelegram:
     def __init__(self, core, admin, flasher):
@@ -347,6 +350,18 @@ class ArgosTelegram:
                 except Exception:
                     pass
 
+    # ── ОБРАБОТКА ОШИБОК ──────────────────────────────────
+    async def _error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Global error handler — suppresses transient network errors."""
+        err = context.error
+        if isinstance(err, (NetworkError, TimedOut)):
+            log.warning("TG network glitch (auto-retry): %s", err.__class__.__name__)
+            return
+        if "ReadError" in str(type(err).__name__) or "ReadTimeout" in str(type(err).__name__):
+            log.warning("TG transport read error (auto-retry): %s", err)
+            return
+        log.error("TG unhandled error: %s", err, exc_info=context.error)
+
     # ── ЗАПУСК ────────────────────────────────────────────
     def run(self):
         can_start, reason = self.can_start()
@@ -354,7 +369,15 @@ class ArgosTelegram:
             print(f"[TG-BRIDGE]: Telegram-мост отключён: {reason}.")
             return
 
-        self.app = Application.builder().token(self.token).build()
+        self.app = (
+            Application.builder()
+            .token(self.token)
+            .read_timeout(30)
+            .write_timeout(30)
+            .connect_timeout(15)
+            .pool_timeout(10)
+            .build()
+        )
 
         # Команды
         self.app.add_handler(CommandHandler("start",     self.cmd_start))
@@ -381,6 +404,9 @@ class ArgosTelegram:
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
         )
 
+        # Глобальный обработчик ошибок (подавляет network glitches)
+        self.app.add_error_handler(self._error_handler)
+
         try:
             r = requests.get(
                 f"https://api.telegram.org/bot{self.token}/getMe",
@@ -396,7 +422,11 @@ class ArgosTelegram:
 
         print(f"[TG-BRIDGE]: Мост активен. USER_ID={self.user_id}")
         try:
-            self.app.run_polling(stop_signals=None)
+            self.app.run_polling(
+                stop_signals=None,
+                drop_pending_updates=True,
+                allowed_updates=Update.ALL_TYPES,
+            )
         except InvalidToken:
             print("[TG-BRIDGE]: Telegram-мост отключён: токен отклонён сервером.")
         except TelegramError as e:
