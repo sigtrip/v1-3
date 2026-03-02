@@ -163,6 +163,9 @@ python setup_builder.py --install
 # Или вручную:
 pip install -r requirements.txt
 pip install PyAudio SpeechRecognition
+
+# Опционально: расширенные модули (SDR/WiFi Sentinel/NFC/Watsonx/BLE)
+pip install -r requirements-optional.txt
 ```
 
 > **Windows — PyAudio не ставится:**

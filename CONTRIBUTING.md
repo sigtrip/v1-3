@@ -7,6 +7,7 @@
 1. Форкните репозиторий и создайте ветку от `main`.
 2. Установите зависимости:
    - `pip install -r requirements.txt`
+   - (опционально для расширенных модулей) `pip install -r requirements-optional.txt`
 3. Инициализируйте проект:
    - `python genesis.py`
 4. Проверьте целостность окружения:

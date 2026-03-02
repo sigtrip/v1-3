@@ -1,0 +1,27 @@
+# Optional dependencies for extended Argos features
+# Install only when corresponding hardware/integrations are needed:
+#   pip install -r requirements-optional.txt
+
+# ── SDR / RF reconnaissance (AirSnitch) ───────────────────
+pyrtlsdr>=0.2.93
+SoapySDR>=0.8.1
+
+# ── Wireless analysis (WiFi Sentinel) ─────────────────────
+scapy>=2.5.0
+
+# ── Scientific/processing helpers ─────────────────────────
+numpy>=1.26.0
+
+# ── NFC / SmartCard (NFC Manager) ─────────────────────────
+nfcpy>=1.0.4
+pyscard>=2.0.10
+
+# ── Bluetooth stack extras ────────────────────────────────
+bleak>=0.22.3
+
+# ── Enterprise AI bridge (Watsonx) ────────────────────────
+ibm-watsonx-ai>=1.1.8
+
+# ── Optional mobile build toolchain helper ────────────────
+# buildozer is typically installed separately in Android build env
+# buildozer>=1.5.0
