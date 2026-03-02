@@ -179,6 +179,8 @@ pip install -r requirements-optional.txt
 
 ### 2. .env
 
+Аргос загружает `.env` через единый bootstrap: сначала из текущей рабочей директории, затем (если файл не найден) из корня репозитория. Это позволяет запускать `python main.py` как из корня проекта, так и из вложенных сценариев/обвязок.
+
 ```env
 GEMINI_API_KEY=ключ_от_ai.google.dev
 GIGACHAT_ACCESS_TOKEN=токен_gigachat_если_есть
