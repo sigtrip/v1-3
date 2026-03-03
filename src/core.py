@@ -1,3 +1,8 @@
+    def set_mic_index(self, idx: int):
+        self._mic_index = idx
+
+    def set_speaker_index(self, idx: int):
+        self._speaker_index = idx
 """
 core.py — ArgosCore FINAL v2.0
     Все подсистемы интегрированы:
@@ -12,6 +17,7 @@ import base64
 import uuid
 import difflib
 from collections import deque
+from functools import lru_cache
 
 # ── Graceful imports ──────────────────────────────────────
 try:
@@ -326,6 +332,16 @@ class _GeminiCompatClient:
 
 
 class ArgosCore:
+    def set_online_mode(self, online: bool):
+        self.online_mode = online
+        # Можно добавить логику переключения моделей и голосовых движков
+        if online:
+            self.ai_mode = "auto"
+            self.voice_engine = "auto"
+        else:
+            self.ai_mode = "ollama"  # локальная модель
+            self.voice_engine = "pyttsx3"  # оффлайн TTS
+        log.info(f"Режим ИИ: {'онлайн' if online else 'оффлайн'}")
     def __init__(self):
         self.quantum    = ArgosQuantum()
         self.scrapper   = ArgosScrapper()
@@ -960,6 +976,7 @@ class ArgosCore:
                 if self._tts_busy:
                     return
                 self._tts_busy = True
+                self.on_tts_start(text)
                 try:
                     self._tts_engine.say(text[:300])
                     self._tts_engine.runAndWait()
@@ -967,42 +984,66 @@ class ArgosCore:
                     log.warning("TTS runtime error: %s", e)
                 finally:
                     self._tts_busy = False
-        threading.Thread(target=_speak, daemon=True).start()
+                    self.on_tts_end(text)
+        if not hasattr(self, '_voice_executor'):
+            self._voice_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        self._voice_executor.submit(_speak)
 
     def listen(self) -> str:
-        if SR_OK:
-            try:
-                rec = sr.Recognizer()
-                with sr.Microphone() as src:
-                    log.info("Слушаю...")
-                    rec.adjust_for_ambient_noise(src, duration=0.5)
-                    audio = rec.listen(src, timeout=7, phrase_time_limit=15)
-                    if self.voice_engine in ("auto", "pipecat") and not self._has_speech_with_pipecat(audio):
-                        log.info("Pipecat VAD: речь не обнаружена")
-                        return ""
-                    try:
-                        text = rec.recognize_google(audio, language="ru-RU")
-                        log.info("Распознано (google): %s", text)
-                        return text.lower()
-                    except Exception:
-                        text = self._transcribe_with_whisper(audio)
-                        if text:
-                            log.info("Распознано (whisper): %s", text)
-                            return text.lower()
-            except Exception as e:
-                log.error("STT: %s", e)
+        def _listen_task():
+            self.on_stt_start()
+            result = ""
+            if SR_OK:
+                try:
+                    rec = sr.Recognizer()
+                    mic_kwargs = {}
+                    if hasattr(self, '_mic_index'):
+                        mic_kwargs['device_index'] = self._mic_index
+                    with sr.Microphone(**mic_kwargs) as src:
+                        log.info(f"Слушаю... (device_index={mic_kwargs.get('device_index', 0)})")
+                        rec.adjust_for_ambient_noise(src, duration=0.5)
+                        audio = rec.listen(src, timeout=7, phrase_time_limit=15)
+                        if self.voice_engine in ("auto", "pipecat") and not self._has_speech_with_pipecat(audio):
+                            log.info("Pipecat VAD: речь не обнаружена")
+                            self.on_stt_end("")
+                            return ""
+                        try:
+                            text = rec.recognize_google(audio, language="ru-RU")
+                            log.info("Распознано (google): %s", text)
+                            result = text.lower()
+                        except Exception:
+                            text = self._transcribe_with_whisper(audio)
+                            if text:
+                                log.info("Распознано (whisper): %s", text)
+                                result = text.lower()
+                except Exception as e:
+                    log.error("STT: %s", e)
+            else:
+                log.warning("STT недоступен (SpeechRecognition/Whisper)")
+            self.on_stt_end(result)
+            return result
+        if not hasattr(self, '_voice_executor'):
+            self._voice_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        future = self._voice_executor.submit(_listen_task)
+        try:
+            return future.result(timeout=30)
+        except Exception as e:
+            log.error("STT listen timeout/error: %s", e)
+            return ""
 
-        log.warning("STT недоступен (SpeechRecognition/Whisper)")
-        return ""
+    @staticmethod
+    @lru_cache(maxsize=2)
+    def _get_whisper_model_cached(model_size, device, compute):
+        from faster_whisper import WhisperModel
+        return WhisperModel(model_size, device=device, compute_type=compute)
 
     def _transcribe_with_whisper(self, audio_data) -> str:
         try:
+            model_size = os.getenv("WHISPER_MODEL", "small")
+            device = os.getenv("WHISPER_DEVICE", "cpu")
+            compute = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
             if self._whisper_model is None:
-                from faster_whisper import WhisperModel
-                model_size = os.getenv("WHISPER_MODEL", "small")
-                device = os.getenv("WHISPER_DEVICE", "cpu")
-                compute = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
-                self._whisper_model = WhisperModel(model_size, device=device, compute_type=compute)
+                self._whisper_model = self._get_whisper_model_cached(model_size, device, compute)
 
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 tmp.write(audio_data.get_wav_data())

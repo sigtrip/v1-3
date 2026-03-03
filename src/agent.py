@@ -59,7 +59,7 @@ class ArgosAgent:
 
         steps = self._parse_steps(plan)
         if len(steps) <= 1:
-            return None  # Не агентная задача — обычная команда
+            return "Не агентная задача — обычная команда"
 
         log.info("Агент: %d шагов", len(steps))
         self._results = []

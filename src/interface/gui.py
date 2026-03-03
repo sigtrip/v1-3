@@ -8,6 +8,115 @@ class ArgosGUI(ctk.CTk):
         self.admin   = admin
         self.flasher = flasher
         self._listening = False
+        self.dialog_history = []  # История диалогов
+        self.last_commands = []   # Последние команды
+
+        self.title("ARGOS UNIVERSAL OS")
+        self.geometry("1100x700")
+        ctk.set_appearance_mode("dark")
+        ctk.set_default_color_theme("blue")
+
+        # ── Sidebar ───────────────────────────────────────
+                # ── Выбор микрофона и динамика ───────────────────
+                self.mic_index = 0
+                self.speaker_index = 0
+                try:
+                    import pyaudio
+                    pa = pyaudio.PyAudio()
+                    mic_list = [f"{i}: {pa.get_device_info_by_index(i)['name']}" for i in range(pa.get_device_count()) if pa.get_device_info_by_index(i).get('maxInputChannels', 0) > 0]
+                    speaker_list = [f"{i}: {pa.get_device_info_by_index(i)['name']}" for i in range(pa.get_device_count()) if pa.get_device_info_by_index(i).get('maxOutputChannels', 0) > 0]
+                except Exception:
+                    mic_list = ["0: Default"]
+                    speaker_list = ["0: Default"]
+
+                ctk.CTkLabel(self.sidebar, text="🎤 Микрофон", font=("Consolas", 11), text_color="#bbbbbb").pack(pady=(8,2))
+                self.mic_var = ctk.StringVar(value=mic_list[0] if mic_list else "0: Default")
+                self.mic_menu = ctk.CTkOptionMenu(self.sidebar, values=mic_list, variable=self.mic_var, command=self._on_mic_changed)
+                self.mic_menu.pack(fill="x", padx=10, pady=3)
+
+                ctk.CTkLabel(self.sidebar, text="🔈 Динамик", font=("Consolas", 11), text_color="#bbbbbb").pack(pady=(8,2))
+                self.speaker_var = ctk.StringVar(value=speaker_list[0] if speaker_list else "0: Default")
+                self.speaker_menu = ctk.CTkOptionMenu(self.sidebar, values=speaker_list, variable=self.speaker_var, command=self._on_speaker_changed)
+                self.speaker_menu.pack(fill="x", padx=10, pady=3)
+
+            def _on_mic_changed(self, selected):
+                self.mic_index = int(selected.split(":")[0])
+                if hasattr(self.core, "set_mic_index"):
+                    self.core.set_mic_index(self.mic_index)
+
+            def _on_speaker_changed(self, selected):
+                self.speaker_index = int(selected.split(":")[0])
+                if hasattr(self.core, "set_speaker_index"):
+                    self.core.set_speaker_index(self.speaker_index)
+        self.sidebar = ctk.CTkFrame(self, width=260)
+        self.sidebar.pack(side="left", fill="y", padx=10, pady=10)
+        self.sidebar.pack_propagate(False)
+
+        ctk.CTkLabel(self.sidebar, text="👁️ ARGOS OS",
+                     font=("Consolas", 20, "bold"), text_color="#00FFFF").pack(pady=16)
+
+        ctk.CTkLabel(self.sidebar, text=f"📍 {location}",
+                     wraplength=230, justify="left", font=("Consolas", 11)).pack(pady=4)
+
+        self.q_label = ctk.CTkLabel(self.sidebar, text="⚛ Состояние: —",
+                                    text_color="#00FF88", font=("Consolas", 12))
+        self.q_label.pack(pady=6)
+
+        self.voice_label = ctk.CTkLabel(self.sidebar, text=f"🔊 Голос: {'ВКЛ' if self.core.voice_on else 'ВЫКЛ'}",
+                                        text_color="#88FF00", font=("Consolas", 11))
+        self.voice_label.pack(pady=2)
+
+        self.voice_toggle_btn = ctk.CTkButton(
+            self.sidebar,
+            text=("🔇 Отключить голос" if self.core.voice_on else "🔊 Включить голос"),
+            height=30,
+            command=self._toggle_voice_mode,
+        )
+        self.voice_toggle_btn.pack(fill="x", padx=10, pady=4)
+
+        ctk.CTkLabel(self.sidebar, text="🤖 Модель ИИ",
+                     font=("Consolas", 11), text_color="#bbbbbb").pack(pady=(8, 2))
+        self.ai_mode_var = ctk.StringVar(value=self._ai_mode_to_ui(self.core.ai_mode))
+        self.ai_mode_menu = ctk.CTkOptionMenu(
+            self.sidebar,
+            values=["Auto", "Gemini", "GigaChat", "YandexGPT", "Ollama", "Watsonx", "OpenAI", "Grok"],
+            variable=self.ai_mode_var,
+            command=self._on_ai_mode_changed,
+        )
+        self.ai_mode_menu.pack(fill="x", padx=10, pady=3)
+
+        self.ai_mode_label = ctk.CTkLabel(
+            self.sidebar,
+            text=f"Режим ИИ: {self.core.ai_mode_label()}",
+            text_color="#88c0ff",
+            font=("Consolas", 11),
+        )
+        self.ai_mode_label.pack(pady=2)
+
+        ctk.CTkLabel(self.sidebar, text="─" * 28, text_color="#333").pack(pady=8)
+
+        # ── Переключатель онлайн/оффлайн ────────────────
+        self.online_mode = ctk.BooleanVar(value=True)
+        self.online_toggle_btn = ctk.CTkSwitch(
+            self.sidebar,
+            text="🌐 Онлайн режим",
+            variable=self.online_mode,
+            command=self._toggle_online_mode,
+        )
+        self.online_toggle_btn.pack(fill="x", padx=10, pady=4)
+
+    def _toggle_online_mode(self):
+        mode = self.online_mode.get()
+        self.core.set_online_mode(mode)
+        self._append(f"🌐 Режим: {'Онлайн' if mode else 'Оффлайн'}\n", "#88c0ff")
+    def __init__(self, core, admin, flasher, location):
+        super().__init__()
+        self.core    = core
+        self.admin   = admin
+        self.flasher = flasher
+        self._listening = False
+        self.dialog_history = []  # История диалогов
+        self.last_commands = []   # Последние команды
 
         self.title("ARGOS UNIVERSAL OS")
         self.geometry("1100x700")
@@ -101,9 +210,21 @@ class ArgosGUI(ctk.CTk):
         self.voice_btn.pack(fill="x", padx=10, pady=4)
 
         # ── Чат ───────────────────────────────────────────
-        self.chat = ctk.CTkTextbox(self, font=("Consolas", 13), wrap="word")
-        self.chat.pack(side="top", fill="both", expand=True, padx=(0,10), pady=10)
+        chat_frame = ctk.CTkFrame(self)
+        chat_frame.pack(side="top", fill="both", expand=True, padx=(0,10), pady=10)
+        self.chat = ctk.CTkTextbox(chat_frame, font=("Consolas", 13), wrap="word")
+        self.chat.pack(side="left", fill="both", expand=True)
         self.chat.configure(state="disabled")
+        # ── История диалогов ─────────────────────────────
+        self.history_box = ctk.CTkTextbox(chat_frame, font=("Consolas", 11), width=260, wrap="word")
+        self.history_box.pack(side="right", fill="y")
+        self.history_box.insert("end", "История диалогов:\n")
+        self.history_box.configure(state="disabled")
+        # ── Последние команды ────────────────────────────
+        self.commands_box = ctk.CTkTextbox(self.sidebar, font=("Consolas", 10), height=80, wrap="word")
+        self.commands_box.pack(fill="x", padx=10, pady=4)
+        self.commands_box.insert("end", "Последние команды:\n")
+        self.commands_box.configure(state="disabled")
 
         # ── Ввод ──────────────────────────────────────────
         inp = ctk.CTkFrame(self, fg_color="transparent")
@@ -137,6 +258,8 @@ class ArgosGUI(ctk.CTk):
         self.entry.delete(0, "end")
         state = self.core.quantum.generate_state()['name'][:3].upper()
         self._append(f"[{state}] ВСЕВОЛОД: {text}\n", "#5599ff")
+        self._add_to_history(f"[{state}] ВСЕВОЛОД: {text}")
+        self._add_command(text)
         threading.Thread(target=self._process, args=(text,), daemon=True).start()
 
     def _process(self, text: str):
@@ -146,12 +269,32 @@ class ArgosGUI(ctk.CTk):
     def _on_response(self, res: dict):
         self.q_label.configure(text=f"⚛ Состояние: {res['state']}")
         self._append(f"👁 АРГОС [{res['state']}]:\n{res['answer']}\n\n", "#00d4ff")
+        self._add_to_history(f"👁 АРГОС [{res['state']}]: {res['answer']}")
         # Голос — уже вызывается внутри core.process_logic через self.say()
         v = "ВКЛ" if self.core.voice_on else "ВЫКЛ"
         self.voice_label.configure(text=f"🔊 Голос: {v}")
         self.voice_toggle_btn.configure(
             text=("🔇 Отключить голос" if self.core.voice_on else "🔊 Включить голос")
         )
+    def _add_to_history(self, text: str):
+        self.dialog_history.append(text)
+        if len(self.dialog_history) > 50:
+            self.dialog_history = self.dialog_history[-50:]
+        self.history_box.configure(state="normal")
+        self.history_box.delete("1.0", "end")
+        self.history_box.insert("end", "История диалогов:\n" + "\n".join(self.dialog_history))
+        self.history_box.see("end")
+        self.history_box.configure(state="disabled")
+
+    def _add_command(self, text: str):
+        self.last_commands.append(text)
+        if len(self.last_commands) > 10:
+            self.last_commands = self.last_commands[-10:]
+        self.commands_box.configure(state="normal")
+        self.commands_box.delete("1.0", "end")
+        self.commands_box.insert("end", "Последние команды:\n" + "\n".join(self.last_commands))
+        self.commands_box.see("end")
+        self.commands_box.configure(state="disabled")
 
     # ── ГОЛОСОВОЙ ВВОД ────────────────────────────────────
     def _toggle_listen(self):
