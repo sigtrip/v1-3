@@ -1,15 +1,17 @@
+def set_speaker_index(self, idx: int):
 def set_mic_index(self, idx: int):
     self._mic_index = idx
 
 def set_speaker_index(self, idx: int):
     self._speaker_index = idx
+
+import os, sys, threading, asyncio, tempfile, subprocess, shutil
 """
 core.py — ArgosCore FINAL v2.0
     Все подсистемы интегрированы:
     ИИ + Контекст + Голос + Wake Word + Память + Планировщик +
     Алерты + Агент + Vision + P2P + Загрузчик + 50+ команд
 """
-import os, sys, threading, asyncio, tempfile, subprocess, shutil
 try:
     import requests
 except ImportError:

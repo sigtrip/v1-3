@@ -7,6 +7,7 @@ main.py — ArgosUniversal OS v1.0.0 FINAL
   Аргументы обрабатываются через sys.argv (argparse-совместимо).
 """
 import os, sys, threading
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
 from src.env_bootstrap import bootstrap_env
 bootstrap_env()
 
