@@ -7,9 +7,17 @@ class RasaAdapter:
         self.url = url
 
     def parse(self, text):
-        import requests
-        resp = requests.post(self.url, json={"text": text})
-        return resp.json()
+        try:
+            import requests
+        except ImportError:
+            requests = None
+        if requests is None:
+            return {"error": "requests не установлен"}
+        try:
+            resp = requests.post(self.url, json={"text": text})
+            return resp.json()
+        except Exception as e:
+            return {"error": str(e)}
 
     def handle_message(self, text):
         result = self.parse(text)

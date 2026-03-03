@@ -368,7 +368,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _send(self, code, ctype, data, headers: dict | None = None):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", len(data))
+        self.send_header("Content-Length", str(len(data)))
         if headers:
             for k, v in headers.items():
                 self.send_header(str(k), str(v))
@@ -408,7 +408,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         # P2P
         p2p_nodes = 0
-        p2p_list  = []
+        p2p_list: list = []
         if self.core and self.core.p2p:
             nodes = self.core.p2p.registry.all()
             master = self.core.p2p.registry.get_master()
@@ -477,8 +477,8 @@ class WebDashboard:
 
     def start(self) -> str:
         try:
-            self.server = HTTPServer(("0.0.0.0", self.port), DashboardHandler)
-            threading.Thread(target=self.server.serve_forever, daemon=True).start()
+            server = HTTPServer(("0.0.0.0", self.port), DashboardHandler)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
             log.info("Dashboard запущен на http://localhost:%d", self.port)
             return f"🌐 Веб-панель: http://localhost:{self.port}"
         except Exception as e:

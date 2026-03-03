@@ -1,3 +1,11 @@
+pyttsx3
+SpeechRecognition
+pyaudio
+pipecat
+ibm-watsonx-ai
+faster-whisper
+python-telegram-bot
+requests
 # ── ИИ-ядра ───────────────────────────────────────────────
 google-genai>=1.0.0
 ollama>=0.4.0

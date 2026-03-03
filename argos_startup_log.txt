@@ -1,0 +1,19 @@
+Аргос успешно стартует, загружает все подсистемы и Telegram-бот, но при запуске GUI возникает ошибка:
+
+_tkinter.TclError: no display name and no $DISPLAY environment variable
+
+Это связано с отсутствием графического окружения (X11/Wayland) в контейнере. Все остальные сервисы, включая P2P, Telegram-бот, навыки, модули, инициализируются корректно.
+
+Лог запуска (фрагмент):
+
+- Навыки: content_gen, weather, scheduler, evolution, crypto_monitor, web_scrapper, net_scanner
+- Модули: system_monitor, vision, voice
+- P2P-мост: запущен
+- Telegram-бот: запущен
+- Self-Healing: OK
+- IoT, BACnet, Mesh, Gateway, SmartSystems: OK
+- Ошибка GUI: no $DISPLAY
+
+Для запуска GUI требуется графическая среда. В headless-режиме Argos работает как сервер и бот.
+
+Полный лог запуска прилагается.

@@ -1,7 +1,6 @@
 # Примеры сценариев Argos
 
-## Smart Home Monitor
-```
+\n## Smart Home Monitor\n\n```python
 {
   "scenario": "smart_home_monitor",
   "steps": [
@@ -12,8 +11,7 @@
 }
 ```
 
-## Security Incident Response
-```
+\n## Security Incident Response\n\n```python
 {
   "scenario": "security_incident_response",
   "steps": [
@@ -25,8 +23,7 @@
 }
 ```
 
-## Greenhouse Stability
-```
+\n## Greenhouse Stability\n\n```python
 {
   "scenario": "greenhouse_stability",
   "steps": [
@@ -36,8 +33,7 @@
 }
 ```
 
-## Пример команды
-```
+\n## Пример команды\n\n```python
 {
   "command": "статус системы"
 }

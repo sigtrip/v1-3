@@ -1,23 +1,6 @@
 """
 Базовый адаптер для каналов (Telegram, Web, Discord, ...)
 """
-class BotAdapter:
-    def __init__(self, core):
-        self.core = core
-
-    def start(self):
-        raise NotImplementedError()
-
-    def send_message(self, text, user=None):
-        raise NotImplementedError()
-
-    def handle_message(self, text, user=None):
-        # Обработка входящего сообщения, вызов ядра
-        return self.core.process_logic(text, None, None)
-
-"""
-Базовый BotAdapter для поддержки мультиплатформенных ботов (inspired by awesome-bots).
-"""
 from abc import ABC, abstractmethod
 
 class BotAdapter(ABC):

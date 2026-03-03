@@ -1,15 +1,19 @@
-    def set_mic_index(self, idx: int):
-        self._mic_index = idx
+def set_mic_index(self, idx: int):
+    self._mic_index = idx
 
-    def set_speaker_index(self, idx: int):
-        self._speaker_index = idx
+def set_speaker_index(self, idx: int):
+    self._speaker_index = idx
 """
 core.py — ArgosCore FINAL v2.0
     Все подсистемы интегрированы:
     ИИ + Контекст + Голос + Wake Word + Память + Планировщик +
     Алерты + Агент + Vision + P2P + Загрузчик + 50+ команд
 """
-import os, sys, threading, requests, asyncio, tempfile, subprocess, shutil
+import os, sys, threading, asyncio, tempfile, subprocess, shutil
+try:
+    import requests
+except ImportError:
+    requests = None
 import concurrent.futures
 import json
 import time
@@ -40,9 +44,12 @@ try:
     from pipecat.audio.vad.vad_analyzer import VADParams, VADState
     PIPECAT_VAD_OK = True
 except Exception:
-    SileroVADAnalyzer = None
-    VADParams = None
-    VADState = None
+    class SileroVADAnalyzer:
+        pass
+    class VADParams:
+        pass
+    class VADState:
+        pass
     PIPECAT_VAD_OK = False
 
 try:
@@ -51,7 +58,21 @@ try:
     from ibm_watsonx_ai import Credentials
     WATSONX_OK = True
 except ImportError:
+    class ModelInference:
+        pass
+    class GenParams:
+        pass
+    class Credentials:
+        pass
     WATSONX_OK = False
+
+try:
+    from faster_whisper import WhisperModel
+    FASTER_WHISPER_OK = True
+except ImportError:
+    class WhisperModel:
+        pass
+    FASTER_WHISPER_OK = False
 
 from src.quantum.logic               import ArgosQuantum
 from src.skills.web_scrapper         import ArgosScrapper
