@@ -17,6 +17,9 @@ scapy>=2.5.0
 # ── Scientific/processing helpers ─────────────────────────
 numpy>=1.26.0
 
+# ── Realtime voice pipeline helpers (Pipecat) ─────────────
+pipecat-ai[silero]
+
 # ── NFC / SmartCard (NFC Manager) ─────────────────────────
 nfcpy>=1.0.4
 pyscard>=2.0.10

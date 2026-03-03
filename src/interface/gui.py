@@ -117,6 +117,19 @@ class ArgosGUI(ctk.CTk):
         ctk.CTkButton(inp, text="▶ EXECUTE", width=110, height=42,
                       command=lambda: self._send_text(self.entry.get())).pack(side="right")
 
+        # ── Подписка на события VAD ──────────────────────
+        try:
+            from src.interface.vad_events import bus
+            def _on_vad_event(ev):
+                if ev.type == "vad.speech_start":
+                    self.voice_label.configure(text="🔊 Голос: РЕЧЬ...", text_color="#FFD700")
+                elif ev.type == "vad.speech_end":
+                    self.voice_label.configure(text=f"🔊 Голос: {'ВКЛ' if self.core.voice_on else 'ВЫКЛ'}", text_color="#88FF00")
+            bus.subscribe("vad.speech_start", _on_vad_event)
+            bus.subscribe("vad.speech_end", _on_vad_event)
+        except Exception as e:
+            print(f"VAD events integration error: {e}")
+
     # ── ОТПРАВКА ──────────────────────────────────────────
     def _send_text(self, text: str):
         if not text or not text.strip():
@@ -233,3 +246,11 @@ class ArgosGUI(ctk.CTk):
         self.chat.insert("end", text)
         self.chat.see("end")
         self.chat.configure(state="disabled")
+
+    def _on_vad_event(self, ev):
+        if ev.type == "vad.speech_start":
+            self.voice_btn.configure(text="🔴 Речь обнаружена", fg_color="#ff2222")
+            self._append("🟢 Начало речи (VAD)\n", "#88ff88")
+        elif ev.type == "vad.speech_end":
+            self.voice_btn.configure(text="🎙 Слушай меня", fg_color="#1a4a1a")
+            self._append("🔵 Конец речи (VAD)\n", "#88c0ff")

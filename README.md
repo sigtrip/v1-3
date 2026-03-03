@@ -13,7 +13,7 @@
 | Слой | Что умеет |
 |------|-----------|
 | 🧠 **Интеллект** | Gemini / GigaChat / YandexGPT / LM Studio / OpenAI / Grok → Ollama/Llama3 / **IBM Watsonx** (Llama-3.1-70B), multi-turn + Tool Calling по JSON-схемам |
-| 🗣️ **Голос** | TTS (pyttsx3) + STT (SpeechRecognition) + Wake Word «Аргос» |
+| 🗣️ **Голос** | TTS (pyttsx3) + STT (SpeechRecognition) + опциональный Pipecat Silero VAD + Wake Word «Аргос» |
 | 🤖 **Агент** | Цепочки задач: «скан сети → запиши → отправь в Telegram» |
 | 👁️ **Vision** | Анализ экрана / камеры / файлов через Gemini Vision |
 | 🧬 **Память** | SQLite: факты, заметки, напоминания, история диалога |
@@ -156,6 +156,36 @@ ArgosUniversal/
 
 ## ⚡ Быстрый старт
 
+### 0. Встроенный AgenticSeek (часть репозитория)
+
+`agenticSeek` подключён как git submodule в `external/agenticseek`.
+
+```bash
+git submodule update --init --recursive
+```
+
+Управление встроенным стеком:
+
+```bash
+bash scripts/agenticseek.sh start          # full stack
+bash scripts/agenticseek.sh start-backend  # только backend :7777
+bash scripts/agenticseek.sh status
+bash scripts/agenticseek.sh health
+bash scripts/agenticseek.sh query-test
+```
+
+Если `health` зелёный, но `query-test` даёт `500`, это почти всегда означает,
+что внутри AgenticSeek не настроен/недоступен LLM-провайдер (часто Ollama).
+Проверь `external/agenticseek/config.ini` и доступность `host.docker.internal:11434`.
+
+Далее для Аргоса:
+
+```env
+ARGOS_AGENT_BACKEND=agenticseek
+ARGOS_AGENTICSEEK_URL=http://127.0.0.1:7777
+ARGOS_AGENTICSEEK_STRICT=on
+```
+
 ### 1. Установка
 
 ```bash
@@ -172,7 +202,7 @@ python setup_builder.py --install
 pip install -r requirements.txt
 pip install PyAudio SpeechRecognition
 
-# Опционально: расширенные модули (SDR/WiFi Sentinel/NFC/Watsonx/BLE)
+# Опционально: расширенные модули (SDR/WiFi Sentinel/NFC/Watsonx/BLE/Pipecat VAD)
 pip install -r requirements-optional.txt
 ```
 
@@ -202,6 +232,17 @@ TELEGRAM_BOT_TOKEN=токен_от_@BotFather
 USER_ID=твой_telegram_id
 ARGOS_NETWORK_SECRET=секрет_p2p
 ARGOS_VOICE_DEFAULT=off  # off|on (по умолчанию Аргос молчит)
+ARGOS_VOICE_ENGINE=auto   # auto|pipecat
+# Параметры Pipecat Silero VAD (опционально)
+ARGOS_PIPECAT_VAD_CONFIDENCE=0.60
+ARGOS_PIPECAT_VAD_START_SECS=0.15
+ARGOS_PIPECAT_VAD_STOP_SECS=0.25
+ARGOS_PIPECAT_VAD_MIN_VOLUME=0.35
+ARGOS_AGENT_BACKEND=auto
+ARGOS_AGENTICSEEK_URL=http://127.0.0.1:7777
+ARGOS_AGENTICSEEK_TIMEOUT_SEC=120
+# если on и backend=agenticseek, локальный fallback отключается
+ARGOS_AGENTICSEEK_STRICT=off
 HA_URL=http://localhost:8123
 HA_TOKEN=токен_home_assistant
 HA_MQTT_HOST=localhost
@@ -691,7 +732,8 @@ ha mqtt home/livingroom/light/set state=ON brightness=180
 | MQTT | ✅ Implemented | Общий MQTT bridge |
 | Tasmota Discovery | ✅ Implemented | Zero-config через homeassistant/# |
 | Modbus RTU/TCP | ✅ Implemented (minimal) | Runtime-адаптер в IoTBridge: serial/tcp + read/write holding registers |
-| BACnet / KNX / LonWorks / M-Bus / OPC UA | 🧭 Planned/Template | Протоколы декларированы, отдельные runtime-адаптеры в IoTBridge пока не реализованы |
+| BACnet | ✅ Implemented (bridge) | Отдельный runtime-адаптер `src/connectivity/bacnet_bridge.py` (scan/read/write/status, simulation fallback) |
+| KNX / LonWorks / M-Bus / OPC UA | 🧭 Planned/Template | Протоколы декларированы, отдельные runtime-адаптеры в IoTBridge пока не реализованы |
 
 Поддерживаемые Zigbee-шлюзы (хабы экосистем):
 - Aqara Hub M2
@@ -841,6 +883,12 @@ Roadmap:
 "сканируй сеть → найди новые устройства → запиши в devices.txt → отправь в Telegram"
 ```
 Аргос разбивает задачу на шаги, выполняет последовательно, отчитывается.
+
+Опционально можно использовать внешний AgenticSeek как backend агентного режима
+(без копирования его исходников в этот репозиторий):
+- `ARGOS_AGENT_BACKEND=auto` — сначала AgenticSeek (`/health`, `/query`), затем локальный fallback
+- `ARGOS_AGENT_BACKEND=agenticseek` — приоритет только внешнего backend
+- `ARGOS_AGENT_BACKEND=local` — только встроенный ArgosAgent
 
 ---
 

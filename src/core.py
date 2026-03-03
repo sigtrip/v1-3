@@ -30,6 +30,16 @@ except ImportError:
     sr = None; SR_OK = False
 
 try:
+    from pipecat.audio.vad.silero import SileroVADAnalyzer
+    from pipecat.audio.vad.vad_analyzer import VADParams, VADState
+    PIPECAT_VAD_OK = True
+except Exception:
+    SileroVADAnalyzer = None
+    VADParams = None
+    VADState = None
+    PIPECAT_VAD_OK = False
+
+try:
     from ibm_watsonx_ai.foundation_models import ModelInference
     from ibm_watsonx_ai.metanames import GenTextParamsMetaNames as GenParams
     from ibm_watsonx_ai import Credentials
@@ -336,6 +346,7 @@ class ArgosCore:
         except Exception:
             self.ollama_max_prompt_chars = 16000
         self.ai_mode    = self._normalize_ai_mode(os.getenv("ARGOS_AI_MODE", "auto"))
+        self.voice_engine = (os.getenv("ARGOS_VOICE_ENGINE", "auto") or "auto").strip().lower()
         self.voice_on   = os.getenv("ARGOS_VOICE_DEFAULT", "off").strip().lower() in (
             "1", "true", "on", "yes", "да", "вкл"
         )
@@ -352,6 +363,8 @@ class ArgosCore:
         self._tts_engine = None
         self._tts_lock = threading.Lock()
         self._tts_busy = False
+        self._pipecat_vad = None
+        self._pipecat_vad_lock = threading.Lock()
         self._whisper_model = None
         self.skill_loader = None
         self.dag_manager  = None
@@ -870,6 +883,9 @@ class ArgosCore:
     # ГОЛОС
     # ═══════════════════════════════════════════════════════
     def _init_voice(self):
+        if self.voice_engine in ("auto", "pipecat"):
+            self._init_pipecat_vad()
+
         if not PYTTSX3_OK:
             log.warning("pyttsx3 не установлен: pip install pyttsx3")
             return
@@ -884,6 +900,57 @@ class ArgosCore:
         except Exception as e:
             self._tts_engine = None
             log.warning("TTS недоступен: %s", e)
+
+    def _init_pipecat_vad(self):
+        if not PIPECAT_VAD_OK:
+            if self.voice_engine == "pipecat":
+                log.warning("Pipecat VAD не установлен. Установите: pip install pipecat-ai[silero]")
+            return
+
+        try:
+            confidence = float(os.getenv("ARGOS_PIPECAT_VAD_CONFIDENCE", "0.60") or "0.60")
+            start_secs = float(os.getenv("ARGOS_PIPECAT_VAD_START_SECS", "0.15") or "0.15")
+            stop_secs = float(os.getenv("ARGOS_PIPECAT_VAD_STOP_SECS", "0.25") or "0.25")
+            min_volume = float(os.getenv("ARGOS_PIPECAT_VAD_MIN_VOLUME", "0.35") or "0.35")
+
+            params = VADParams(
+                confidence=max(0.05, min(confidence, 0.99)),
+                start_secs=max(0.0, min(start_secs, 2.0)),
+                stop_secs=max(0.0, min(stop_secs, 2.0)),
+                min_volume=max(0.0, min(min_volume, 1.0)),
+            )
+            self._pipecat_vad = SileroVADAnalyzer(sample_rate=16000, params=params)
+            self._pipecat_vad.set_sample_rate(16000)
+            log.info("Pipecat VAD: OK")
+        except Exception as e:
+            self._pipecat_vad = None
+            if self.voice_engine == "pipecat":
+                log.warning("Pipecat VAD недоступен, fallback на стандартный STT: %s", e)
+
+    def _has_speech_with_pipecat(self, audio_data) -> bool:
+        if not self._pipecat_vad:
+            return True
+
+        try:
+            raw = audio_data.get_raw_data(convert_rate=16000, convert_width=2)
+            loop = asyncio.new_event_loop()
+            try:
+                with self._pipecat_vad_lock:
+                    state = loop.run_until_complete(self._pipecat_vad.analyze_audio(raw))
+            finally:
+                loop.close()
+
+            # Индикация событий VAD через EventBus
+            from src.connectivity.event_bus import bus, EventType
+            if state == VADState.SPEECH:
+                bus.publish("vad.speech_start", {"ts": time.time()})
+            elif state == VADState.QUIET:
+                bus.publish("vad.speech_end", {"ts": time.time()})
+
+            return state != VADState.QUIET
+        except Exception as e:
+            log.warning("Pipecat VAD runtime: %s", e)
+            return True
 
     def say(self, text: str):
         if not self.voice_on or not self._tts_engine:
@@ -910,6 +977,9 @@ class ArgosCore:
                     log.info("Слушаю...")
                     rec.adjust_for_ambient_noise(src, duration=0.5)
                     audio = rec.listen(src, timeout=7, phrase_time_limit=15)
+                    if self.voice_engine in ("auto", "pipecat") and not self._has_speech_with_pipecat(audio):
+                        log.info("Pipecat VAD: речь не обнаружена")
+                        return ""
                     try:
                         text = rec.recognize_google(audio, language="ru-RU")
                         log.info("Распознано (google): %s", text)
@@ -3053,7 +3123,7 @@ class ArgosCore:
                     return self.bacnet_bridge.register_device(dev_id, address, name=name)
                 return "Формат: bacnet регистрация [device_id:int] [address] [name?]"
             if "bacnet чтение" in t or "bacnet read" in t:
-                # Формат: bacnet чтение [device_id] [obj_type] [obj_instance] [prop_name]
+                # Формат: bacnet чтение [device_id] [obj_type] [obj_instance] [property]
                 parts = text.split("чтение", 1)[-1].strip().split()
                 if len(parts) >= 4:
                     try:
@@ -3066,7 +3136,7 @@ class ArgosCore:
                     return self.bacnet_bridge.read_property(dev_id, obj_type, obj_instance, prop_name)
                 return "Формат: bacnet чтение [device_id:int] [obj_type] [obj_instance:int] [property]"
             if "bacnet запись" in t or "bacnet write" in t:
-                # Формат: bacnet запись [device_id] [obj_type] [obj_instance] [prop_name] [value]
+                # Формат: bacnet запись [device_id] [obj_type] [obj_instance] [property] [value]
                 parts = text.split("запись", 1)[-1].strip().split()
                 if len(parts) >= 5:
                     try:
@@ -3557,7 +3627,7 @@ class ArgosCore:
             except Exception as e:
                 return f"⚠️ IBM Runtime backend list: {e}"
 
-        if any(k in t for k in ["ibm bell", "ibm тест", "ibm квант тест", "квантовый тест ibm"]):
+        if any(k in t for k in ["ibm bell", "ibm тест", "ibm квантовый тест", "квантовый тест ibm"]):
             try:
                 return self.quantum.run_ibm_bell_test(shots=256)
             except Exception as e:

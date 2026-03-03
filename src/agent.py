@@ -5,7 +5,9 @@ agent.py — Режим автономного агента Аргоса
 """
 import re
 import time
+import os
 from src.argos_logger import get_logger
+from src.agenticseek_adapter import AgenticSeekAdapter
 
 log = get_logger("argos.agent")
 
@@ -17,9 +19,44 @@ class ArgosAgent:
         self.core    = core
         self._running = False
         self._results = []
+        self._agenticseek = AgenticSeekAdapter()
+
+    def _backend_mode(self) -> str:
+        mode = (os.getenv("ARGOS_AGENT_BACKEND", "auto") or "auto").strip().lower()
+        if mode not in {"auto", "local", "agenticseek"}:
+            return "auto"
+        return mode
+
+    def _try_agenticseek(self, prompt: str) -> str | None:
+        mode = self._backend_mode()
+        if mode == "local":
+            return None
+
+        strict = (os.getenv("ARGOS_AGENTICSEEK_STRICT", "off") or "off").strip().lower() in {
+            "1", "true", "on", "yes", "да", "вкл"
+        }
+
+        if not self._agenticseek.available():
+            if mode == "agenticseek" and strict:
+                return "❌ AgenticSeek недоступен (/health). Проверь ARGOS_AGENTICSEEK_URL и backend-сервис."
+            return None
+
+        ok, answer, err = self._agenticseek.query(prompt)
+        if ok:
+            self._results = [{"step": "agenticseek", "result": answer[:300], "ok": True}]
+            return f"🤖 AgenticSeek:\n\n{answer}"
+
+        log.warning("AgenticSeek ошибка: %s", err)
+        if mode == "agenticseek" and strict:
+            return f"❌ AgenticSeek ошибка: {err}"
+        return None
 
     def execute_plan(self, plan: str, admin, flasher) -> str:
         """Разбирает план на шаги и выполняет последовательно."""
+        ext = self._try_agenticseek(plan)
+        if ext:
+            return ext
+
         steps = self._parse_steps(plan)
         if len(steps) <= 1:
             return None  # Не агентная задача — обычная команда
@@ -81,6 +118,8 @@ class ArgosAgent:
 
     def stop(self):
         self._running = False
+        if self._backend_mode() in {"auto", "agenticseek"}:
+            self._agenticseek.stop()
         return "⛔ Агент остановлен."
 
     def last_report(self) -> str:

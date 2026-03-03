@@ -269,6 +269,52 @@ function quickCreateFirmware() {
 
 setInterval(fetch_status, 3000);
 fetch_status();
+
+# ── WebSocket-сервер для VAD ──────────────────────────
+import socketserver
+import threading
+try:
+    import websockets
+except ImportError:
+    websockets = None
+
+class VADWebSocketServer(socketserver.ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+    vad_clients = set()
+
+    def broadcast(self, msg):
+        for ws in list(self.vad_clients):
+            try:
+                ws.send(msg)
+            except Exception:
+                self.vad_clients.discard(ws)
+
+# Запуск WebSocket-сервера для VAD
+if websockets:
+    import asyncio
+    from src.connectivity.event_bus import bus
+    async def vad_ws_handler(websocket, path):
+        VADWebSocketServer.vad_clients.add(websocket)
+        try:
+            async for _ in websocket:
+                pass
+        finally:
+            VADWebSocketServer.vad_clients.discard(websocket)
+    def start_vad_ws():
+        loop = asyncio.get_event_loop()
+        ws_server = websockets.serve(vad_ws_handler, "0.0.0.0", 8081)
+        loop.run_until_complete(ws_server)
+        def on_vad(ev):
+            if ev.type == "vad.speech_start":
+                for ws in list(VADWebSocketServer.vad_clients):
+                    asyncio.run_coroutine_threadsafe(ws.send("speech_start"), loop)
+            elif ev.type == "vad.speech_end":
+                for ws in list(VADWebSocketServer.vad_clients):
+                    asyncio.run_coroutine_threadsafe(ws.send("speech_end"), loop)
+        bus.subscribe("vad.speech_start", on_vad)
+        bus.subscribe("vad.speech_end", on_vad)
+        threading.Thread(target=loop.run_forever, daemon=True).start()
+    start_vad_ws()
 </script>
 </body>
 </html>"""
