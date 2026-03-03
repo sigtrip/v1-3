@@ -359,7 +359,7 @@ class ArgosCore:
             self.voice_engine = "auto"
         else:
             self.ai_mode = "ollama"  # локальная модель
-            self.voice_engine = "pyttsx3"  # оффлайн TTS
+            # self.mic_index  = 0  # функция была пустой, удаляем для устранения IndentationError
         log.info(f"Режим ИИ: {'онлайн' if online else 'оффлайн'}")
     def __init__(self):
         self.quantum    = ArgosQuantum()
