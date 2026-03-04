@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.argos_logger import get_logger
+from src.empathy_engine import EmpathyEngine, SafetyLevel
 
 log = get_logger("argos.healing")
 
@@ -130,7 +131,23 @@ class SelfHealingEngine:
 
             if not ai_response:
                 return None
-            return self._extract_code(ai_response)
+            fixed_code = self._extract_code(ai_response)
+
+            # Проверка безопасности через EmpathyEngine
+            guardian = EmpathyEngine()
+            status, message = guardian.analyze_intent(
+                task_description="Self-Healing: исправление кода после ошибки",
+                generated_code=fixed_code
+            )
+            if status == SafetyLevel.CRITICAL:
+                log.error(f"EmpathyEngine заблокировал heal_code: {message}")
+                return None
+            elif status == SafetyLevel.WARNING:
+                log.warning(f"EmpathyEngine требует подтверждения: {message}")
+                # Можно реализовать биометрическую проверку или запрос подтверждения
+                return None
+            # Если SAFE — продолжаем
+            return fixed_code
         except Exception as e:
             log.error("Self-Healing heal_code error: %s", e)
             return None

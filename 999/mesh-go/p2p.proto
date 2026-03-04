@@ -1,0 +1,15 @@
+syntax = "proto3";
+package p2p;
+
+service Mesh {
+  rpc SendMessage (Message) returns (Ack) {}
+}
+
+message Message {
+  string from = 1;
+  string body = 2;
+}
+
+message Ack {
+  bool ok = 1;
+}
