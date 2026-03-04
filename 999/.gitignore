@@ -1,0 +1,29 @@
+# Исключаем временные, бинарные и секретные файлы
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+*.so
+*.dll
+*.exe
+*.log
+*.swp
+*.bak
+*.tmp
+*.old
+*.out
+*.env
+.venv/
+target/
+dist/
+*.egg-info/
+*.wheel
+.env
+secrets.json
+*.key
+*.pem
+.DS_Store
+# Rust
+Cargo.lock
+# Go
+bin/
