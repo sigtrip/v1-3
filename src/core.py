@@ -1,4 +1,3 @@
-def set_speaker_index(self, idx: int):
 
 
 import os, sys, threading, asyncio, tempfile, subprocess, shutil
