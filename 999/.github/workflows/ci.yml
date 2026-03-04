@@ -1,0 +1,39 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Установка Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+      - name: Сборка empathy_engine
+        run: |
+          cd 999/core-rs
+          cargo build --release
+      - name: Установка Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Установка зависимостей Python
+        run: |
+          cd 999/ai-py
+          pip install maturin
+          pip install -r requirements.txt || true
+      - name: Сборка и тесты Python
+        run: |
+          cd 999/core-rs
+          maturin develop --release
+          cd ../ai-py
+          python -m unittest test_empathy.py
+      - name: Сборка Go Mesh
+        run: |
+          cd 999/mesh-go
+          go build main.go
