@@ -1,0 +1,65 @@
+pyttsx3
+SpeechRecognition
+pyaudio
+pipecat
+ibm-watsonx-ai
+faster-whisper
+python-telegram-bot
+requests
+# ── ИИ-ядра ───────────────────────────────────────────────
+google-genai>=1.0.0
+ollama>=0.4.0
+ibm-watsonx-ai>=1.1.8
+
+# ── Голос (TTS + STT) ─────────────────────────────────────
+pyttsx3>=2.90
+PyAudio>=0.2.14
+SpeechRecognition>=3.10.0
+faster-whisper>=1.0.3
+
+# ── Интерфейс Desktop ─────────────────────────────────────
+customtkinter>=5.2.0
+
+# ── Web UI (FastAPI Dashboard) ───────────────────────────
+fastapi>=0.115.0
+uvicorn>=0.30.0
+streamlit>=1.40.0
+
+# ── Telegram ──────────────────────────────────────────────
+python-telegram-bot>=21.0
+
+# ── Сеть и парсинг ────────────────────────────────────────
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+
+# ── Системный мониторинг ──────────────────────────────────
+psutil>=5.9.0
+numpy>=1.26.0
+scapy>=2.5.0
+
+# ── IoT / COM-порты ───────────────────────────────────────
+pyserial>=3.5
+
+# ── Безопасность и шифрование ─────────────────────────────
+cryptography>=42.0.0
+python-dotenv>=1.0.0
+
+# ── Skill Loader / версионирование ────────────────────────
+packaging>=23.0
+networkx>=3.2.1
+
+# ── RAG / Vector DB (опционально) ─────────────────────────
+chromadb>=0.5.0
+# sentence-transformers>=3.0.0  # для семантических эмбеддингов (тяжёлая)
+
+# ── Android (только для мобильной сборки) ─────────────────
+# kivy>=2.3.0
+# plyer>=2.1.0
+
+# ── Сборка .exe ───────────────────────────────────────────
+# pyinstaller>=6.0.0
+
+# ── IoT расширения (опционально) ──────────────────────────
+paho-mqtt>=2.0.0        # MQTT брокер/клиент
+# pymodbus>=3.5.0       # Modbus RTU/TCP
+# esptool>=4.7.0        # ESP32/ESP8266 прошивка

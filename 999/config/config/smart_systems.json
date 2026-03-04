@@ -1,0 +1,218 @@
+{
+  "type_definitions": {
+    "home": {
+      "name": "Умный дом",
+      "icon": "🏠",
+      "sensors": [
+        "temp",
+        "humidity",
+        "co2",
+        "motion",
+        "door",
+        "smoke"
+      ],
+      "actuators": [
+        "light",
+        "thermostat",
+        "lock",
+        "alarm",
+        "fan"
+      ],
+      "default_rules": [
+        "Жара — включил вентилятор",
+        "Холодно — включил обогрев",
+        "⚠️ ДЫМОВОЙ ДАТЧИК СРАБОТАЛ",
+        "CO2 высокий — вентиляция",
+        "Движение ночью"
+      ]
+    },
+    "greenhouse": {
+      "name": "Умная теплица",
+      "icon": "🌱",
+      "sensors": [
+        "temp",
+        "humidity",
+        "soil_moisture",
+        "light_lux",
+        "co2",
+        "ph"
+      ],
+      "actuators": [
+        "irrigation",
+        "heating",
+        "ventilation",
+        "lamp",
+        "shade"
+      ],
+      "default_rules": [
+        "Полив — почва сухая",
+        "Полив остановлен",
+        "Жара в теплице",
+        "Холод в теплице",
+        "Досвечивание включено",
+        "Низкая влажность"
+      ]
+    },
+    "garage": {
+      "name": "Умный гараж",
+      "icon": "🚗",
+      "sensors": [
+        "gas",
+        "motion",
+        "door_open",
+        "temp",
+        "flood"
+      ],
+      "actuators": [
+        "gate",
+        "light",
+        "alarm",
+        "fan",
+        "heater"
+      ],
+      "default_rules": [
+        "⚠️ Газ в гараже — вентиляция",
+        "⚠️ ВОДА В ГАРАЖЕ",
+        "Мороз — обогрев гаража",
+        "Движение — свет включён"
+      ]
+    },
+    "cellar": {
+      "name": "Умный погреб",
+      "icon": "🏚️",
+      "sensors": [
+        "temp",
+        "humidity",
+        "flood",
+        "co2"
+      ],
+      "actuators": [
+        "fan",
+        "alarm",
+        "pump",
+        "heater"
+      ],
+      "default_rules": [
+        "Тепло в погребе — вентиляция",
+        "Мороз в погребе — обогрев",
+        "Высокая влажность в погребе",
+        "⚠️ ВОДА В ПОГРЕБЕ — насос"
+      ]
+    },
+    "incubator": {
+      "name": "Инкубатор",
+      "icon": "🥚",
+      "sensors": [
+        "temp",
+        "humidity",
+        "co2",
+        "turn_count"
+      ],
+      "actuators": [
+        "heater",
+        "fan",
+        "turner",
+        "humidifier"
+      ],
+      "default_rules": [
+        "Температура низкая — нагрев",
+        "Температура норма — нагрев выкл",
+        "Влажность низкая — увлажнение",
+        "Влажность норма",
+        "Переворот яиц"
+      ]
+    },
+    "aquarium": {
+      "name": "Аквариум",
+      "icon": "🐠",
+      "sensors": [
+        "temp",
+        "ph",
+        "tds",
+        "o2",
+        "water_level",
+        "ammonia"
+      ],
+      "actuators": [
+        "heater",
+        "pump",
+        "filter",
+        "lamp",
+        "co2_inject",
+        "feeder"
+      ],
+      "default_rules": [
+        "Вода холодная — нагрев",
+        "Вода тёплая — нагрев выкл",
+        "pH низкий — CO2 выкл",
+        "pH высокий — CO2 вкл",
+        "O2 низкий — насос на максимум",
+        "⚠️ Аммиак — фильтр на максимум",
+        "⚠️ Уровень воды низкий"
+      ]
+    },
+    "terrarium": {
+      "name": "Террариум",
+      "icon": "🦎",
+      "sensors": [
+        "temp_hot",
+        "temp_cool",
+        "humidity",
+        "uvi",
+        "motion"
+      ],
+      "actuators": [
+        "lamp_uv",
+        "lamp_heat",
+        "mister",
+        "fan"
+      ],
+      "default_rules": [
+        "Холодно — нагревательная лампа",
+        "Норм — лампа выкл",
+        "Влажность низкая — туман",
+        "УФ низкий — УФ лампа"
+      ]
+    }
+  },
+  "systems": {
+    "main": {
+      "type": "aquarium",
+      "sensors": {},
+      "actuators": {},
+      "custom_rules": []
+    },
+    "tank1": {
+      "type": "aquarium",
+      "sensors": {},
+      "actuators": {},
+      "custom_rules": []
+    },
+    "a1": {
+      "type": "aquarium",
+      "sensors": {},
+      "actuators": {},
+      "custom_rules": []
+    },
+    "теплица_1": {
+      "type": "greenhouse",
+      "sensors": {
+        "temp": 38.0
+      },
+      "actuators": {
+        "ventilation": "on",
+        "irrigation": "on"
+      },
+      "custom_rules": []
+    },
+    "gh_test": {
+      "type": "greenhouse",
+      "sensors": {},
+      "actuators": {
+        "irrigation": "on",
+        "ventilation": "on"
+      },
+      "custom_rules": []
+    }
+  }
+}

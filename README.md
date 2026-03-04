@@ -220,6 +220,7 @@ pip install -r requirements-optional.txt
 
 ### 2. .env
 
+
 Аргос загружает `.env` через единый bootstrap: сначала из текущей рабочей директории, затем (если файл не найден) из корня репозитория. Это позволяет запускать `python main.py` как из корня проекта, так и из вложенных сценариев/обвязок.
 
 ```env
@@ -230,7 +231,6 @@ GIGACHAT_ACCESS_TOKEN=токен_gigachat_если_есть
 # GIGACHAT_CLIENT_SECRET=...
 YANDEX_IAM_TOKEN=iam_токен_yandex_cloud
 YANDEX_FOLDER_ID=folder_id_yandex_cloud
-# опционально: YANDEXGPT_MODEL_URI=gpt://<folder>/yandexgpt-lite/latest
 TELEGRAM_BOT_TOKEN=токен_от_@BotFather
 USER_ID=твой_telegram_id
 ARGOS_NETWORK_SECRET=секрет_p2p
@@ -238,6 +238,8 @@ ARGOS_VOICE_DEFAULT=off  # off|on (по умолчанию Аргос молчи
 ARGOS_VOICE_ENGINE=auto   # auto|pipecat
 # Параметры Pipecat Silero VAD (опционально)
 ARGOS_PIPECAT_VAD_CONFIDENCE=0.60
+| Слой | Что умеет |
+| ------ | ----------- |
 ARGOS_PIPECAT_VAD_START_SECS=0.15
 ARGOS_PIPECAT_VAD_STOP_SECS=0.25
 ARGOS_PIPECAT_VAD_MIN_VOLUME=0.35
@@ -277,7 +279,6 @@ ARGOS_OLLAMA_AUTOSTART=on
 ARGOS_HOMEOSTASIS=on
 ARGOS_HOMEOSTASIS_INTERVAL=8
 ARGOS_HOMEOSTASIS_PROTECT_CPU=78
-ARGOS_HOMEOSTASIS_UNSTABLE_CPU=92
 ARGOS_CURIOSITY=on
 ARGOS_CURIOSITY_IDLE_SEC=600
 ARGOS_CURIOSITY_RESEARCH_SEC=900
