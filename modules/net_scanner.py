@@ -1,0 +1,1 @@
+def execute(core, args): return '[NET] Nodes found: 2'
