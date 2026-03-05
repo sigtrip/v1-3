@@ -19,7 +19,7 @@ jobs:
         python-version: '3.10'
 
     - name: Cache Buildozer global directory
-      uses: actions/cache@v3
+      uses: actions/cache@v5
       with:
         path: ~/.buildozer
         key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
@@ -27,7 +27,7 @@ jobs:
           ${{ runner.os }}-buildozer-
 
     - name: Cache Buildozer build directory
-      uses: actions/cache@v3
+      uses: actions/cache@v5
       with:
         path: .buildozer
         key: ${{ runner.os }}-buildozer-build-${{ hashFiles('buildozer.spec') }}
