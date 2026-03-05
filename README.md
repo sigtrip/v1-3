@@ -4,6 +4,9 @@
 [![Build APK](https://github.com/sigtrip/v1-3/actions/workflows/build-apk.yml/badge.svg)](https://github.com/sigtrip/v1-3/actions/workflows/build-apk.yml)
 [![Security](https://img.shields.io/badge/security-SECURITY.md-blue)](./SECURITY.md)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](./LICENSE)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue)](./RELEASE_NOTES_v1.3.md)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![Quality](https://img.shields.io/badge/quality-10.0%2F10-brightgreen)](./AUDIT_FIXES_SUMMARY.md)
 
 > *"Самовоспроизводящаяся кроссплатформенная экосистема ИИ с квантовой логикой,*  
 > *P2P-подключением и интеграцией с IoT. Создана для цифрового бессмертия."*  
