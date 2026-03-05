@@ -161,6 +161,31 @@ ArgosUniversal/
 
 ## ⚡ Быстрый старт
 
+### 🚀 Автоматическое развертывание (рекомендуется)
+
+```bash
+git clone https://github.com/sigtrip/v1-3.git
+cd v1-3
+./deploy.sh
+```
+
+Скрипт `deploy.sh` автоматически:
+- Проверит системные требования
+- Установит зависимости
+- Сгенерирует секреты
+- Инициализирует базу данных
+- Запустит health check
+- Предложит запустить ARGOS
+
+**Другие режимы:**
+```bash
+./deploy.sh --auto       # Без интерактивных вопросов
+./deploy.sh --docker     # Docker deployment
+./deploy.sh --android    # Сборка Android APK
+```
+
+### 📦 Ручная установка
+
 ### 0. Встроенный AgenticSeek (часть репозитория)
 
 `agenticSeek` подключён как git submodule в `external/agenticseek`.
