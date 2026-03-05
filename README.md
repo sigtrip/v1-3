@@ -1,7 +1,9 @@
-# Для корректной типизации requests:
-# 1. Активируйте виртуальное окружение: source .venv/bin/activate
-# 2. Убедитесь, что mypy использует .venv (см. mypy.ini)
-# 👁️ ARGOS UNIVERSAL OS — v1.0.0-Absolute
+# 👁️ ARGOS UNIVERSAL OS — v1.3
+
+[![CI](https://github.com/sigtrip/v1-3/actions/workflows/ci.yml/badge.svg)](https://github.com/sigtrip/v1-3/actions/workflows/ci.yml)
+[![Build APK](https://github.com/sigtrip/v1-3/actions/workflows/build-apk.yml/badge.svg)](https://github.com/sigtrip/v1-3/actions/workflows/build-apk.yml)
+[![Security](https://img.shields.io/badge/security-SECURITY.md-blue)](./SECURITY.md)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green)](./LICENSE)
 
 > *"Самовоспроизводящаяся кроссплатформенная экосистема ИИ с квантовой логикой,*  
 > *P2P-подключением и интеграцией с IoT. Создана для цифрового бессмертия."*  
