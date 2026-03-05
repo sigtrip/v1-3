@@ -16,7 +16,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
-        python-version: '3.10'
+        python-version: '3.11'
 
     - name: Cache Buildozer global directory
       uses: actions/cache@v3
@@ -46,16 +46,19 @@ jobs:
 
     - name: Build with Buildozer
       run: |
-        # Добавляем yes, чтобы автоматически принимать лицензии
-        yes | buildozer android debug || true
+        # Capture output to a log file instead of just suppressing errors
+        yes | buildozer android debug > buildozer_output.txt 2>&1
         
-    - name: Check build result
+    - name: Check build result and print logs on failure
       run: |
         if [ ! -f bin/*.apk ]; then
-          echo "❌ APK не был создан!"
+          echo "❌ APK was not created! Displaying build logs:"
+          if [ -f buildozer_output.txt ]; then
+            cat buildozer_output.txt
+          fi
           exit 1
         fi
-        echo "✅ APK успешно создан:"
+        echo "✅ APK successfully created:"
         ls -lh bin/*.apk
 
     - name: Upload APK
