@@ -1,6 +1,6 @@
 [app]
-title = ARGOS v1.3
-package.name = argos
+title = Argos Universal OS
+package.name = argos_v13
 package.domain = org.sigtrip
 
 source.dir = .
@@ -8,7 +8,7 @@ source.include_exts = py,png,jpg,kv,atlas
 
 version = 1.3
 # Полный список зависимостей для Android
-requirements = python3,kivy,cryptography,requests,paho-mqtt,psutil
+requirements = python3,kivy,requests,psutil,urllib3,certifi,idna,charset-normalizer
 
 orientation = portrait
 fullscreen = 0
