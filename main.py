@@ -1,83 +1,95 @@
 import os
-import sys
+import hashlib
+import requests
+import threading
+from datetime import datetime
+from trainer import ArgosTrainer # Импортируем нашего тренера
 
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
-from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
-
-# Добавляем путь к src для импорта модулей
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
+from kivy.uix.button import Button
+from kivy.uix.scrollview import ScrollView
+from kivy.clock import Clock
 
 class ArgosInterface(App):
     def build(self):
-        layout = BoxLayout(orientation="vertical", padding=30, spacing=20)
+        self.trainer = ArgosTrainer() # Инициализация тренера
+        self.ai_server = "http://127.0.0.1:11434" # IP для Ollama
 
-        # Заголовок
-        self.status = Label(
-            text="🔱 ARGOS v1.3 [OFFLINE MODE]\nSTATUS: AWAITING AUTHENTICATION",
-            halign="center",
-            font_size="20sp",
+        self.main_layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
+        
+        # Header с отображением уровня эволюции
+        level = self.trainer.knowledge_base["evolution_level"]
+        self.header = Label(
+            text=f"🔱 ARGOS OS v1.3.4 | EVOLUTION: {level}",
+            size_hint=(1, 0.15), color=(0, 1, 0.5, 1), font_size='18sp', bold=True
         )
+        self.main_layout.add_widget(self.header)
 
-        self.key_input = TextInput(
-            hint_text="Enter Master Key (SHA-256 hash)...",
-            multiline=False,
-            size_hint=(1, 0.2),
-            password=True,  # Скрыть ввод
+        self.scroll = ScrollView(size_hint=(1, 0.65))
+        self.console = Label(
+            text="[SYSTEM ONLINE] Trainer Module Loaded.",
+            size_hint_y=None, height=5000, halign='left', valign='top',
+            color=(0, 0.9, 0.1, 1), font_size='14sp'
         )
+        self.console.bind(size=self.console.setter('text_size'))
+        self.scroll.add_widget(self.console)
+        self.main_layout.add_widget(self.scroll)
 
-        btn = Button(text="ACTIVATE SYSTEM", size_hint=(1, 0.3), background_color=(0, 0.7, 1, 1))
-        btn.bind(on_press=self.activate)
+        self.input_field = TextInput(
+            hint_text="Type 'train' to evolve or ask AI...",
+            multiline=False, size_hint=(1, 0.1),
+            background_color=(0, 0.1, 0, 1), foreground_color=(1, 1, 1, 1)
+        )
+        self.main_layout.add_widget(self.input_field)
 
-        layout.add_widget(self.status)
-        layout.add_widget(self.key_input)
-        layout.add_widget(btn)
-        return layout
+        self.btn = Button(
+            text="EXECUTE", size_hint=(1, 0.1),
+            background_color=(0, 0.4, 0, 1), on_press=self.handle_input
+        )
+        self.main_layout.add_widget(self.btn)
+        
+        return self.main_layout
 
-    def activate(self, instance):
-        key = self.key_input.text.strip()
+    def log(self, msg):
+        self.console.text += f"\n[{datetime.now().strftime('%H:%M')}] {msg}"
 
-        # Базовая валидация ключа
-        if not key:
-            self.status.text = "❌ KEY REQUIRED"
-            return
+    def handle_input(self, instance):
+        cmd = self.input_field.text.strip()
+        self.input_field.text = ""
 
-        if len(key) != 64:
-            self.status.text = "❌ INVALID KEY LENGTH\nExpected: 64 chars (SHA-256)"
-            return
+        if cmd.lower() == "train":
+            self.log("Starting neural evolution process...")
+            result = self.trainer.train_on_history()
+            self.log(result)
+            self.header.text = f"🔱 ARGOS OS | EVOLUTION: {self.trainer.knowledge_base['evolution_level']}"
+        
+        elif cmd.lower() == "status":
+            self.log(f"Commands processed: {self.trainer.knowledge_base['total_commands']}")
+            self.log(f"Brain file: {self.trainer.brain_file}")
+            
+        else:
+            self.log(f"User: {cmd}")
+            threading.Thread(target=self.ai_request, args=(cmd,)).start()
 
-        # Проверка формата (hex)
+    def ai_request(self, prompt):
+        # Получаем кастомный промпт от тренера
+        system_msg = self.trainer.get_system_prompt()
         try:
-            int(key, 16)
-        except ValueError:
-            self.status.text = "❌ INVALID KEY FORMAT\nExpected: hexadecimal SHA-256"
-            return
+            r = requests.post(f"{self.ai_server}/api/generate", 
+                              json={
+                                  "model": "llama3", 
+                                  "prompt": f"{system_msg}\nUser: {prompt}", 
+                                  "stream": False
+                              }, timeout=10)
+            answer = r.json().get('response', '...')
+            # Сохраняем опыт
+            self.trainer.log_interaction(prompt, answer)
+            Clock.schedule_once(lambda dt: self.log(f"ARGOS: {answer}"), 0)
+        except:
+            Clock.schedule_once(lambda dt: self.log("ARGOS: AI Server Offline."), 0)
 
-        # Попытка авторизации через backend
-        try:
-            from src.security.master_auth import get_auth
-
-            auth = get_auth()
-
-            if auth.verify(key):
-                self.status.text = "✅ AUTHENTICATION SUCCESSFUL\n🔓 ARGOS SYSTEM ONLINE\nInitializing modules..."
-                self.key_input.disabled = True
-                instance.disabled = True
-
-                # TODO: Запустить основной функционал Argos
-                # from src.core import ArgosCore
-                # self.argos_core = ArgosCore()
-            else:
-                self.status.text = "❌ AUTHENTICATION FAILED\nInvalid master key"
-        except ImportError as e:
-            # Fallback если backend недоступен
-            self.status.text = f"⚠️ OFFLINE MODE\nBackend unavailable: {str(e)[:50]}"
-        except Exception as e:
-            self.status.text = f"❌ ERROR: {str(e)[:100]}"
-
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     ArgosInterface().run()
