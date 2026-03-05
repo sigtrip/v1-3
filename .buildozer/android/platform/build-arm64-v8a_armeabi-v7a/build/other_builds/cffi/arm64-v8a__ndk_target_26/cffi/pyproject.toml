@@ -1,0 +1,51 @@
+[build-system]
+requires = [
+    # first version that supports Python 3.12; older versions may work
+    # with previous Python versions, but are not tested
+    "setuptools >= 66.1"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cffi"
+version = "2.0.0"
+dependencies = [
+    "pycparser; implementation_name != 'PyPy'",
+]
+requires-python = ">=3.9"
+
+description = "Foreign Function Interface for Python calling C code."
+readme = {file = "README.md", content-type = "text/markdown"}
+license = "MIT"
+classifiers = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: Free Threading :: 2 - Beta",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+authors = [
+    {name = "Armin Rigo"},
+    {name = "Maciej Fijalkowski"},
+]
+maintainers = [
+    {name = "Matt Davis"},
+    {name = "Matt Clay"},
+    {name = "Matti Picus"},
+]
+
+[project.entry-points."distutils.setup_keywords"]
+cffi_modules = "cffi.setuptools_ext:cffi_modules"
+
+[project.urls]
+Documentation = "https://cffi.readthedocs.io/"
+Changelog = "https://cffi.readthedocs.io/en/latest/whatsnew.html"
+Downloads = "https://github.com/python-cffi/cffi/releases"
+Contact = "https://groups.google.com/forum/#!forum/python-cffi"
+"Source Code" = "https://github.com/python-cffi/cffi"
+"Issue Tracker" = "https://github.com/python-cffi/cffi/issues"

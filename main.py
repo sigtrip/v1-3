@@ -1,153 +1,35 @@
-"""
-main.py — ArgosUniversal OS v1.0.0 FINAL
-  Оркестратор: запускает все подсистемы в правильном порядке.
-  Режимы: desktop | mobile | server | shell
-  Флаги:  --no-gui | --mobile | --root | --dashboard | --wake | --shell
-  Web UI: fastapi (--dashboard) | streamlit (standalone)
-  Аргументы обрабатываются через sys.argv (argparse-совместимо).
-"""
-import os, sys, threading
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "src")))
-from src.env_bootstrap import bootstrap_env
-bootstrap_env()
+from kivy.app import App
+from kivy.uix.button import Button
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.textinput import TextInput
 
-from src.core                        import ArgosCore
-from src.admin                       import ArgosAdmin
-from src.security.git_guard          import GitGuard
-from src.security.encryption         import ArgosShield
-from src.security.root_manager       import RootManager
-from src.factory.flasher             import AirFlasher
-from src.connectivity.spatial        import SpatialAwareness
-from src.connectivity.telegram_bot   import ArgosTelegram
-from src.interface.gui               import ArgosGUI
-from src.argos_logger                import get_logger
-from db_init                         import ArgosDB
+class ArgosInterface(App):
+    def build(self):
+        layout = BoxLayout(orientation='vertical', padding=30, spacing=20)
+        
+        # Заголовок с кодом 1991
+        self.status = Label(text="🔱 ARGOS v1.3 [OFFLINE MODE]\nSTATUS: AWAITING KEY 1991", 
+                            halign='center', font_size='20sp')
+        
+        self.key_input = TextInput(hint_text="Paste Quantum Key here...", 
+                                   multiline=False, size_hint=(1, 0.2))
+        
+        btn = Button(text="ACTIVATE OVERRIDE", size_hint=(1, 0.3),
+                     background_color=(0, 0.7, 1, 1))
+        btn.bind(on_press=self.activate)
+        
+        layout.add_widget(self.status)
+        layout.add_widget(self.key_input)
+        layout.add_widget(btn)
+        return layout
 
-log = get_logger("argos.main")
+    def activate(self, instance):
+        key = self.key_input.text.strip()
+        if len(key) == 64:  # Длина SHA-256 ключа
+            self.status.text = f"✅ KEY ACCEPTED\nRESONANCE: 156 QUBITS\nPOWERING UP..."
+        else:
+            self.status.text = "❌ INVALID KEY STRUCTURE"
 
-
-class ArgosOrchestrator:
-    def __init__(self):
-        log.info("━" * 48)
-        log.info("  ARGOS UNIVERSAL OS v1.0.0-ABSOLUTE — BOOT")
-        log.info("━" * 48)
-
-        # 1. Безопасность
-        GitGuard().check_security()
-        self.shield = ArgosShield()
-        log.info("[SHIELD] AES-256 активирован")
-
-        # 2. Права
-        self.root = RootManager()
-        log.info("[ROOT] %s", self.root.status().split('\n')[0])
-
-        # 3. База данных
-        self.db = ArgosDB()
-        log.info("[DB] SQLite ready → data/argos.db")
-
-        # 4. Геолокация
-        self.spatial  = SpatialAwareness(db=self.db)
-        self.location = self.spatial.get_location()
-        log.info("[GEO] %s", self.location)
-
-        # 5. Инструменты
-        self.admin   = ArgosAdmin()
-        self.flasher = AirFlasher()
-
-        # 6. Ядро
-        self.core    = ArgosCore()
-        self.core.db = self.db
-
-        # 7. P2P
-        p2p = self.core.start_p2p()
-        log.info("[P2P] %s", p2p.split('\n')[0])
-
-        # 8. Веб-панель
-        if "--dashboard" in sys.argv:
-            dash = self.core.start_dashboard(self.admin, self.flasher)
-            log.info("[DASH] %s", dash)
-
-        log.info("━" * 48)
-        log.info("  АРГОС ПРОБУЖДЁН. ЖДУ ДИРЕКТИВ.")
-        log.info("━" * 48)
-
-    def _start_telegram(self):
-        try:
-            self.tg = ArgosTelegram(self.core, self.admin, self.flasher)
-            can_start, reason = self.tg.can_start()
-            if not can_start:
-                log.warning("[TG] Отключён: %s", reason)
-                return
-            threading.Thread(target=self.tg.run, daemon=True).start()
-            log.info("[TG] Telegram-бот запущен")
-        except Exception as e:
-            log.warning("[TG] Не запущен: %s", e)
-
-    def boot_desktop(self):
-        self._start_telegram()
-        app = ArgosGUI(self.core, self.admin, self.flasher, self.location)
-        app._append(
-            f"👁️  ARGOS UNIVERSAL OS v1.0.0-ABSOLUTE\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"Создатель: Всеволод\n"
-            f"Гео:       {self.location}\n"
-            f"Права:     {'ROOT ✅' if self.root.is_root else 'User ⚠️'}\n"
-            f"ИИ:        {self.core.ai_mode_label()}\n"
-            f"Память:    {'✅' if self.core.memory else '❌'}\n"
-            f"Vision:    {'✅' if self.core.vision else '❌'}\n"
-            f"Алерты:    {'✅' if self.core.alerts else '❌'}\n"
-            f"P2P:       {'✅' if self.core.p2p else '❌'}\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"Напечатай 'помощь' для списка команд.\n\n",
-            "#00FF88"
-        )
-        if "--wake" in sys.argv:
-            ww = self.core.start_wake_word(self.admin, self.flasher)
-            app._append(f"{ww}\n", "#00ffff")
-        app.mainloop()
-
-    def boot_mobile(self):
-        from src.interface.mobile_ui import ArgosMobileUI
-        ArgosMobileUI(core=self.core, admin=self.admin, flasher=self.flasher).run()
-
-    def boot_shell(self):
-        """Интерактивная оболочка Argos (замена bash/cmd)."""
-        log.info("[SHELL] Low-level REPL mode activated.")
-        print("\n--- [ Argos System Shell ] ---\n")
-        # Для шелла не обязательно запускать Telegram сразу, но можно.
-        # self._start_telegram() 
-        from src.interface.argos_shell import ArgosShell
-        try:
-            ArgosShell().cmdloop()
-        except KeyboardInterrupt:
-            print("\nShell terminated.")
-
-    def boot_server(self):
-        log.info("[SERVER] Headless режим — только Telegram + P2P")
-        if "--dashboard" in sys.argv:
-            log.info("[SERVER] Dashboard: http://localhost:8080")
-        self._start_telegram()
-        import time
-        try:
-            while True: time.sleep(60)
-        except KeyboardInterrupt:
-            log.info("Аргос завершает работу.")
-
-
-if __name__ == "__main__":
-    for d in ["logs","config","builds/replicas","assets","data"]:
-        os.makedirs(d, exist_ok=True)
-
-    if "--root" in sys.argv:
-        print(RootManager().request_elevation()); sys.exit(0)
-
-    mode = "desktop"
-    if "--no-gui"  in sys.argv: mode = "server"
-    if "--mobile"  in sys.argv: mode = "mobile"
-    if "--shell"   in sys.argv: mode = "shell"
-
-    argos = ArgosOrchestrator()
-    if   mode == "desktop": argos.boot_desktop()
-    elif mode == "mobile":  argos.boot_mobile()
-    elif mode == "shell":   argos.boot_shell()
-    else:                   argos.boot_server()
+if __name__ == '__main__':
+    ArgosInterface().run()
