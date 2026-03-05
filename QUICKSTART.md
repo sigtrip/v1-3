@@ -43,6 +43,16 @@ pip install -r requirements.txt
 
 ### Шаг 3: Настройка окружения
 
+**Автоматический способ (рекомендуется):**
+```bash
+# Автоматическая генерация секретов
+python setup_secrets.py --auto
+
+# Или интерактивный режим с вводом API ключей
+python setup_secrets.py
+```
+
+**Ручной способ:**
 ```bash
 # Скопировать шаблон конфигурации
 cp .env.example .env
@@ -55,13 +65,18 @@ echo "Генерация ARGOS_MASTER_KEY..."
 openssl rand -hex 32
 ```
 
-**Откройте `.env` и вставьте:**
+**Откройте `.env` и добавьте:**
 ```env
 GEMINI_API_KEY=ваш_ключ_от_ai.google.dev
 TELEGRAM_BOT_TOKEN=ваш_токен_от_@BotFather
 USER_ID=ваш_telegram_id
 ARGOS_NETWORK_SECRET=<результат_первой_команды>
 ARGOS_MASTER_KEY=<результат_второй_команды>
+```
+
+**Проверка конфигурации:**
+```bash
+python setup_secrets.py --check
 ```
 
 ### Шаг 4: Инициализация

@@ -8,6 +8,8 @@ help:
 	@echo "  make install          Install production dependencies"
 	@echo "  make install-dev      Install development dependencies"
 	@echo "  make setup-env        Setup .env from template"
+	@echo "  make setup-secrets    Generate secrets automatically"
+	@echo "  make check-ready      Check system readiness"
 	@echo ""
 	@echo "Development:"
 	@echo "  make lint             Run all linters (black, isort, flake8, mypy)"
@@ -42,16 +44,22 @@ install-dev:
 
 setup-env:
 	@if [ ! -f .env ]; then \
-		cp .env.example .env; \
-		echo "✅ Created .env from template"; \
+		python setup_secrets.py --auto; \
+		echo "✅ Created .env with auto-generated secrets"; \
 		echo "⚠️  Please edit .env and add your API keys"; \
-		echo ""; \
-		echo "Generate secrets:"; \
-		echo "  ARGOS_NETWORK_SECRET: openssl rand -hex 32"; \
-		echo "  ARGOS_MASTER_KEY: openssl rand -hex 32"; \
 	else \
 		echo "⚠️  .env already exists"; \
+		echo "Run 'python setup_secrets.py --check' to verify"; \
 	fi
+
+setup-secrets:
+	python setup_secrets.py
+
+check-ready:
+	python check_readiness.py
+
+check-ready-quick:
+	python check_readiness.py --quick
 
 # ─── Development ─────────────────────────────────────────────
 
