@@ -74,7 +74,22 @@ class AgenticSeekAdapter:
             return False
 
     def query(self, prompt: str) -> Tuple[bool, str, str]:
-        """Возвращает (ok, answer, error)."""
+        """
+        Возвращает (ok, answer, error).
+        Сначала пробует локальный поиск, если не настроен внешний backend.
+        """
+        # 1. Попытка через локальный Search Engine (если режим auto/local)
+        try:
+            from src.skills.web_scrapper.search_engine import get_search_engine
+
+            # Простая эвристика: если prompt похож на вопрос "найди", "кто такой"
+            if any(x in prompt.lower() for x in ["найди", "кто", "что", "поиск", "узнай", "гугл"]):
+                engine = get_search_engine()
+                result = engine.research(prompt)
+                return True, result, ""
+        except ImportError:
+            pass
+
         payload = {
             "query": prompt,
             "tts_enabled": False,
