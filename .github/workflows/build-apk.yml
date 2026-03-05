@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # Используем Ubuntu 22.04 для совместимости с libtinfo5
 
     steps:
     - name: Checkout code
@@ -18,17 +18,45 @@ jobs:
       with:
         python-version: '3.10'
 
-    - name: Install dependencies
+    - name: Cache Buildozer global directory
+      uses: actions/cache@v3
+      with:
+        path: ~/.buildozer
+        key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
+        restore-keys: |
+          ${{ runner.os }}-buildozer-
+
+    - name: Cache Buildozer build directory
+      uses: actions/cache@v3
+      with:
+        path: .buildozer
+        key: ${{ runner.os }}-buildozer-build-${{ hashFiles('buildozer.spec') }}
+        restore-keys: |
+          ${{ runner.os }}-buildozer-build-
+
+    - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 cmake libffi-dev libssl-dev
+
+    - name: Install Python dependencies
+      run: |
         pip install --upgrade pip
         pip install --user --upgrade buildozer cython virtualenv
 
     - name: Build with Buildozer
       run: |
         # Добавляем yes, чтобы автоматически принимать лицензии
-        yes | buildozer android debug
+        yes | buildozer android debug || true
+        
+    - name: Check build result
+      run: |
+        if [ ! -f bin/*.apk ]; then
+          echo "❌ APK не был создан!"
+          exit 1
+        fi
+        echo "✅ APK успешно создан:"
+        ls -lh bin/*.apk
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
