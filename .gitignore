@@ -1,19 +1,38 @@
+# Environment variables
 .env
 *.env
 .env.*
+!.env.example
+
+# Python cache
 *.pyc
 __pycache__/
+*.py[cod]
+*$py.class
+*.egg-info
+
+# Data and logs
 data/
 logs/
 builds/
 dist/
+
+# Sensitive config files
+config/master.key
+config/node_id
+config/node_birth
+
+# Build artifacts
 *.spec
 !buildozer.spec
-*.egg-info
+
+# Virtual environments
 venv/
 .venv/
 env/
+
+# IDE
 .vscode/
+
+# Logs
 *.log
-*.py[cod]
-*$py.class

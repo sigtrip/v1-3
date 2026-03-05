@@ -7,7 +7,8 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas
 
 version = 1.3
-requirements = python3,kivy
+# Полный список зависимостей для Android
+requirements = python3,kivy,cryptography,requests,paho-mqtt,psutil
 
 orientation = portrait
 fullscreen = 0
