@@ -4,20 +4,20 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "argos-universal-os"
-version = "1.0.0"
+version = "1.3.0"
 description = "Argos Universal OS — автономная мультиплатформенная ОС с AI-ядром"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "Apache-2.0"}
 requires-python = ">=3.10"
 authors = [
-    {name = "Vsevolod", email = "sigtrip@users.noreply.github.com"},
+    {name = "Vsevolod", email = "seva1691@mail.ru"},
 ]
 keywords = ["ai", "autonomous", "iot", "p2p", "universal-os"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -105,3 +105,8 @@ exclude_lines = [
     "raise NotImplementedError",
     "pass",
 ]
+
+# ─── bandit ──────────────────────────────────────────────────
+[tool.bandit]
+exclude_dirs = ["tests", "docs", ".venv", "venv", "build", "dist"]
+skips = ["B101", "B601"]  # B101: assert_used, B601: paramiko_calls
