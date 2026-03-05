@@ -4,15 +4,17 @@ autostart.py — Регистрация Аргоса как системного
   Linux:   systemd
   Android: BOOT_COMPLETED broadcast
 """
+
+import getpass
 import os
-import sys
 import platform
 import subprocess
-import getpass
+import sys
 
-OS   = platform.system()
+OS = platform.system()
 PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-EXE  = sys.executable
+EXE = sys.executable
+
 
 class ArgosAutostart:
     def __init__(self):
@@ -73,12 +75,12 @@ class ArgosAutostart:
         profile = os.path.expanduser("~/.profile")
         marker_start = "# ARGOS_SHELL_START"
         marker_end = "# ARGOS_SHELL_END"
-        
+
         main_py = os.path.join(self.app_path, "main.py")
-        
+
         block = (
             f"\n{marker_start}\n"
-            "if [ -z \"$SSH_TTY\" ] && [ \"$ARGOS_SHELL_ACTIVE\" != \"1\" ]; then\n"
+            'if [ -z "$SSH_TTY" ] && [ "$ARGOS_SHELL_ACTIVE" != "1" ]; then\n'
             "  export ARGOS_SHELL_ACTIVE=1\n"
             f"  exec {self.exe_path} {main_py} --shell\n"
             "fi\n"
@@ -171,14 +173,16 @@ class ArgosAutostart:
         # 1. Реестр: автозапуск при входе пользователя
         try:
             import winreg
+
             key = winreg.OpenKey(
-                winreg.HKEY_LOCAL_MACHINE,
-                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
-                0, winreg.KEY_SET_VALUE
+                winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE
             )
             winreg.SetValueEx(
-                key, "ArgosUniversalOS", 0, winreg.REG_SZ,
-                f'"{self.exe_path}" "{os.path.join(self.app_path, "main.py")}"'
+                key,
+                "ArgosUniversalOS",
+                0,
+                winreg.REG_SZ,
+                f'"{self.exe_path}" "{os.path.join(self.app_path, "main.py")}"',
             )
             winreg.CloseKey(key)
             results.append("✅ Реестр HKLM\\Run — Аргос зарегистрирован")
@@ -219,9 +223,9 @@ class ArgosAutostart:
                 f.write(task_xml)
 
             result = subprocess.run(
-                ["schtasks", "/Create", "/TN", "ArgosUniversalOS",
-                 "/XML", xml_path, "/F"],
-                capture_output=True, text=True
+                ["schtasks", "/Create", "/TN", "ArgosUniversalOS", "/XML", xml_path, "/F"],
+                capture_output=True,
+                text=True,
             )
             if result.returncode == 0:
                 results.append("✅ Task Scheduler — задача создана (запуск при загрузке)")
@@ -237,10 +241,9 @@ class ArgosAutostart:
         results = []
         try:
             import winreg
+
             key = winreg.OpenKey(
-                winreg.HKEY_LOCAL_MACHINE,
-                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
-                0, winreg.KEY_SET_VALUE
+                winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_SET_VALUE
             )
             winreg.DeleteValue(key, "ArgosUniversalOS")
             winreg.CloseKey(key)
@@ -249,10 +252,7 @@ class ArgosAutostart:
             results.append(f"⚠️ Реестр: {e}")
 
         try:
-            subprocess.run(
-                ["schtasks", "/Delete", "/TN", "ArgosUniversalOS", "/F"],
-                capture_output=True
-            )
+            subprocess.run(["schtasks", "/Delete", "/TN", "ArgosUniversalOS", "/F"], capture_output=True)
             results.append("✅ Task Scheduler задача удалена")
         except Exception as e:
             results.append(f"⚠️ Task Scheduler: {e}")
@@ -263,10 +263,9 @@ class ArgosAutostart:
         lines = ["🔄 АВТОЗАПУСК Windows:"]
         try:
             import winreg
+
             key = winreg.OpenKey(
-                winreg.HKEY_LOCAL_MACHINE,
-                r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run",
-                0, winreg.KEY_READ
+                winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", 0, winreg.KEY_READ
             )
             try:
                 val, _ = winreg.QueryValueEx(key, "ArgosUniversalOS")
@@ -279,8 +278,7 @@ class ArgosAutostart:
 
         try:
             r = subprocess.run(
-                ["schtasks", "/Query", "/TN", "ArgosUniversalOS", "/FO", "LIST"],
-                capture_output=True, text=True
+                ["schtasks", "/Query", "/TN", "ArgosUniversalOS", "/FO", "LIST"], capture_output=True, text=True
             )
             if r.returncode == 0:
                 lines.append("  ✅ Task Scheduler: задача найдена")
@@ -295,7 +293,7 @@ class ArgosAutostart:
     # LINUX (systemd)
     # ══════════════════════════════════════════════════════
     def _install_linux(self) -> str:
-        user    = getpass.getuser()
+        user = getpass.getuser()
         svc_src = os.path.join(self.app_path, "argos.service")
         svc_dst = "/etc/systemd/system/argos.service"
 
@@ -325,7 +323,7 @@ WantedBy=multi-user.target
             subprocess.run(["sudo", "cp", svc_src, svc_dst], check=True)
             subprocess.run(["sudo", "systemctl", "daemon-reload"], check=True)
             subprocess.run(["sudo", "systemctl", "enable", "argos"], check=True)
-            subprocess.run(["sudo", "systemctl", "start",  "argos"], check=True)
+            subprocess.run(["sudo", "systemctl", "start", "argos"], check=True)
             return (
                 f"✅ systemd сервис установлен:\n"
                 f"  sudo systemctl status argos\n"
@@ -344,7 +342,7 @@ WantedBy=multi-user.target
 
     def _uninstall_linux(self) -> str:
         try:
-            subprocess.run(["sudo", "systemctl", "stop",    "argos"], check=True)
+            subprocess.run(["sudo", "systemctl", "stop", "argos"], check=True)
             subprocess.run(["sudo", "systemctl", "disable", "argos"], check=True)
             subprocess.run(["sudo", "rm", "/etc/systemd/system/argos.service"])
             subprocess.run(["sudo", "systemctl", "daemon-reload"])
@@ -354,21 +352,11 @@ WantedBy=multi-user.target
 
     def _status_linux(self) -> str:
         try:
-            r = subprocess.run(
-                ["systemctl", "is-active", "argos"],
-                capture_output=True, text=True
-            )
+            r = subprocess.run(["systemctl", "is-active", "argos"], capture_output=True, text=True)
             active = r.stdout.strip()
-            r2 = subprocess.run(
-                ["systemctl", "is-enabled", "argos"],
-                capture_output=True, text=True
-            )
+            r2 = subprocess.run(["systemctl", "is-enabled", "argos"], capture_output=True, text=True)
             enabled = r2.stdout.strip()
-            return (
-                f"🔄 АВТОЗАПУСК Linux:\n"
-                f"  Статус:   {active}\n"
-                f"  Автостарт: {enabled}"
-            )
+            return f"🔄 АВТОЗАПУСК Linux:\n" f"  Статус:   {active}\n" f"  Автостарт: {enabled}"
         except Exception as e:
             return f"⚠️ systemctl недоступен: {e}"
 

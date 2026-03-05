@@ -1,28 +1,27 @@
-import os
 import asyncio
 import logging
-import tempfile
-import subprocess
+import os
 import shlex
-import requests
+import subprocess
+import tempfile
 from pathlib import Path
+
+import requests
 from telegram import Update
-from telegram.error import InvalidToken, TelegramError, NetworkError, TimedOut
-from telegram.ext import (
-    Application, MessageHandler, CommandHandler,
-    filters, ContextTypes
-)
+from telegram.error import InvalidToken, NetworkError, TelegramError, TimedOut
+from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
 log = logging.getLogger("argos.telegram")
 
+
 class ArgosTelegram:
     def __init__(self, core, admin, flasher):
-        self.core    = core
-        self.admin   = admin
+        self.core = core
+        self.admin = admin
         self.flasher = flasher
-        self.token   = os.getenv("TELEGRAM_BOT_TOKEN")
+        self.token = os.getenv("TELEGRAM_BOT_TOKEN")
         self.user_id = os.getenv("USER_ID")
-        self.app     = None
+        self.app = None
 
     def _find_apk_artifact(self) -> str | None:
         candidates = []
@@ -59,17 +58,11 @@ class ArgosTelegram:
             len(cmd_parts) >= 3 and cmd_parts[-3] == "-m" and "buildozer" in cmd_parts[-2]
         )
         if is_buildozer and not Path("buildozer.spec").exists():
-            return False, (
-                "Не найден buildozer.spec в корне проекта.\n"
-                "Создайте: python -m buildozer init"
-            )
+            return False, ("Не найден buildozer.spec в корне проекта.\n" "Создайте: python -m buildozer init")
 
         log.info("[APK BUILD]: Запуск: %s", cmd)
         try:
-            result = subprocess.run(
-                cmd_parts, shell=False, check=True,
-                capture_output=True, text=True, timeout=1800
-            )
+            result = subprocess.run(cmd_parts, shell=False, check=True, capture_output=True, text=True, timeout=1800)
             log.info("[APK BUILD]: stdout: %s", (result.stdout or "")[-300:])
         except subprocess.CalledProcessError as e:
             stderr = (e.stderr or e.stdout or str(e))[:500]
@@ -126,7 +119,8 @@ class ArgosTelegram:
 
     # ── КОМАНДЫ ───────────────────────────────────────────
     async def cmd_start(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         await update.message.reply_text(
             "👁️ *АРГОС ОНЛАЙН*\n\n"
             "Доступные команды:\n"
@@ -151,14 +145,15 @@ class ArgosTelegram:
             "/apk — собрать и отправить APK\n"
             "/help — справка\n\n"
             "Или отправь директиву текстом/голосом.",
-            parse_mode="Markdown"
+            parse_mode="Markdown",
         )
 
     async def cmd_status(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        if not self._auth(update): return
-        stats  = self.admin.get_stats()
+        if not self._auth(update):
+            return
+        stats = self.admin.get_stats()
         health = self.core.sensors.get_full_report()
-        state  = self.core.quantum.generate_state()
+        state = self.core.quantum.generate_state()
         msg = (
             f"📊 *СИСТЕМНЫЙ ДОКЛАД*\n\n"
             f"{stats}\n\n"
@@ -169,30 +164,36 @@ class ArgosTelegram:
         await update.message.reply_text(msg, parse_mode="Markdown")
 
     async def cmd_voice_on(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         self.core.voice_on = True
         await update.message.reply_text("🔊 Голосовой модуль активирован.")
 
     async def cmd_voice_off(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         self.core.voice_on = False
         await update.message.reply_text("🔇 Голосовой модуль отключён.")
 
     async def cmd_skills(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         from src.evolution import ArgosEvolution
+
         report = ArgosEvolution().list_skills()
         await update.message.reply_text(report)
 
     async def cmd_network(self, update, ctx):
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         if self.core.p2p:
             await update.message.reply_text(self.core.p2p.network_status())
         else:
             await update.message.reply_text("P2P не запущен.")
 
     async def cmd_sync(self, update, ctx):
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         await update.message.reply_text("🔄 Синхронизирую навыки со всеми нодами...")
         if self.core.p2p:
             result = self.core.p2p.sync_skills_from_network()
@@ -201,16 +202,19 @@ class ArgosTelegram:
             await update.message.reply_text("P2P не запущен.")
 
     async def cmd_crypto(self, update, ctx):
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         try:
             from src.skills.crypto_monitor import CryptoSentinel
+
             report = CryptoSentinel().report()
             await update.message.reply_text(report)
         except Exception as e:
             await update.message.reply_text(f"❌ Крипто: {e}")
 
     async def cmd_history(self, update, ctx):
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         if self.core.db:
             hist = self.core.db.format_history(10)
             await update.message.reply_text(hist[:4000])
@@ -218,30 +222,35 @@ class ArgosTelegram:
             await update.message.reply_text("БД не подключена.")
 
     async def cmd_geo(self, update, ctx):
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         try:
             from src.connectivity.spatial import SpatialAwareness
+
             report = SpatialAwareness(db=self.core.db).get_full_report()
             await update.message.reply_text(report)
         except Exception as e:
             await update.message.reply_text(f"❌ Геолокация: {e}")
 
     async def cmd_memory(self, update, ctx):
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         if self.core.memory:
             await update.message.reply_text(self.core.memory.format_memory()[:4000])
         else:
             await update.message.reply_text("Память не активирована.")
 
     async def cmd_alerts(self, update, ctx):
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         if self.core.alerts:
             await update.message.reply_text(self.core.alerts.status())
         else:
             await update.message.reply_text("Система алертов не активирована.")
 
     async def cmd_replicate(self, update, ctx):
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         await update.message.reply_text("📦 Создаю реплику системы...")
         try:
             result = self.core.replicator.create_replica()
@@ -251,7 +260,8 @@ class ArgosTelegram:
 
     async def cmd_smart(self, update, ctx):
         """Статус умных систем."""
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         if self.core.smart_sys:
             report = self.core.smart_sys.full_status()
             await update.message.reply_text(report[:4000])
@@ -260,7 +270,8 @@ class ArgosTelegram:
 
     async def cmd_iot(self, update, ctx):
         """Статус IoT устройств."""
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         if self.core.iot_bridge:
             await update.message.reply_text(self.core.iot_bridge.status()[:4000])
         else:
@@ -279,12 +290,15 @@ class ArgosTelegram:
         apk_path = payload
         try:
             with open(apk_path, "rb") as f:
-                await update.message.reply_document(document=f, filename=os.path.basename(apk_path), caption="✅ APK готов")
+                await update.message.reply_document(
+                    document=f, filename=os.path.basename(apk_path), caption="✅ APK готов"
+                )
         except Exception as e:
             await update.message.reply_text(f"❌ Не удалось отправить APK: {e}")
 
     async def cmd_help(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-        if not self._auth(update): return
+        if not self._auth(update):
+            return
         help_text = (
             "👁️ *АРГОС — СПРАВОЧНИК*\n\n"
             "*Администрирование:*\n"
@@ -322,21 +336,17 @@ class ArgosTelegram:
     # ── ОСНОВНОЙ ОБРАБОТЧИК ───────────────────────────────
     async def handle_message(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._auth(update):
-            await update.message.reply_text(
-                "⛔ Доступ заблокирован. Попытка входа зафиксирована."
-            )
+            await update.message.reply_text("⛔ Доступ заблокирован. Попытка входа зафиксирована.")
             return
 
         user_text = update.message.text
         await update.message.reply_text("⚙️ Обрабатываю директиву...")
 
         result = await self.core.process_logic_async(user_text, self.admin, self.flasher)
-        answer = result['answer'][:4000]  # Telegram лимит
-        state  = result['state']
+        answer = result["answer"][:4000]  # Telegram лимит
+        state = result["state"]
 
-        await update.message.reply_text(
-            f"👁️ ARGOS [{state}]\n\n{answer}"
-        )
+        await update.message.reply_text(f"👁️ ARGOS [{state}]\n\n{answer}")
 
     async def handle_voice(self, update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not self._auth(update):
@@ -365,11 +375,9 @@ class ArgosTelegram:
 
             await update.message.reply_text(f"📝 Распознано: {text}")
             result = await self.core.process_logic_async(text, self.admin, self.flasher)
-            answer = result['answer'][:4000]
-            state = result['state']
-            await update.message.reply_text(
-                f"👁️ ARGOS [{state}]\n\n{answer}"
-            )
+            answer = result["answer"][:4000]
+            state = result["state"]
+            await update.message.reply_text(f"👁️ ARGOS [{state}]\n\n{answer}")
         except Exception as e:
             await update.message.reply_text(f"❌ Ошибка обработки голосового: {e}")
         finally:
@@ -409,29 +417,27 @@ class ArgosTelegram:
         )
 
         # Команды
-        self.app.add_handler(CommandHandler("start",     self.cmd_start))
-        self.app.add_handler(CommandHandler("status",    self.cmd_status))
-        self.app.add_handler(CommandHandler("voice_on",  self.cmd_voice_on))
+        self.app.add_handler(CommandHandler("start", self.cmd_start))
+        self.app.add_handler(CommandHandler("status", self.cmd_status))
+        self.app.add_handler(CommandHandler("voice_on", self.cmd_voice_on))
         self.app.add_handler(CommandHandler("voice_off", self.cmd_voice_off))
-        self.app.add_handler(CommandHandler("skills",    self.cmd_skills))
-        self.app.add_handler(CommandHandler("help",      self.cmd_help))
-        self.app.add_handler(CommandHandler("network",   self.cmd_network))
-        self.app.add_handler(CommandHandler("sync",      self.cmd_sync))
-        self.app.add_handler(CommandHandler("crypto",    self.cmd_crypto))
-        self.app.add_handler(CommandHandler("history",   self.cmd_history))
-        self.app.add_handler(CommandHandler("geo",       self.cmd_geo))
-        self.app.add_handler(CommandHandler("memory",    self.cmd_memory))
-        self.app.add_handler(CommandHandler("alerts",    self.cmd_alerts))
+        self.app.add_handler(CommandHandler("skills", self.cmd_skills))
+        self.app.add_handler(CommandHandler("help", self.cmd_help))
+        self.app.add_handler(CommandHandler("network", self.cmd_network))
+        self.app.add_handler(CommandHandler("sync", self.cmd_sync))
+        self.app.add_handler(CommandHandler("crypto", self.cmd_crypto))
+        self.app.add_handler(CommandHandler("history", self.cmd_history))
+        self.app.add_handler(CommandHandler("geo", self.cmd_geo))
+        self.app.add_handler(CommandHandler("memory", self.cmd_memory))
+        self.app.add_handler(CommandHandler("alerts", self.cmd_alerts))
         self.app.add_handler(CommandHandler("replicate", self.cmd_replicate))
-        self.app.add_handler(CommandHandler("smart",     self.cmd_smart))
-        self.app.add_handler(CommandHandler("iot",       self.cmd_iot))
-        self.app.add_handler(CommandHandler("apk",       self.cmd_apk))
+        self.app.add_handler(CommandHandler("smart", self.cmd_smart))
+        self.app.add_handler(CommandHandler("iot", self.cmd_iot))
+        self.app.add_handler(CommandHandler("apk", self.cmd_apk))
 
         # Текстовые сообщения
         self.app.add_handler(MessageHandler(filters.VOICE, self.handle_voice))
-        self.app.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message)
-        )
+        self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
 
         # Глобальный обработчик ошибок (подавляет network glitches)
         self.app.add_error_handler(self._error_handler)

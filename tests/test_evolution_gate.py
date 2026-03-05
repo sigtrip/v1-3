@@ -4,8 +4,8 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from src.skills.evolution import ArgosEvolution
 import src.skills.evolution.skill as evolution_module
+from src.skills.evolution import ArgosEvolution
 
 
 class TestEvolutionGate(unittest.TestCase):
@@ -20,11 +20,7 @@ class TestEvolutionGate(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _sample_skill_code(self) -> str:
-        return (
-            "class HelloSkill:\n"
-            "    def handle(self, text):\n"
-            "        return 'ok'\n"
-        )
+        return "class HelloSkill:\n" "    def handle(self, text):\n" "        return 'ok'\n"
 
     def test_rejects_when_review_fails(self):
         evo = ArgosEvolution(ai_core=None)
@@ -36,9 +32,11 @@ class TestEvolutionGate(unittest.TestCase):
             "        self.assertTrue(True)\n"
         )
 
-        with patch.object(evolution_module, "SKILLS_DIR", self.skills_dir), \
-             patch.object(evolution_module, "TESTS_GEN_DIR", self.tests_dir), \
-             patch.object(ArgosEvolution, "_review_patch", return_value=(False, "security issue")):
+        with (
+            patch.object(evolution_module, "SKILLS_DIR", self.skills_dir),
+            patch.object(evolution_module, "TESTS_GEN_DIR", self.tests_dir),
+            patch.object(ArgosEvolution, "_review_patch", return_value=(False, "security issue")),
+        ):
             result = evo.apply_patch("hello_skill", self._sample_skill_code(), test_code=failing_test)
 
         self.assertIn("Code Review не пройден", result)
@@ -56,9 +54,11 @@ class TestEvolutionGate(unittest.TestCase):
             "    unittest.main()\n"
         )
 
-        with patch.object(evolution_module, "SKILLS_DIR", self.skills_dir), \
-             patch.object(evolution_module, "TESTS_GEN_DIR", self.tests_dir), \
-             patch.object(ArgosEvolution, "_review_patch", return_value=(True, "ok")):
+        with (
+            patch.object(evolution_module, "SKILLS_DIR", self.skills_dir),
+            patch.object(evolution_module, "TESTS_GEN_DIR", self.tests_dir),
+            patch.object(ArgosEvolution, "_review_patch", return_value=(True, "ok")),
+        ):
             result = evo.apply_patch("hello_skill", self._sample_skill_code(), test_code=failing_test)
 
         self.assertIn("unit-тест не пройден", result)
@@ -77,9 +77,11 @@ class TestEvolutionGate(unittest.TestCase):
             "    unittest.main()\n"
         )
 
-        with patch.object(evolution_module, "SKILLS_DIR", self.skills_dir), \
-             patch.object(evolution_module, "TESTS_GEN_DIR", self.tests_dir), \
-             patch.object(ArgosEvolution, "_review_patch", return_value=(True, "approved")):
+        with (
+            patch.object(evolution_module, "SKILLS_DIR", self.skills_dir),
+            patch.object(evolution_module, "TESTS_GEN_DIR", self.tests_dir),
+            patch.object(ArgosEvolution, "_review_patch", return_value=(True, "approved")),
+        ):
             result = evo.apply_patch("hello_skill", self._sample_skill_code(), test_code=passing_test)
 
         self.assertIn("внедрён", result)

@@ -11,20 +11,21 @@ emergency_purge.py — Emergency Purge
     ⚠ НЕОБРАТИМАЯ ОПЕРАЦИЯ — требует двухфакторного подтверждения.
     ⚠ Только для защиты СОБСТВЕННЫХ данных администратора.
 """
+
+import hashlib
+import json
 import os
 import re
-import sys
-import time
-import json
-import shutil
 import secrets
-import hashlib
+import shutil
+import sys
 import threading
+import time
+from collections import deque
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
-from collections import deque
-from dataclasses import dataclass, field, asdict
 
 from src.argos_logger import get_logger
 
@@ -34,20 +35,22 @@ log = get_logger("argos.purge")
 # ── Enums / Dataclasses ─────────────────────────────────
 class PurgeLevel(Enum):
     """Уровень очистки."""
-    LOGS = "logs"               # только логи
-    CACHE = "cache"             # кэш + временные файлы
-    MEMORY = "memory"           # память (SQLite)
-    COMMS = "comms"             # ключи/токены/секреты
-    SELECTIVE = "selective"     # выборочные пути
-    FULL = "full"               # всё вышеперечисленное
+
+    LOGS = "logs"  # только логи
+    CACHE = "cache"  # кэш + временные файлы
+    MEMORY = "memory"  # память (SQLite)
+    COMMS = "comms"  # ключи/токены/секреты
+    SELECTIVE = "selective"  # выборочные пути
+    FULL = "full"  # всё вышеперечисленное
 
 
 class WipeMethod(Enum):
     """Метод затирания."""
-    DELETE = "delete"           # обычное удаление
-    ZERO = "zero"              # перезапись нулями
-    RANDOM = "random"          # перезапись urandom
-    DOD = "dod"                # 3 прохода (0x00 → 0xFF → random)
+
+    DELETE = "delete"  # обычное удаление
+    ZERO = "zero"  # перезапись нулями
+    RANDOM = "random"  # перезапись urandom
+    DOD = "dod"  # 3 прохода (0x00 → 0xFF → random)
 
 
 class PurgeStatus(Enum):
@@ -61,6 +64,7 @@ class PurgeStatus(Enum):
 @dataclass
 class PurgeRecord:
     """Запись об операции очистки."""
+
     ts: float = field(default_factory=time.time)
     level: str = "unknown"
     method: str = "delete"
@@ -136,16 +140,14 @@ class EmergencyPurge:
         self._pending_targets: List[str] = []
         self._history: deque = deque(maxlen=50)
         self._confirm_timeout = float(os.getenv("ARGOS_PURGE_CONFIRM_SEC", "30"))
-        self._enabled = os.getenv("ARGOS_PURGE", "on").strip().lower() not in {
-            "0", "false", "off", "no", "нет"
-        }
+        self._enabled = os.getenv("ARGOS_PURGE", "on").strip().lower() not in {"0", "false", "off", "no", "нет"}
         log.info("EmergencyPurge: base=%s enabled=%s", self._base, self._enabled)
 
     # ── Публичный API ────────────────────────────────────
 
-    def request_purge(self, level_str: str = "logs",
-                      method_str: str = "delete",
-                      extra_paths: Optional[List[str]] = None) -> str:
+    def request_purge(
+        self, level_str: str = "logs", method_str: str = "delete", extra_paths: Optional[List[str]] = None
+    ) -> str:
         """
         Инициировать запрос на очистку.
         Возвращает строку с одноразовым кодом подтверждения.
@@ -172,8 +174,7 @@ class EmergencyPurge:
             # Подготавливаем список целей
             if level == PurgeLevel.FULL:
                 targets = []
-                for lvl in [PurgeLevel.LOGS, PurgeLevel.CACHE,
-                            PurgeLevel.MEMORY, PurgeLevel.COMMS]:
+                for lvl in [PurgeLevel.LOGS, PurgeLevel.CACHE, PurgeLevel.MEMORY, PurgeLevel.COMMS]:
                     targets.extend(_PURGE_TARGETS.get(lvl, []))
             elif level == PurgeLevel.SELECTIVE:
                 targets = extra_paths or []
@@ -196,9 +197,14 @@ class EmergencyPurge:
             self._pending_targets = targets
             self._status = PurgeStatus.PENDING_CONFIRM
 
-            log.warning("PURGE REQUEST: level=%s method=%s files≈%d size≈%s code=%s",
-                        level.value, method.value, total_files,
-                        self._human_size(total_bytes), self._confirm_code)
+            log.warning(
+                "PURGE REQUEST: level=%s method=%s files≈%d size≈%s code=%s",
+                level.value,
+                method.value,
+                total_files,
+                self._human_size(total_bytes),
+                self._confirm_code,
+            )
 
             return (
                 f"⚠️ ЗАПРОС НА ОЧИСТКУ\n"
@@ -226,8 +232,7 @@ class EmergencyPurge:
             self._status = PurgeStatus.IN_PROGRESS
 
         # Выполняем в фоне (чтобы не блокировать ввод)
-        t = threading.Thread(target=self._execute_purge, daemon=True,
-                             name="argos-purge")
+        t = threading.Thread(target=self._execute_purge, daemon=True, name="argos-purge")
         t.start()
         return "🔥 Очистка запущена… Следи за статусом: purge статус"
 
@@ -326,8 +331,7 @@ class EmergencyPurge:
                     record.errors.append(f"Не найден: {target}")
 
             record.success = True
-            log.warning("PURGE COMPLETE: %d files, %s",
-                        record.files_wiped, self._human_size(record.bytes_wiped))
+            log.warning("PURGE COMPLETE: %d files, %s", record.files_wiped, self._human_size(record.bytes_wiped))
         except Exception as exc:
             record.errors.append(str(exc)[:200])
             log.error("PURGE ERROR: %s", exc)

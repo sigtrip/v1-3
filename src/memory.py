@@ -3,12 +3,14 @@ memory.py — Долгосрочная память Аргоса
   Запоминает факты о пользователе, предпочтения, заметки.
     Хранится в SQLite + векторный индекс (RAG) + граф знаний.
 """
-import os
-import sqlite3
-import time
-import re
+
 import hashlib
+import os
+import re
+import sqlite3
 import threading
+import time
+
 from src.argos_logger import get_logger
 from src.knowledge.vector_store import ArgosVectorStore
 
@@ -102,7 +104,7 @@ class ArgosMemory:
         score = 1.0
         cat = (category or "").lower()
         k = (key or "").lower()
-        v = (value or "")
+        v = value or ""
         if cat in {"user", "system", "profile"}:
             score += 1.2
         if len(v) > 80:
@@ -135,12 +137,12 @@ class ArgosMemory:
                 doc_id = f"fact_{cat}_{key}".replace(" ", "_")
                 self.vector.upsert(text, metadata={"kind": "fact", "category": cat, "ts": ts}, doc_id=doc_id)
 
-            notes = self.conn.execute(
-                "SELECT id, title, body, ts FROM notes ORDER BY id DESC LIMIT 500"
-            ).fetchall()
+            notes = self.conn.execute("SELECT id, title, body, ts FROM notes ORDER BY id DESC LIMIT 500").fetchall()
             for note_id, title, body, ts in notes:
                 text = f"Заметка: {title}\n{body}"
-                self.vector.upsert(text, metadata={"kind": "note", "note_id": note_id, "ts": ts}, doc_id=f"note_{note_id}")
+                self.vector.upsert(
+                    text, metadata={"kind": "note", "note_id": note_id, "ts": ts}, doc_id=f"note_{note_id}"
+                )
         except Exception as e:
             log.warning("Vector warmup: %s", e)
 
@@ -185,13 +187,13 @@ class ArgosMemory:
                 "ON CONFLICT(category,key) DO UPDATE SET "
                 "value=excluded.value, ts=datetime('now','localtime'), utility_signal=excluded.utility_signal, "
                 "expires_at=excluded.expires_at, access_count=facts.access_count+1, last_accessed=excluded.last_accessed, fingerprint=excluded.fingerprint",
-                (category, key, value, signal, expires_at, 1, time.time(), fp)
+                (category, key, value, signal, expires_at, 1, time.time(), fp),
             )
             self.conn.commit()
         self._index_text(
             f"[{category}] {key}: {value}",
             metadata={"kind": "fact", "category": category, "key": key},
-            doc_id=f"fact_{category}_{key}".replace(" ", "_")
+            doc_id=f"fact_{category}_{key}".replace(" ", "_"),
         )
         self._extract_graph_from_fact(key, value, category=category)
         log.info("Запомнил [%s] %s = %s", category, key, value)
@@ -245,13 +247,13 @@ class ArgosMemory:
                 "SELECT category, key, value, ts FROM facts "
                 "WHERE category=? AND (expires_at=0 OR expires_at>?) "
                 "ORDER BY utility_signal DESC, ts DESC",
-                (category, time.time())
+                (category, time.time()),
             ).fetchall()
         return self.conn.execute(
             "SELECT category, key, value, ts FROM facts "
             "WHERE (expires_at=0 OR expires_at>?) "
             "ORDER BY utility_signal DESC, category, key",
-            (time.time(),)
+            (time.time(),),
         ).fetchall()
 
     def get_context(self) -> str:
@@ -269,11 +271,7 @@ class ArgosMemory:
         if not text:
             return
         text = text[:2000]
-        self._index_text(
-            f"[{role}] {text}",
-            metadata={"kind": "dialogue", "role": role, "state": state},
-            doc_id=None
-        )
+        self._index_text(f"[{role}] {text}", metadata={"kind": "dialogue", "role": role, "state": state}, doc_id=None)
 
     def format_memory(self) -> str:
         facts = self.get_all_facts()
@@ -295,23 +293,19 @@ class ArgosMemory:
     # ── ЗАМЕТКИ ────────────────────────────────────────────
     def add_note(self, title: str, body: str) -> str:
         with self._db_lock:
-            self.conn.execute(
-                "INSERT INTO notes (title, body) VALUES (?,?)", (title, body)
-            )
+            self.conn.execute("INSERT INTO notes (title, body) VALUES (?,?)", (title, body))
             self.conn.commit()
             row = self.conn.execute("SELECT last_insert_rowid()")
             note_id = row.fetchone()[0]
         self._index_text(
             f"Заметка: {title}\n{body}",
             metadata={"kind": "note", "note_id": note_id, "title": title},
-            doc_id=f"note_{note_id}"
+            doc_id=f"note_{note_id}",
         )
         return f"📝 Заметка сохранена: '{title}'"
 
     def get_notes(self, limit: int = 10) -> str:
-        rows = self.conn.execute(
-            "SELECT id, title, ts FROM notes ORDER BY id DESC LIMIT ?", (limit,)
-        ).fetchall()
+        rows = self.conn.execute("SELECT id, title, ts FROM notes ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
         if not rows:
             return "📭 Заметок нет."
         lines = [f"📝 ЗАМЕТКИ ({len(rows)}):"]
@@ -320,9 +314,7 @@ class ArgosMemory:
         return "\n".join(lines)
 
     def read_note(self, note_id: int) -> str:
-        row = self.conn.execute(
-            "SELECT title, body, ts FROM notes WHERE id=?", (note_id,)
-        ).fetchone()
+        row = self.conn.execute("SELECT title, body, ts FROM notes WHERE id=?", (note_id,)).fetchone()
         if not row:
             return f"❌ Заметка #{note_id} не найдена."
         title, body, ts = row
@@ -338,19 +330,16 @@ class ArgosMemory:
     def add_reminder(self, text: str, seconds_from_now: int) -> str:
         remind_at = time.time() + seconds_from_now
         with self._db_lock:
-            self.conn.execute(
-                "INSERT INTO reminders (text, remind_at) VALUES (?,?)", (text, remind_at)
-            )
+            self.conn.execute("INSERT INTO reminders (text, remind_at) VALUES (?,?)", (text, remind_at))
             self.conn.commit()
         import datetime
+
         dt = datetime.datetime.fromtimestamp(remind_at).strftime("%H:%M %d.%m")
         return f"⏰ Напоминание установлено на {dt}: {text}"
 
     def check_reminders(self) -> list[str]:
-        now  = time.time()
-        rows = self.conn.execute(
-            "SELECT id, text FROM reminders WHERE remind_at<=? AND done=0", (now,)
-        ).fetchall()
+        now = time.time()
+        rows = self.conn.execute("SELECT id, text FROM reminders WHERE remind_at<=? AND done=0", (now,)).fetchall()
         fired = []
         for rid, text in rows:
             self.conn.execute("UPDATE reminders SET done=1 WHERE id=?", (rid,))
@@ -373,7 +362,7 @@ class ArgosMemory:
 
         for pref in ["запомни что ", "запомни: ", "запомни ", "я "]:
             if t.startswith(pref):
-                rest = original[len(pref):]
+                rest = original[len(pref) :]
                 if ":" in rest:
                     key, val = rest.split(":", 1)
                     return self.remember(key.strip(), val.strip())
@@ -381,16 +370,23 @@ class ArgosMemory:
         return self.remember("факт", original)
 
     # ── ГРАФ ЗНАНИЙ ───────────────────────────────────────
-    def add_graph_edge(self, subject: str, predicate: str, obj: str,
-                       object_type: str = "", source: str = "memory") -> str:
+    def add_graph_edge(
+        self, subject: str, predicate: str, obj: str, object_type: str = "", source: str = "memory"
+    ) -> str:
         self.conn.execute(
             "INSERT OR IGNORE INTO knowledge_edges (subject, predicate, object, object_type, source) VALUES (?,?,?,?,?)",
-            (subject.strip(), predicate.strip(), obj.strip(), object_type.strip(), source.strip())
+            (subject.strip(), predicate.strip(), obj.strip(), object_type.strip(), source.strip()),
         )
         self.conn.commit()
         self._index_text(
             f"GRAPH: {subject} -[{predicate}]-> {obj}",
-            metadata={"kind": "graph", "subject": subject, "predicate": predicate, "object": obj, "object_type": object_type}
+            metadata={
+                "kind": "graph",
+                "subject": subject,
+                "predicate": predicate,
+                "object": obj,
+                "object_type": object_type,
+            },
         )
         return f"🔗 Связь добавлена: {subject} -[{predicate}]-> {obj}"
 
@@ -408,8 +404,7 @@ class ArgosMemory:
 
     def graph_report(self, limit: int = 20) -> str:
         rows = self.conn.execute(
-            "SELECT subject, predicate, object, object_type, ts FROM knowledge_edges ORDER BY id DESC LIMIT ?",
-            (limit,)
+            "SELECT subject, predicate, object, object_type, ts FROM knowledge_edges ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
         if not rows:
             return "🕸️ Граф знаний пуст."

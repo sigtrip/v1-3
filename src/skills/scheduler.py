@@ -4,11 +4,13 @@ scheduler.py — Планировщик задач Аргоса
   "аргос, каждый час сканируй сеть"
   "аргос, покажи расписание"
 """
-import threading
-import time
+
 import json
 import os
 import re
+import threading
+import time
+
 from src.argos_logger import get_logger
 
 log = get_logger("argos.scheduler")
@@ -17,8 +19,8 @@ TASKS_FILE = "config/scheduled_tasks.json"
 
 class ArgosScheduler:
     def __init__(self, core=None):
-        self.core    = core
-        self.tasks   = self._load()
+        self.core = core
+        self.tasks = self._load()
         self._running = False
 
     def _load(self) -> list:
@@ -55,7 +57,7 @@ class ArgosScheduler:
 
     def _should_run(self, task: dict, now) -> bool:
         t_type = task.get("type")
-        last   = task.get("last_run", 0)
+        last = task.get("last_run", 0)
         now_ts = time.time()
 
         if t_type == "daily":
@@ -77,7 +79,7 @@ class ArgosScheduler:
         return False
 
     def _execute(self, task: dict):
-        cmd     = task.get("command", "")
+        cmd = task.get("command", "")
         task_id = task.get("id", "?")
         log.info("Выполняю задачу #%s: %s", task_id, cmd)
         task["last_run"] = time.time()
@@ -88,10 +90,11 @@ class ArgosScheduler:
             try:
                 from src.admin import ArgosAdmin
                 from src.factory.flasher import AirFlasher
-                admin   = ArgosAdmin()
+
+                admin = ArgosAdmin()
                 flasher = AirFlasher()
                 res = self.core.process_logic(cmd, admin, flasher)
-                log.info("Задача #%s завершена: %s", task_id, res.get("answer","")[:100])
+                log.info("Задача #%s завершена: %s", task_id, res.get("answer", "")[:100])
             except Exception as e:
                 log.error("Задача #%s ошибка: %s", task_id, e)
         else:
@@ -99,11 +102,11 @@ class ArgosScheduler:
 
     def add_daily(self, command: str, hour: int, minute: int = 0) -> str:
         task = {
-            "id":       len(self.tasks) + 1,
-            "type":     "daily",
-            "command":  command,
-            "hour":     hour,
-            "minute":   minute,
+            "id": len(self.tasks) + 1,
+            "type": "daily",
+            "command": command,
+            "hour": hour,
+            "minute": minute,
             "last_run": 0,
         }
         self.tasks.append(task)
@@ -112,11 +115,11 @@ class ArgosScheduler:
 
     def add_interval(self, command: str, interval_sec: int) -> str:
         task = {
-            "id":           len(self.tasks) + 1,
-            "type":         "interval",
-            "command":      command,
+            "id": len(self.tasks) + 1,
+            "type": "interval",
+            "command": command,
             "interval_sec": interval_sec,
-            "last_run":     0,
+            "last_run": 0,
         }
         self.tasks.append(task)
         self._save()
@@ -125,11 +128,11 @@ class ArgosScheduler:
 
     def add_once(self, command: str, delay_sec: int) -> str:
         task = {
-            "id":       len(self.tasks) + 1,
-            "type":     "once",
-            "repeat":   "once",
-            "command":  command,
-            "run_at":   time.time() + delay_sec,
+            "id": len(self.tasks) + 1,
+            "type": "once",
+            "repeat": "once",
+            "command": command,
+            "run_at": time.time() + delay_sec,
             "last_run": 0,
         }
         self.tasks.append(task)
@@ -155,6 +158,7 @@ class ArgosScheduler:
                 when = f"каждые {t['interval_sec']//60} мин"
             else:
                 import datetime
+
                 when = f"однажды в {datetime.datetime.fromtimestamp(t['run_at']).strftime('%H:%M')}"
             lines.append(f"  #{t['id']} [{t['type']}] {when}: {t['command'][:50]}")
         return "\n".join(lines)
@@ -168,7 +172,7 @@ class ArgosScheduler:
         if m:
             n, unit = int(m.group(1)), m.group(2)
             secs = n * (3600 if "час" in unit else 60 if "мин" in unit else 1)
-            cmd  = re.sub(r"каждые?\s+\d+\s*\w+\s*(запуск|делай|выполняй)?", "", t).strip()
+            cmd = re.sub(r"каждые?\s+\d+\s*\w+\s*(запуск|делай|выполняй)?", "", t).strip()
             return self.add_interval(cmd or text, secs)
 
         # Ежедневно в HH:MM
@@ -176,7 +180,8 @@ class ArgosScheduler:
         if m:
             h = int(m.group(1))
             mins = int(m.group(2)) if m.group(2) else 0
-            if m.group(3) in ("вечера",) and h < 12: h += 12
+            if m.group(3) in ("вечера",) and h < 12:
+                h += 12
             cmd = re.sub(r"напомни|ежедневно|каждый день|в\s+\d+.*", "", t).strip()
             return self.add_daily(cmd or text, h, mins)
 
@@ -185,7 +190,7 @@ class ArgosScheduler:
         if m:
             n, unit = int(m.group(1)), m.group(2)
             secs = n * (3600 if "час" in unit else 60)
-            cmd  = re.sub(r"через\s+\d+\s*\w+\s*", "", t).strip()
+            cmd = re.sub(r"через\s+\d+\s*\w+\s*", "", t).strip()
             return self.add_once(cmd or text, secs)
 
         return "❓ Не понял расписание. Примеры:\n  'каждый час сканируй сеть'\n  'в 09:00 дайджест'\n  'через 30 мин статус системы'"

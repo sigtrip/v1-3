@@ -12,17 +12,18 @@ power_sentry.py — Power Sentry
 
     ⚠ Управление отключением — ТОЛЬКО по подтверждению администратора.
 """
+
+import json
 import os
 import re
-import time
-import json
 import socket
 import subprocess
 import threading
+import time
+from collections import deque
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
-from collections import deque
-from dataclasses import dataclass, field, asdict
 
 from src.argos_logger import get_logger
 
@@ -31,6 +32,7 @@ log = get_logger("argos.power_sentry")
 # ── Graceful imports ─────────────────────────────────────
 try:
     import serial as _serial
+
     SERIAL_OK = True
 except ImportError:
     _serial = None
@@ -39,8 +41,8 @@ except ImportError:
 
 # ── Enums / Dataclasses ─────────────────────────────────
 class UPSStatus(Enum):
-    ONLINE = "online"           # питание от сети
-    ON_BATTERY = "on_battery"   # питание от батареи
+    ONLINE = "online"  # питание от сети
+    ON_BATTERY = "on_battery"  # питание от батареи
     LOW_BATTERY = "low_battery"
     OVERLOAD = "overload"
     CHARGING = "charging"
@@ -58,14 +60,15 @@ class PowerAlert(Enum):
 @dataclass
 class UPSInfo:
     """Состояние ИБП."""
+
     name: str
     status: UPSStatus = UPSStatus.UNKNOWN
-    battery_charge: float = -1.0    # %
-    battery_runtime: float = -1.0   # секунды
-    input_voltage: float = -1.0     # В
-    output_voltage: float = -1.0    # В
-    load_percent: float = -1.0      # %
-    temperature: float = -1.0       # °C
+    battery_charge: float = -1.0  # %
+    battery_runtime: float = -1.0  # секунды
+    input_voltage: float = -1.0  # В
+    output_voltage: float = -1.0  # В
+    load_percent: float = -1.0  # %
+    temperature: float = -1.0  # °C
     model: str = ""
     serial: str = ""
     last_update: float = 0.0
@@ -74,12 +77,13 @@ class UPSInfo:
 @dataclass
 class PowerReading:
     """Показания датчика мощности."""
+
     sensor_id: str
-    voltage: float = 0.0       # В
-    current: float = 0.0       # А
-    power: float = 0.0         # Вт
-    energy_kwh: float = 0.0    # кВт·ч
-    frequency: float = 0.0     # Гц
+    voltage: float = 0.0  # В
+    current: float = 0.0  # А
+    power: float = 0.0  # Вт
+    energy_kwh: float = 0.0  # кВт·ч
+    frequency: float = 0.0  # Гц
     ts: float = 0.0
 
 
@@ -94,14 +98,17 @@ class PowerSentry:
     3. Alerting при: battery < 20%, on_battery, overload
     4. Emergency shutdown path (с подтверждением)
     """
+
     MAX_HISTORY = 1000
     POLL_INTERVAL = 15  # сек
 
-    def __init__(self,
-                 nut_host: str = "localhost",
-                 nut_port: int = 3493,
-                 alert_callback=None,
-                 data_path: str = "data/power_sentry.json"):
+    def __init__(
+        self,
+        nut_host: str = "localhost",
+        nut_port: int = 3493,
+        alert_callback=None,
+        data_path: str = "data/power_sentry.json",
+    ):
         self._nut_host = nut_host
         self._nut_port = nut_port
         self._alert_callback = alert_callback
@@ -167,9 +174,7 @@ class PowerSentry:
         if self._running:
             return "⚡ Power Sentry: уже запущен."
         self._running = True
-        self._poll_thread = threading.Thread(
-            target=self._poll_loop, daemon=True, name="power-sentry"
-        )
+        self._poll_thread = threading.Thread(target=self._poll_loop, daemon=True, name="power-sentry")
         self._poll_thread.start()
         log.info("PowerSentry: запущен")
         return "⚡ Power Sentry: мониторинг запущен."
@@ -199,15 +204,17 @@ class PowerSentry:
                 if info:
                     with self._lock:
                         self._ups_list[name] = info
-                    self._history.append({
-                        "ts": time.time(),
-                        "ups": name,
-                        "charge": info.battery_charge,
-                        "runtime": info.battery_runtime,
-                        "voltage": info.input_voltage,
-                        "load": info.load_percent,
-                        "status": info.status.value,
-                    })
+                    self._history.append(
+                        {
+                            "ts": time.time(),
+                            "ups": name,
+                            "charge": info.battery_charge,
+                            "runtime": info.battery_runtime,
+                            "voltage": info.input_voltage,
+                            "load": info.load_percent,
+                            "status": info.status.value,
+                        }
+                    )
         except Exception as e:
             # Fallback: попробовать upsc CLI
             self._poll_upsc_cli()
@@ -292,18 +299,14 @@ class PowerSentry:
     def _poll_upsc_cli(self):
         """Fallback: опрос через upsc CLI."""
         try:
-            result = subprocess.run(
-                ["upsc", "-l"], capture_output=True, text=True, timeout=10
-            )
+            result = subprocess.run(["upsc", "-l"], capture_output=True, text=True, timeout=10)
             if result.returncode != 0:
                 return
             for name in result.stdout.strip().splitlines():
                 name = name.strip()
                 if not name:
                     continue
-                res2 = subprocess.run(
-                    ["upsc", name], capture_output=True, text=True, timeout=10
-                )
+                res2 = subprocess.run(["upsc", name], capture_output=True, text=True, timeout=10)
                 if res2.returncode != 0:
                     continue
                 varz = {}
@@ -359,7 +362,7 @@ class PowerSentry:
                 voltage = (resp[3] << 8 | resp[4]) / 10.0
                 current = ((resp[5] << 8 | resp[6]) | ((resp[7] << 8 | resp[8]) << 16)) / 1000.0
                 power = ((resp[9] << 8 | resp[10]) | ((resp[11] << 8 | resp[12]) << 16)) / 10.0
-                energy = ((resp[13] << 8 | resp[14]) | ((resp[15] << 8 | resp[16]) << 16))
+                energy = (resp[13] << 8 | resp[14]) | ((resp[15] << 8 | resp[16]) << 16)
                 frequency = (resp[17] << 8 | resp[18]) / 10.0
                 reading = PowerReading(
                     sensor_id=sensor_id,
@@ -383,28 +386,30 @@ class PowerSentry:
             for ups in self._ups_list.values():
                 # Battery low
                 if 0 <= ups.battery_charge < self._thresh_battery_crit:
-                    self._emit_alert(PowerAlert.CRITICAL,
-                                     f"⚡ UPS '{ups.name}': батарея КРИТИЧЕСКИ низкая ({ups.battery_charge}%)")
+                    self._emit_alert(
+                        PowerAlert.CRITICAL, f"⚡ UPS '{ups.name}': батарея КРИТИЧЕСКИ низкая ({ups.battery_charge}%)"
+                    )
                 elif 0 <= ups.battery_charge < self._thresh_battery_warn:
-                    self._emit_alert(PowerAlert.WARNING,
-                                     f"⚡ UPS '{ups.name}': батарея {ups.battery_charge}%")
+                    self._emit_alert(PowerAlert.WARNING, f"⚡ UPS '{ups.name}': батарея {ups.battery_charge}%")
                 # On battery
                 if ups.status == UPSStatus.ON_BATTERY:
-                    self._emit_alert(PowerAlert.WARNING,
-                                     f"⚡ UPS '{ups.name}': работает от БАТАРЕИ"
-                                     f" (runtime: {ups.battery_runtime:.0f}s)")
+                    self._emit_alert(
+                        PowerAlert.WARNING,
+                        f"⚡ UPS '{ups.name}': работает от БАТАРЕИ" f" (runtime: {ups.battery_runtime:.0f}s)",
+                    )
                 # Overload
                 if ups.load_percent > self._thresh_load_warn:
-                    self._emit_alert(PowerAlert.WARNING,
-                                     f"⚡ UPS '{ups.name}': нагрузка {ups.load_percent}%")
+                    self._emit_alert(PowerAlert.WARNING, f"⚡ UPS '{ups.name}': нагрузка {ups.load_percent}%")
                 # Voltage anomaly
                 if ups.input_voltage > 0:
                     if ups.input_voltage < self._thresh_voltage_low:
-                        self._emit_alert(PowerAlert.WARNING,
-                                         f"⚡ UPS '{ups.name}': напряжение НИЗКОЕ ({ups.input_voltage}V)")
+                        self._emit_alert(
+                            PowerAlert.WARNING, f"⚡ UPS '{ups.name}': напряжение НИЗКОЕ ({ups.input_voltage}V)"
+                        )
                     elif ups.input_voltage > self._thresh_voltage_high:
-                        self._emit_alert(PowerAlert.WARNING,
-                                         f"⚡ UPS '{ups.name}': напряжение ВЫСОКОЕ ({ups.input_voltage}V)")
+                        self._emit_alert(
+                            PowerAlert.WARNING, f"⚡ UPS '{ups.name}': напряжение ВЫСОКОЕ ({ups.input_voltage}V)"
+                        )
 
     def _emit_alert(self, level: PowerAlert, message: str):
         entry = {"ts": time.time(), "level": level.value, "message": message}
@@ -474,11 +479,9 @@ class PowerSentry:
     def get_status(self) -> dict:
         with self._lock:
             ups_count = len(self._ups_list)
-            on_battery = sum(1 for u in self._ups_list.values()
-                            if u.status == UPSStatus.ON_BATTERY)
+            on_battery = sum(1 for u in self._ups_list.values() if u.status == UPSStatus.ON_BATTERY)
             avg_charge = -1.0
-            charges = [u.battery_charge for u in self._ups_list.values()
-                       if u.battery_charge >= 0]
+            charges = [u.battery_charge for u in self._ups_list.values() if u.battery_charge >= 0]
             if charges:
                 avg_charge = sum(charges) / len(charges)
         return {
@@ -528,6 +531,7 @@ class PowerSentry:
 
 # ── Singleton ────────────────────────────────────────────
 _instance: Optional[PowerSentry] = None
+
 
 def get_power_sentry(**kwargs) -> PowerSentry:
     global _instance

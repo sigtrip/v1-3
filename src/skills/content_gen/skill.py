@@ -2,16 +2,19 @@
 content_gen.py — Медиа-Архитектор
   Сбор AI-новостей + генерация поста + публикация в Telegram
 """
+
+import os
+import threading
+import time
+
 import requests
 from bs4 import BeautifulSoup
-import time
-import threading
-import os
+
 
 class ContentGen:
     SOURCES = [
-        {"name": "TechCrunch AI",  "url": "https://techcrunch.com/category/artificial-intelligence/"},
-        {"name": "The Verge AI",   "url": "https://www.theverge.com/ai-artificial-intelligence"},
+        {"name": "TechCrunch AI", "url": "https://techcrunch.com/category/artificial-intelligence/"},
+        {"name": "The Verge AI", "url": "https://www.theverge.com/ai-artificial-intelligence"},
         {"name": "VentureBeat AI", "url": "https://venturebeat.com/category/ai/"},
     ]
     HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -19,7 +22,7 @@ class ContentGen:
     def __init__(self):
         self._pending = []
         self._running = False
-        self._tg_token  = os.getenv("TELEGRAM_BOT_TOKEN")
+        self._tg_token = os.getenv("TELEGRAM_BOT_TOKEN")
         self._tg_chatid = os.getenv("USER_ID")
 
     def fetch_headlines(self) -> list:
@@ -40,8 +43,8 @@ class ContentGen:
         headlines = self.fetch_headlines()
         if not headlines:
             return "❌ Источники недоступны. Дайджест не сформирован."
-        top3  = headlines[:3]
-        date  = time.strftime("%d.%m.%Y")
+        top3 = headlines[:3]
+        date = time.strftime("%d.%m.%Y")
         lines = [f"📰 AI-ДАЙДЖЕСТ от {date}", "━" * 22]
         for i, item in enumerate(top3, 1):
             lines.append(f"\n{i}. [{item['source']}]\n   {item['title']}")
@@ -59,12 +62,16 @@ class ContentGen:
 
         if self._tg_token and self._tg_chatid and self._tg_token != "your_token_here":
             try:
-                url  = f"https://api.telegram.org/bot{self._tg_token}/sendMessage"
-                resp = requests.post(url, json={
-                    "chat_id":    self._tg_chatid,
-                    "text":       post,
-                    "parse_mode": "Markdown",
-                }, timeout=10)
+                url = f"https://api.telegram.org/bot{self._tg_token}/sendMessage"
+                resp = requests.post(
+                    url,
+                    json={
+                        "chat_id": self._tg_chatid,
+                        "text": post,
+                        "parse_mode": "Markdown",
+                    },
+                    timeout=10,
+                )
                 if resp.ok:
                     return f"✅ Пост опубликован в Telegram ({len(post)} символов)."
                 else:
@@ -77,6 +84,7 @@ class ContentGen:
 
     def start_morning_loop(self, hour: int = 9):
         self._running = True
+
         def _loop():
             while self._running:
                 if int(time.strftime("%H")) == hour:
@@ -84,5 +92,6 @@ class ContentGen:
                     self.publish()
                     time.sleep(3600)
                 time.sleep(60)
+
         threading.Thread(target=_loop, daemon=True).start()
         return f"Медиа-Архитектор активен. Дайджест в {hour:02d}:00 ежедневно."

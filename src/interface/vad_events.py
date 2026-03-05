@@ -2,12 +2,14 @@
 vad_events.py — Модуль подписки на события VAD (начало/конец речи)
 Может использоваться в GUI, web, Telegram, CLI.
 """
-from src.connectivity.event_bus import bus
+
 from src.argos_logger import get_logger
+from src.connectivity.event_bus import bus
 
 log = get_logger("vad.events")
 
 # Подписчик на события VAD
+
 
 def on_vad_event(ev):
     if ev.type == "vad.speech_start":
@@ -16,6 +18,7 @@ def on_vad_event(ev):
     elif ev.type == "vad.speech_end":
         log.info(f"VAD: Конец речи ({ev.payload})")
         # Здесь можно скрыть индикатор или отправить событие в интерфейс
+
 
 bus.subscribe("vad.speech_start", on_vad_event)
 bus.subscribe("vad.speech_end", on_vad_event)

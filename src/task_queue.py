@@ -2,21 +2,23 @@
 task_queue.py — Базовая очередь задач Аргоса
   PriorityQueue + worker pool для фонового выполнения команд.
 """
+
 import os
-import time
 import queue
 import threading
-from dataclasses import dataclass, field
+import time
 from collections import deque
-from typing import Callable, Any
+from dataclasses import dataclass, field
+from typing import Any, Callable
 
 from src.argos_logger import get_logger
 
 log = get_logger("argos.taskqueue")
 
 try:
-    from src.observability import Metrics, log_event, get_acceptance_snapshot
+    from src.observability import Metrics, get_acceptance_snapshot, log_event
 except Exception:  # pragma: no cover
+
     class Metrics:  # type: ignore
         @classmethod
         def inc(cls, name: str, value: int = 1, tags: dict = None):
@@ -70,9 +72,7 @@ class TaskQueueManager:
         self._offloaded = 0
         self._durations_ms: deque[float] = deque(maxlen=300)
         self._results: deque[dict] = deque(maxlen=100)
-        self._class_dispatch_ts: dict[str, deque[float]] = {
-            name: deque(maxlen=512) for name in self.TASK_CLASSES
-        }
+        self._class_dispatch_ts: dict[str, deque[float]] = {name: deque(maxlen=512) for name in self.TASK_CLASSES}
 
         self._class_rps: dict[str, int] = {
             "system": max(1, min(int(os.getenv("ARGOS_TASK_RPS_SYSTEM", "8") or "8"), 100)),
@@ -105,9 +105,9 @@ class TaskQueueManager:
             return
         self._runners[kind] = runner
 
-    def set_heavy_failover(self,
-                           guard: Callable[[TaskEnvelope], bool] | None,
-                           runner: Callable[[TaskEnvelope], tuple[bool, str]] | None) -> str:
+    def set_heavy_failover(
+        self, guard: Callable[[TaskEnvelope], bool] | None, runner: Callable[[TaskEnvelope], tuple[bool, str]] | None
+    ) -> str:
         self._heavy_preemptive_guard = guard if callable(guard) else None
         self._heavy_failover_runner = runner if callable(runner) else None
         if self._heavy_preemptive_guard and self._heavy_failover_runner:
@@ -146,8 +146,16 @@ class TaskQueueManager:
             backoff_ms=self.default_backoff_ms,
         )
 
-    def submit_ex(self, kind: str, payload: dict, priority: int = 5, task_class: str = "ai",
-                  max_retries: int = 1, deadline_sec: int = 120, backoff_ms: int = 500) -> int:
+    def submit_ex(
+        self,
+        kind: str,
+        payload: dict,
+        priority: int = 5,
+        task_class: str = "ai",
+        max_retries: int = 1,
+        deadline_sec: int = 120,
+        backoff_ms: int = 500,
+    ) -> int:
         with self._lock:
             task_id = self._next_id
             self._next_id += 1
@@ -172,14 +180,18 @@ class TaskQueueManager:
         self._queue.put(env)
         Metrics.inc("taskqueue.submitted", tags={"kind": kind, "class": normalized_class})
         Metrics.gauge("taskqueue.size", float(self._queue.qsize()))
-        log_event("taskqueue_submitted", {
-            "task_id": task_id,
-            "kind": kind,
-            "class": normalized_class,
-            "priority": env.priority,
-            "max_retries": retries,
-            "deadline_sec": ttl,
-        }, source="task_queue")
+        log_event(
+            "taskqueue_submitted",
+            {
+                "task_id": task_id,
+                "kind": kind,
+                "class": normalized_class,
+                "priority": env.priority,
+                "max_retries": retries,
+                "deadline_sec": ttl,
+            },
+            source="task_queue",
+        )
         return task_id
 
     def _worker_loop(self, worker_id: int):
@@ -210,23 +222,29 @@ class TaskQueueManager:
 
             if task.deadline_ts > 0 and now > task.deadline_ts:
                 self._expired += 1
-                self._results.appendleft({
-                    "id": task.task_id,
-                    "kind": task.kind,
-                    "class": task.task_class,
-                    "ok": False,
-                    "ms": 0.0,
-                    "attempt": task.attempt,
-                    "output": "deadline exceeded",
-                })
+                self._results.appendleft(
+                    {
+                        "id": task.task_id,
+                        "kind": task.kind,
+                        "class": task.task_class,
+                        "ok": False,
+                        "ms": 0.0,
+                        "attempt": task.attempt,
+                        "output": "deadline exceeded",
+                    }
+                )
                 Metrics.inc("taskqueue.expired", tags={"kind": task.kind, "class": task.task_class})
                 Metrics.gauge("taskqueue.size", float(self._queue.qsize()))
-                log_event("taskqueue_expired", {
-                    "task_id": task.task_id,
-                    "kind": task.kind,
-                    "class": task.task_class,
-                    "attempt": task.attempt,
-                }, source="task_queue")
+                log_event(
+                    "taskqueue_expired",
+                    {
+                        "task_id": task.task_id,
+                        "kind": task.kind,
+                        "class": task.task_class,
+                        "attempt": task.attempt,
+                    },
+                    source="task_queue",
+                )
                 self._queue.task_done()
                 continue
 
@@ -240,7 +258,9 @@ class TaskQueueManager:
                         ok, output = offloaded
                         duration_ms = (time.time() - started) * 1000.0
                         self._durations_ms.append(duration_ms)
-                        Metrics.observe("taskqueue.duration_ms", duration_ms, tags={"kind": task.kind, "class": task.task_class})
+                        Metrics.observe(
+                            "taskqueue.duration_ms", duration_ms, tags={"kind": task.kind, "class": task.task_class}
+                        )
                         if ok:
                             self._processed += 1
                             self._offloaded += 1
@@ -248,15 +268,17 @@ class TaskQueueManager:
                         else:
                             self._failed += 1
                             Metrics.inc("taskqueue.failed", tags={"kind": task.kind, "class": task.task_class})
-                        self._results.appendleft({
-                            "id": task.task_id,
-                            "kind": task.kind,
-                            "class": task.task_class,
-                            "ok": ok,
-                            "ms": round(duration_ms, 1),
-                            "attempt": task.attempt,
-                            "output": output[:400],
-                        })
+                        self._results.appendleft(
+                            {
+                                "id": task.task_id,
+                                "kind": task.kind,
+                                "class": task.task_class,
+                                "ok": ok,
+                                "ms": round(duration_ms, 1),
+                                "attempt": task.attempt,
+                                "output": output[:400],
+                            }
+                        )
                         Metrics.gauge("taskqueue.size", float(self._queue.qsize()))
                         self._queue.task_done()
                         continue
@@ -285,28 +307,34 @@ class TaskQueueManager:
                     task.next_run_at = time.time() + min(backoff, 30.0)
                     self._queue.put(task)
                     Metrics.inc("taskqueue.retried", tags={"kind": task.kind, "class": task.task_class})
-                    log_event("taskqueue_retried", {
-                        "task_id": task.task_id,
-                        "kind": task.kind,
-                        "class": task.task_class,
-                        "attempt": task.attempt,
-                        "next_in_sec": round(min(backoff, 30.0), 2),
-                    }, source="task_queue")
+                    log_event(
+                        "taskqueue_retried",
+                        {
+                            "task_id": task.task_id,
+                            "kind": task.kind,
+                            "class": task.task_class,
+                            "attempt": task.attempt,
+                            "next_in_sec": round(min(backoff, 30.0), 2),
+                        },
+                        source="task_queue",
+                    )
                     self._queue.task_done()
                     continue
 
                 self._failed += 1
                 Metrics.inc("taskqueue.failed", tags={"kind": task.kind, "class": task.task_class})
 
-            self._results.appendleft({
-                "id": task.task_id,
-                "kind": task.kind,
-                "class": task.task_class,
-                "ok": ok,
-                "ms": round(duration_ms, 1),
-                "attempt": task.attempt,
-                "output": output[:400],
-            })
+            self._results.appendleft(
+                {
+                    "id": task.task_id,
+                    "kind": task.kind,
+                    "class": task.task_class,
+                    "ok": ok,
+                    "ms": round(duration_ms, 1),
+                    "attempt": task.attempt,
+                    "output": output[:400],
+                }
+            )
             Metrics.gauge("taskqueue.size", float(self._queue.qsize()))
             self._queue.task_done()
 
@@ -351,7 +379,7 @@ class TaskQueueManager:
         )
 
     def last_results(self, limit: int = 5) -> str:
-        rows = list(self._results)[:max(1, min(limit, 20))]
+        rows = list(self._results)[: max(1, min(limit, 20))]
         if not rows:
             return "📭 В очереди пока нет завершённых задач."
         lines = [f"📦 TASK RESULTS ({len(rows)}):"]
@@ -420,12 +448,16 @@ class TaskQueueManager:
         try:
             ok, output = runner(task)
             if ok:
-                log_event("taskqueue_offloaded", {
-                    "task_id": task.task_id,
-                    "kind": task.kind,
-                    "class": task.task_class,
-                    "attempt": task.attempt,
-                }, source="task_queue")
+                log_event(
+                    "taskqueue_offloaded",
+                    {
+                        "task_id": task.task_id,
+                        "kind": task.kind,
+                        "class": task.task_class,
+                        "attempt": task.attempt,
+                    },
+                    source="task_queue",
+                )
                 return True, f"[P2P OFFLOAD] {output}"
             return False, f"[P2P OFFLOAD FAILED] {output}"
         except Exception as e:
@@ -453,11 +485,15 @@ class TaskQueueManager:
             self._last_idle_learning_ts = now
             if result and isinstance(result, tuple) and bool(result[0]):
                 Metrics.inc("taskqueue.idle_learning.applied")
-                log_event("taskqueue_idle_learning", {
-                    "ok": True,
-                    "detail": str(result[1])[:180],
-                    "forced": bool(force),
-                }, source="task_queue")
+                log_event(
+                    "taskqueue_idle_learning",
+                    {
+                        "ok": True,
+                        "detail": str(result[1])[:180],
+                        "forced": bool(force),
+                    },
+                    source="task_queue",
+                )
         except Exception as e:
             log.warning("TaskQueue idle learning error: %s", e)
 
@@ -489,13 +525,17 @@ class TaskQueueManager:
             os.environ["ARGOS_TASK_RPS_AI"] = str(self._class_rps["ai"])
             self._last_backpressure_action_ts = now
             Metrics.inc("taskqueue.backpressure.applied")
-            log_event("taskqueue_backpressure", {
-                "reason": "acceptance_rate_low",
-                "acceptance_rate": round(rate, 4),
-                "samples": samples,
-                "old_ai_rps": current_ai_rps,
-                "new_ai_rps": self._class_rps["ai"],
-            }, source="task_queue")
+            log_event(
+                "taskqueue_backpressure",
+                {
+                    "reason": "acceptance_rate_low",
+                    "acceptance_rate": round(rate, 4),
+                    "samples": samples,
+                    "old_ai_rps": current_ai_rps,
+                    "new_ai_rps": self._class_rps["ai"],
+                },
+                source="task_queue",
+            )
 
             # Принудительное дообучение Драфтеров
             self._run_idle_learning_cycle(now, force=True)
@@ -512,14 +552,18 @@ class TaskQueueManager:
                 os.environ["ARGOS_TASK_RPS_AI"] = str(recovered_rps)
                 self._last_backpressure_action_ts = now
                 Metrics.inc("taskqueue.backpressure.recovery")
-                log_event("taskqueue_rps_recovery", {
-                    "reason": "acceptance_rate_recovered",
-                    "acceptance_rate": round(rate, 4),
-                    "samples": samples,
-                    "old_ai_rps": current_ai_rps,
-                    "new_ai_rps": recovered_rps,
-                    "baseline_rps": self._baseline_ai_rps,
-                }, source="task_queue")
+                log_event(
+                    "taskqueue_rps_recovery",
+                    {
+                        "reason": "acceptance_rate_recovered",
+                        "acceptance_rate": round(rate, 4),
+                        "samples": samples,
+                        "old_ai_rps": current_ai_rps,
+                        "new_ai_rps": recovered_rps,
+                        "baseline_rps": self._baseline_ai_rps,
+                    },
+                    source="task_queue",
+                )
 
 
 # README alias

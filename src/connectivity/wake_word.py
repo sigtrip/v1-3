@@ -3,8 +3,10 @@ wake_word.py — Wake Word детектор
   Постоянно слушает микрофон. При обнаружении "аргос" / "argos"
   активирует полный цикл прослушивания → ответа → TTS.
 """
+
 import threading
 import time
+
 from src.argos_logger import get_logger
 
 log = get_logger("argos.wake")
@@ -14,11 +16,11 @@ WAKE_WORDS = ["аргос", "argos", "аргас", "аргоc"]
 
 class WakeWordListener:
     def __init__(self, core, admin, flasher):
-        self.core    = core
-        self.admin   = admin
+        self.core = core
+        self.admin = admin
         self.flasher = flasher
         self._running = False
-        self._active  = False  # True когда уже обрабатываем команду
+        self._active = False  # True когда уже обрабатываем команду
 
     def start(self) -> str:
         self._running = True
@@ -73,6 +75,7 @@ class WakeWordListener:
 
         try:
             import speech_recognition as sr
+
             with sr.Microphone() as source:
                 recognizer.adjust_for_ambient_noise(source, duration=0.3)
                 audio = recognizer.listen(source, timeout=7, phrase_time_limit=15)
@@ -84,12 +87,12 @@ class WakeWordListener:
             cmd = command.lower()
             for w in WAKE_WORDS:
                 if cmd.startswith(w):
-                    cmd = cmd[len(w):].strip(" ,.")
+                    cmd = cmd[len(w) :].strip(" ,.")
 
             if cmd:
                 result = self.core.process_logic(cmd, self.admin, self.flasher)
                 # say() уже вызывается внутри process_logic
-                log.info("Ответ: %s", result.get("answer","")[:80])
+                log.info("Ответ: %s", result.get("answer", "")[:80])
 
         except Exception as e:
             log.error("Ошибка команды: %s", e)

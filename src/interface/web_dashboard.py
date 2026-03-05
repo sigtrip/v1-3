@@ -3,13 +3,15 @@ web_dashboard.py — Веб-панель Аргоса (встроенный HTTP
   Открывается в браузере: http://localhost:8080
   Показывает: статус, ноды P2P, логи, отправка команд.
 """
-import threading
-import json
-import time
-import os
+
 import hashlib
+import json
+import os
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
-from http.server import HTTPServer, BaseHTTPRequestHandler
+
 from src.argos_logger import get_logger
 
 log = get_logger("argos.dashboard")
@@ -321,8 +323,8 @@ if websockets:
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
-    core    = None
-    admin   = None
+    core = None
+    admin = None
     flasher = None
     start_t = time.time()
     _status_cache = None
@@ -332,38 +334,37 @@ class DashboardHandler(BaseHTTPRequestHandler):
     _log_mtime = 0.0
     _log_etag = ""
 
-    def log_message(self, *args): pass  # Отключаем стандартный вывод
+    def log_message(self, *args):
+        pass  # Отключаем стандартный вывод
 
     def do_GET(self):
-      path = urlparse(self.path).path
-      if path == "/":
-        self._send(200, "text/html", HTML.encode())
-      elif path == "/api/status":
-        self._send(200, "application/json", self._status_json())
-      elif path == "/api/dashboard":
-        self._send(200, "application/json", self._dashboard_json())
-      elif path == "/api/log":
-        payload, etag = self._log_json()
-        inm = (self.headers.get("If-None-Match") or "").strip('"')
-        if inm and etag and inm == etag:
-          self._send(304, "application/json", b"", headers={"ETag": etag, "Cache-Control": "no-cache"})
+        path = urlparse(self.path).path
+        if path == "/":
+            self._send(200, "text/html", HTML.encode())
+        elif path == "/api/status":
+            self._send(200, "application/json", self._status_json())
+        elif path == "/api/dashboard":
+            self._send(200, "application/json", self._dashboard_json())
+        elif path == "/api/log":
+            payload, etag = self._log_json()
+            inm = (self.headers.get("If-None-Match") or "").strip('"')
+            if inm and etag and inm == etag:
+                self._send(304, "application/json", b"", headers={"ETag": etag, "Cache-Control": "no-cache"})
+            else:
+                self._send(200, "application/json", payload, headers={"ETag": etag, "Cache-Control": "no-cache"})
         else:
-          self._send(200, "application/json", payload, headers={"ETag": etag, "Cache-Control": "no-cache"})
-      else:
-        self._send(404, "text/plain", b"Not found")
+            self._send(404, "text/plain", b"Not found")
 
     def do_POST(self):
         if self.path == "/api/cmd":
-            length  = int(self.headers.get("Content-Length", 0))
-            body    = json.loads(self.rfile.read(length))
-            cmd     = body.get("cmd", "")
+            length = int(self.headers.get("Content-Length", 0))
+            body = json.loads(self.rfile.read(length))
+            cmd = body.get("cmd", "")
             try:
                 result = self.core.process_logic(cmd, self.admin, self.flasher)
-                self._send(200, "application/json",
-                           json.dumps(result, ensure_ascii=False).encode())
+                self._send(200, "application/json", json.dumps(result, ensure_ascii=False).encode())
             except Exception as e:
-                self._send(200, "application/json",
-                           json.dumps({"answer": f"Ошибка: {e}"}).encode())
+                self._send(200, "application/json", json.dumps({"answer": f"Ошибка: {e}"}).encode())
 
     def _send(self, code, ctype, data, headers: dict | None = None):
         self.send_response(code)
@@ -376,7 +377,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _status_json(self) -> bytes:
-        import psutil, json
+        import json
+
+        import psutil
+
         now = time.time()
         if self._status_cache is not None and (now - self._status_cache_ts) < 1.0:
             return self._status_cache
@@ -385,15 +389,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         h, m = divmod(uptime_s // 60, 60)
         uptime = f"{h}ч {m}мин"
 
-        cpu  = psutil.cpu_percent(interval=None)
-        ram  = psutil.virtual_memory().percent
-        disk = psutil.disk_usage('/').percent
+        cpu = psutil.cpu_percent(interval=None)
+        ram = psutil.virtual_memory().percent
+        disk = psutil.disk_usage("/").percent
 
         # Сеть
         try:
             import socket
+
             st = time.time()
-            socket.create_connection(("8.8.8.8",53), timeout=1)
+            socket.create_connection(("8.8.8.8", 53), timeout=1)
             net = f"{int((time.time()-st)*1000)}ms"
         except Exception:
             net = "Offline"
@@ -402,9 +407,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         bat = "N/A"
         try:
             b = psutil.sensors_battery()
-            if b: bat = f"{b.percent:.0f}% {'🔌' if b.power_plugged else '🔋'}"
+            if b:
+                bat = f"{b.percent:.0f}% {'🔌' if b.power_plugged else '🔋'}"
         except Exception as e:
-          log.debug("Battery metrics unavailable: %s", e)
+            log.debug("Battery metrics unavailable: %s", e)
 
         # P2P
         p2p_nodes = 0
@@ -414,13 +420,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             master = self.core.p2p.registry.get_master()
             p2p_nodes = len(nodes)
             for n in nodes:
-                p2p_list.append({
-                    "hostname":  n.get("hostname","?"),
-                    "power":     n.get("power",{}).get("index",0),
-                    "age_days":  n.get("age_days",0),
-                    "authority": n.get("authority",0),
-                    "is_master": master and n.get("node_id") == master.get("node_id"),
-                })
+                p2p_list.append(
+                    {
+                        "hostname": n.get("hostname", "?"),
+                        "power": n.get("power", {}).get("index", 0),
+                        "age_days": n.get("age_days", 0),
+                        "authority": n.get("authority", 0),
+                        "is_master": master and n.get("node_id") == master.get("node_id"),
+                    }
+                )
 
         state = "Offline"
         voice = False
@@ -428,9 +436,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             state = self.core.quantum.generate_state()["name"]
             voice = self.core.voice_on
 
-        data = dict(state=state, voice_on=voice, p2p_nodes=p2p_nodes,
-                    p2p_list=p2p_list, uptime=uptime, cpu=cpu, ram=ram,
-                    disk=disk, net=net, bat=bat)
+        data = dict(
+            state=state,
+            voice_on=voice,
+            p2p_nodes=p2p_nodes,
+            p2p_list=p2p_list,
+            uptime=uptime,
+            cpu=cpu,
+            ram=ram,
+            disk=disk,
+            net=net,
+            bat=bat,
+        )
         payload = json.dumps(data, ensure_ascii=False).encode()
         self._status_cache = payload
         self._status_cache_ts = now
@@ -457,6 +474,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _dashboard_json(self) -> bytes:
         import json
+
         status_payload = self._status_json()
         log_payload, log_etag = self._log_json()
         status_data = json.loads(status_payload.decode("utf-8"))
@@ -468,11 +486,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 class WebDashboard:
     def __init__(self, core, admin, flasher, port: int = 8080):
-        DashboardHandler.core    = core
-        DashboardHandler.admin   = admin
+        DashboardHandler.core = core
+        DashboardHandler.admin = admin
         DashboardHandler.flasher = flasher
         DashboardHandler.start_t = time.time()
-        self.port   = port
+        self.port = port
         self.server = None
 
     def start(self) -> str:

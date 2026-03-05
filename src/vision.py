@@ -3,12 +3,14 @@ vision.py — Глаза Аргоса (Computer Vision)
   Анализирует скриншоты, изображения, фото с камеры через Gemini Vision.
   Fallback: базовое описание через PIL.
 """
-import os
+
 import base64
+import os
 import platform
 import threading
 import time
 from collections import deque
+
 from src.argos_logger import get_logger
 
 log = get_logger("argos.vision")
@@ -37,6 +39,7 @@ _GEMINI_VISION_LIMITER = _VisionGeminiLimiter(max_calls=15, window_seconds=60)
 try:
     from google import genai as genai_sdk
     from google.genai import types as genai_types
+
     GEMINI_OK = True
 except ImportError:
     genai_sdk = None
@@ -45,6 +48,7 @@ except ImportError:
 
 try:
     from PIL import Image
+
     PIL_OK = True
 except ImportError:
     Image = None
@@ -52,6 +56,7 @@ except ImportError:
 
 try:
     import cv2
+
     CV2_OK = True
 except ImportError:
     cv2 = None
@@ -83,17 +88,16 @@ class ArgosVision:
         if not cap.isOpened():
             return "❌ Не удалось открыть камеру (индекс 0)."
 
-        face_cascade = cv2.CascadeClassifier(
-            cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
-        )
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 
         log.info("Запуск видеопотока Vision Feedback...")
         print("🎥 Открываю окно предпросмотра... Нажмите 'q' для выхода.")
 
         try:
             import time
+
             start_time = time.time()
-            
+
             while True:
                 ret, frame = cap.read()
                 if not ret:
@@ -103,22 +107,23 @@ class ArgosVision:
                 faces = face_cascade.detectMultiScale(gray, 1.1, 4)
 
                 # Рисуем рамки
-                for (x, y, w, h) in faces:
-                    cv2.rectangle(frame, (x, y), (x+w, y+h), (0, 255, 0), 2)
-                    cv2.putText(frame, "HUMAN", (x, y-10), 
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                for x, y, w, h in faces:
+                    cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                    cv2.putText(frame, "HUMAN", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
                 # Добавляем HUD Аргоса
-                cv2.putText(frame, "ARGOS VISION SYSTEM v1.3", (20, 30), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                cv2.putText(frame, "Searching for targets...", (20, 60), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 200), 1)
+                cv2.putText(
+                    frame, "ARGOS VISION SYSTEM v1.3", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2
+                )
+                cv2.putText(
+                    frame, "Searching for targets...", (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 200, 200), 1
+                )
 
-                cv2.imshow('Argos Vision Feedback', frame)
+                cv2.imshow("Argos Vision Feedback", frame)
 
-                if cv2.waitKey(1) & 0xFF == ord('q'):
+                if cv2.waitKey(1) & 0xFF == ord("q"):
                     break
-                
+
                 # Автовыход для демо-режима если нет окна (headless)
                 # cv2.imshow может не создать окно в docker/ssh без X11
                 # поэтому просто читаем кадры некоторое время
@@ -145,6 +150,7 @@ class ArgosVision:
         try:
             # pyautogui — кроссплатформенный
             import pyautogui
+
             img = pyautogui.screenshot()
             img.save(save_path)
             log.info("Скриншот: %s", save_path)
@@ -155,6 +161,7 @@ class ArgosVision:
         # Fallback: PIL ImageGrab (Windows/macOS)
         try:
             from PIL import ImageGrab
+
             img = ImageGrab.grab()
             img.save(save_path)
             return save_path
@@ -164,6 +171,7 @@ class ArgosVision:
         # Linux: scrot
         if platform.system() == "Linux":
             import subprocess
+
             try:
                 subprocess.run(["scrot", save_path], check=True)
                 return save_path
@@ -209,13 +217,15 @@ class ArgosVision:
         # Fallback — базовая информация через PIL
         if PIL_OK:
             try:
-                img  = Image.open(image_path)
+                img = Image.open(image_path)
                 w, h = img.size
                 mode = img.mode
-                return (f"👁️ Изображение: {os.path.basename(image_path)}\n"
-                        f"  Размер: {w}×{h} px\n"
-                        f"  Режим:  {mode}\n"
-                        f"  (Для детального анализа нужен Gemini API)")
+                return (
+                    f"👁️ Изображение: {os.path.basename(image_path)}\n"
+                    f"  Размер: {w}×{h} px\n"
+                    f"  Режим:  {mode}\n"
+                    f"  (Для детального анализа нужен Gemini API)"
+                )
             except Exception as e:
                 return f"❌ PIL ошибка: {e}"
 
@@ -235,6 +245,7 @@ class ArgosVision:
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         try:
             import cv2
+
             cap = cv2.VideoCapture(0)
             if not cap.isOpened():
                 return "❌ Камера недоступна."

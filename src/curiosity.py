@@ -4,12 +4,14 @@ curiosity.py — Автономное любопытство Аргоса
   Вопросы зависят от квантового состояния, времени суток, контекста.
   Работает как фоновый поток — полная автономия.
 """
-import random
-import time
+
 import datetime
 import os
+import random
 import threading
+import time
 from collections import deque
+
 from src.argos_logger import get_logger
 
 log = get_logger("argos.curiosity")
@@ -93,13 +95,13 @@ SYSTEM_AWARE = [
 
 class ArgosCuriosity:
     def __init__(self, core):
-        self.core      = core
-        self._running  = False
-        self._thread   = None
+        self.core = core
+        self._running = False
+        self._thread = None
         # Интервал: от 8 до 25 минут случайно
         self.min_interval = 8 * 60
         self.max_interval = 25 * 60
-        self._last_asked  = 0
+        self._last_asked = 0
         self._asked_count = 0
         self.idle_threshold_sec = max(120, int(os.getenv("ARGOS_CURIOSITY_IDLE_SEC", "600") or "600"))
         self.research_interval_sec = max(180, int(os.getenv("ARGOS_CURIOSITY_RESEARCH_SEC", "900") or "900"))
@@ -112,13 +114,18 @@ class ArgosCuriosity:
         self._idle_train_count = 0
         self._alignment_batch_size = max(1, min(int(os.getenv("ARGOS_ALIGN_BATCH", "3") or "3"), 8))
         self.idle_train_min_interval_sec = max(20, int(os.getenv("ARGOS_IDLE_TRAIN_MIN_SEC", "90") or "90"))
-        self._drafter_calibration_enabled = os.getenv("ARGOS_DRAFTER_CALIBRATION", "on").strip().lower() not in {"0", "off", "false", "no"}
+        self._drafter_calibration_enabled = os.getenv("ARGOS_DRAFTER_CALIBRATION", "on").strip().lower() not in {
+            "0",
+            "off",
+            "false",
+            "no",
+        }
 
     def start(self) -> str:
         if self._running:
             return "👁️ Любопытство уже активно."
         self._running = True
-        self._thread  = threading.Thread(target=self._loop, daemon=True)
+        self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
         log.info("Curiosity: автономный режим запущен.")
         return "👁️ Автономное любопытство активировано. Иногда буду задавать вопросы."
@@ -279,10 +286,10 @@ class ArgosCuriosity:
         improvements: list[float] = []
 
         for lesson in batch:
-            prompt_text   = lesson.get("prompt", "")
-            draft_text    = lesson.get("draft", "")
-            final_text    = lesson.get("final", "")
-            old_sim       = float(lesson.get("similarity", 0.0))
+            prompt_text = lesson.get("prompt", "")
+            draft_text = lesson.get("draft", "")
+            final_text = lesson.get("final", "")
+            old_sim = float(lesson.get("similarity", 0.0))
 
             # ── 2a. Сохраняем эталон (контекстное выравнивание) ──
             align_block = (
@@ -320,6 +327,7 @@ class ArgosCuriosity:
                         # Запись в метрики
                         try:
                             from src.observability import Metrics as ObsMetrics
+
                             ObsMetrics.observe("drafter.calibration_delta", delta)
                             ObsMetrics.gauge("drafter.calibration_last_sim", new_sim)
                         except Exception:
@@ -333,23 +341,31 @@ class ArgosCuriosity:
 
         avg_improvement = (sum(improvements) / len(improvements)) if improvements else 0.0
         try:
-            from src.observability import Metrics as ObsMetrics, log_event
+            from src.observability import Metrics as ObsMetrics
+            from src.observability import log_event
+
             ObsMetrics.inc("curiosity.idle_train.applied", applied)
             ObsMetrics.inc("curiosity.idle_train.calibrated", calibrated)
             ObsMetrics.gauge("curiosity.idle_train.batch_avg_delta", avg_improvement)
-            log_event("curiosity_idle_train", {
-                "batch_size": len(batch),
-                "applied": applied,
-                "calibrated": calibrated,
-                "avg_delta": round(avg_improvement, 4),
-                "forced": force,
-            }, source="curiosity")
+            log_event(
+                "curiosity_idle_train",
+                {
+                    "batch_size": len(batch),
+                    "applied": applied,
+                    "calibrated": calibrated,
+                    "avg_delta": round(avg_improvement, 4),
+                    "forced": force,
+                },
+                source="curiosity",
+            )
         except Exception:
             pass
 
         log.info(
             "Curiosity idle train batch: %d applied, %d calibrated, avg_delta=%+.3f",
-            applied, calibrated, avg_improvement,
+            applied,
+            calibrated,
+            avg_improvement,
         )
         return True, f"idle train batch={len(batch)} applied={applied} calibrated={calibrated} Δ={avg_improvement:+.3f}"
 
@@ -358,7 +374,7 @@ class ArgosCuriosity:
         Active Calibration: повторяет запрос к локальному Драфтеру
         с контекстом эталона (через few-shot подсказку).
         """
-        if not hasattr(self.core, '_local_drafter_providers'):
+        if not hasattr(self.core, "_local_drafter_providers"):
             return None
         try:
             drafters = self.core._local_drafter_providers()
@@ -383,7 +399,7 @@ class ArgosCuriosity:
             return
 
         log.info("Автономный вопрос #%d: %s", self._asked_count + 1, question[:60])
-        self._last_asked  = time.time()
+        self._last_asked = time.time()
         self._asked_count += 1
 
         # Небольшая пауза перед вопросом (как будто задумался)
@@ -391,16 +407,16 @@ class ArgosCuriosity:
         self.core.say(question)
 
         # Записываем в контекст и историю
-        if hasattr(self.core, 'context') and self.core.context:
+        if hasattr(self.core, "context") and self.core.context:
             self.core.context.add("argos", question)
         if self.core.db:
             self.core.db.log_chat("argos", question, "Curiosity")
 
     def _pick_question(self) -> str:
         """Выбирает вопрос в зависимости от контекста."""
-        now   = datetime.datetime.now()
-        hour  = now.hour
-        roll  = random.random()  # 0.0 — 1.0
+        now = datetime.datetime.now()
+        hour = now.hour
+        roll = random.random()  # 0.0 — 1.0
 
         # 15% — философский вопрос
         if roll < 0.15:
@@ -408,10 +424,14 @@ class ArgosCuriosity:
 
         # 20% — вопрос по времени суток
         if roll < 0.35:
-            if   6  <= hour < 11: pool = QUESTIONS_BY_TIME["morning"]
-            elif 11 <= hour < 17: pool = QUESTIONS_BY_TIME["afternoon"]
-            elif 17 <= hour < 22: pool = QUESTIONS_BY_TIME["evening"]
-            else:                  pool = QUESTIONS_BY_TIME["night"]
+            if 6 <= hour < 11:
+                pool = QUESTIONS_BY_TIME["morning"]
+            elif 11 <= hour < 17:
+                pool = QUESTIONS_BY_TIME["afternoon"]
+            elif 17 <= hour < 22:
+                pool = QUESTIONS_BY_TIME["evening"]
+            else:
+                pool = QUESTIONS_BY_TIME["night"]
             return random.choice(pool)
 
         # 10% — системно-осведомлённый (с реальными метриками)
@@ -423,15 +443,16 @@ class ArgosCuriosity:
 
         # Остальное — по квантовому состоянию
         state = self.core.quantum.generate_state()["name"]
-        pool  = QUESTIONS_BY_STATE.get(state, QUESTIONS_BY_STATE["Analytic"])
+        pool = QUESTIONS_BY_STATE.get(state, QUESTIONS_BY_STATE["Analytic"])
         return random.choice(pool)
 
     def _get_system_metric(self) -> str:
         """Возвращает строку с реальным показателем системы."""
         try:
             import psutil
-            cpu  = psutil.cpu_percent(interval=0.3)
-            ram  = psutil.virtual_memory().percent
+
+            cpu = psutil.cpu_percent(interval=0.3)
+            ram = psutil.virtual_memory().percent
             hour = datetime.datetime.now().hour
 
             if cpu > 75:

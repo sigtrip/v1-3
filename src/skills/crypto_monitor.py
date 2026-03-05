@@ -2,21 +2,24 @@
 crypto_monitor.py — Крипто-Страж
   Мониторинг BTC/ETH каждый час, алерт в Telegram при изменении > 5%
 """
-import requests
-import time
+
 import os
 import threading
+import time
+
+import requests
+
 
 class CryptoSentinel:
     API_URL = "https://api.coingecko.com/api/v3/simple/price"
-    COINS   = ["bitcoin", "ethereum"]
+    COINS = ["bitcoin", "ethereum"]
     SYMBOLS = {"bitcoin": "BTC", "ethereum": "ETH"}
 
     def __init__(self, telegram_bot=None):
-        self.bot       = telegram_bot   # ArgosTelegram instance (опц.)
-        self.prev      = {}
-        self.threshold = 5.0            # % изменения для алерта
-        self._running  = False
+        self.bot = telegram_bot  # ArgosTelegram instance (опц.)
+        self.prev = {}
+        self.threshold = 5.0  # % изменения для алерта
+        self._running = False
 
     def get_prices(self) -> dict:
         try:
@@ -25,7 +28,7 @@ class CryptoSentinel:
             data = r.json()
             return {
                 coin: {
-                    "price":  data[coin]["usd"],
+                    "price": data[coin]["usd"],
                     "change": data[coin].get("usd_24h_change", 0.0),
                 }
                 for coin in self.COINS
@@ -36,20 +39,16 @@ class CryptoSentinel:
     def check(self) -> list[str]:
         """Возвращает список алертов (пустой если всё тихо)."""
         current = self.get_prices()
-        alerts  = []
+        alerts = []
 
         for coin, info in current.items():
             change = info.get("change", 0.0)
-            sym    = self.SYMBOLS[coin]
-            price  = info["price"]
+            sym = self.SYMBOLS[coin]
+            price = info["price"]
 
             if abs(change) >= self.threshold:
                 direction = "📈 РОСТ" if change > 0 else "📉 ПАДЕНИЕ"
-                alerts.append(
-                    f"🪙 {sym} АЛЕРТ\n"
-                    f"{direction}: {change:+.2f}%\n"
-                    f"Цена: ${price:,.2f}"
-                )
+                alerts.append(f"🪙 {sym} АЛЕРТ\n" f"{direction}: {change:+.2f}%\n" f"Цена: ${price:,.2f}")
         self.prev = current
         return alerts
 
@@ -67,6 +66,7 @@ class CryptoSentinel:
     def start_loop(self, interval_sec: int = 3600):
         """Фоновый мониторинг в отдельном потоке."""
         self._running = True
+
         def _loop():
             while self._running:
                 alerts = self.check()
@@ -74,6 +74,7 @@ class CryptoSentinel:
                     print(f"[CRYPTO-SENTINEL]: {msg}")
                     # TODO: self.bot.send(msg) когда будет метод send()
                 time.sleep(interval_sec)
+
         threading.Thread(target=_loop, daemon=True).start()
         return f"Крипто-Страж запущен. Интервал: {interval_sec//60} мин. Порог: {self.threshold}%"
 

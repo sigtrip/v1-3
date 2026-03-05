@@ -1,4 +1,5 @@
 """Skill re-export: evolution."""
+
 from src.skills.evolution.skill import ArgosEvolution
 
 

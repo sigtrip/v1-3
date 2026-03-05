@@ -1,38 +1,90 @@
-import psutil
-import platform
+import json
 import os
+import platform
+import shlex
 import shutil
 import subprocess
-import json
-import shlex
 import time
 from pathlib import Path
 
+import psutil
 
 AUDIT_LOG_PATH = "logs/security_audit.log"
 
 ROLE_ALLOWED_BINARIES = {
-    "viewer": {
-        "ls", "pwd", "whoami", "date", "uptime", "df", "free", "ps", "head", "tail", "cat", "echo"
-    },
+    "viewer": {"ls", "pwd", "whoami", "date", "uptime", "df", "free", "ps", "head", "tail", "cat", "echo"},
     "operator": {
-        "ls", "pwd", "whoami", "date", "uptime", "df", "free", "ps", "head", "tail", "cat", "echo",
-        "ip", "ss", "netstat", "lsof", "ping", "find", "grep", "du", "top"
+        "ls",
+        "pwd",
+        "whoami",
+        "date",
+        "uptime",
+        "df",
+        "free",
+        "ps",
+        "head",
+        "tail",
+        "cat",
+        "echo",
+        "ip",
+        "ss",
+        "netstat",
+        "lsof",
+        "ping",
+        "find",
+        "grep",
+        "du",
+        "top",
     },
     "admin": {
-        "ls", "pwd", "whoami", "date", "uptime", "df", "free", "ps", "head", "tail", "cat", "echo",
-        "ip", "ss", "netstat", "lsof", "ping", "find", "grep", "du", "top",
-        "git", "python", "python3", "pip", "pip3", "systemctl", "journalctl"
+        "ls",
+        "pwd",
+        "whoami",
+        "date",
+        "uptime",
+        "df",
+        "free",
+        "ps",
+        "head",
+        "tail",
+        "cat",
+        "echo",
+        "ip",
+        "ss",
+        "netstat",
+        "lsof",
+        "ping",
+        "find",
+        "grep",
+        "du",
+        "top",
+        "git",
+        "python",
+        "python3",
+        "pip",
+        "pip3",
+        "systemctl",
+        "journalctl",
     },
     "root": {"*"},
 }
 
 DANGEROUS_TOKENS = [
-    "rm -rf /", "mkfs", "dd if=", "shutdown", "reboot", "poweroff", "halt",
-    ":(){:|:&};:", "chmod 777 /", "chown -r /", "del /f /s /q c:\\"
+    "rm -rf /",
+    "mkfs",
+    "dd if=",
+    "shutdown",
+    "reboot",
+    "poweroff",
+    "halt",
+    ":(){:|:&};:",
+    "chmod 777 /",
+    "chown -r /",
+    "del /f /s /q c:\\",
 ]
 
 SHELL_META_TOKENS = ["&&", "||", ";", "|", "`", "$(", ">", "<"]
+
 
 class ArgosAdmin:
     def __init__(self):
@@ -120,9 +172,8 @@ class ArgosAdmin:
     def get_stats(self):
         c = psutil.cpu_percent(interval=0.5)
         r = psutil.virtual_memory().percent
-        disk = psutil.disk_usage('/')
-        return (f"ЦП: {c}% | ОЗУ: {r}% | "
-                f"Диск: {disk.free // (2**30)}GB свободно | ОС: {self.os_type}")
+        disk = psutil.disk_usage("/")
+        return f"ЦП: {c}% | ОЗУ: {r}% | " f"Диск: {disk.free // (2**30)}GB свободно | ОС: {self.os_type}"
 
     def manage_power(self, action):
         if action == "shutdown":
@@ -134,10 +185,10 @@ class ArgosAdmin:
     # ── 2. ПРОЦЕССЫ ───────────────────────────────────────
     def kill_process(self, process_name):
         killed = False
-        for proc in psutil.process_iter(['pid', 'name']):
-            if proc.info['name'] and process_name.lower() in proc.info['name'].lower():
+        for proc in psutil.process_iter(["pid", "name"]):
+            if proc.info["name"] and process_name.lower() in proc.info["name"].lower():
                 try:
-                    psutil.Process(proc.info['pid']).terminate()
+                    psutil.Process(proc.info["pid"]).terminate()
                     killed = True
                 except psutil.AccessDenied:
                     return f"Отказано в доступе. Процесс {process_name} защищён."
@@ -145,7 +196,7 @@ class ArgosAdmin:
 
     def list_processes(self):
         procs = []
-        for p in psutil.process_iter(['pid', 'name', 'cpu_percent']):
+        for p in psutil.process_iter(["pid", "name", "cpu_percent"]):
             try:
                 procs.append(f"  {p.info['pid']:>6} | {p.info['name'][:30]:<30} | CPU: {p.info['cpu_percent']}%")
             except Exception:
@@ -160,7 +211,7 @@ class ArgosAdmin:
             result = []
             for item in items[:20]:
                 full = os.path.join(path, item)
-                tag  = "📁" if os.path.isdir(full) else "📄"
+                tag = "📁" if os.path.isdir(full) else "📄"
                 result.append(f"  {tag} {item}")
             suffix = "\n  ..." if len(items) > 20 else ""
             return f"📂 Содержимое '{path}' ({len(items)} объектов):\n" + "\n".join(result) + suffix
@@ -169,7 +220,7 @@ class ArgosAdmin:
 
     def read_file(self, path):
         try:
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, "r", encoding="utf-8") as f:
                 content = f.read(2000)
             suffix = "..." if len(content) == 2000 else ""
             return f"📄 Файл '{path}':\n{content}{suffix}"
@@ -182,7 +233,7 @@ class ArgosAdmin:
             folder = os.path.dirname(path)
             if folder:
                 os.makedirs(folder, exist_ok=True)
-            with open(path, 'w', encoding='utf-8') as f:
+            with open(path, "w", encoding="utf-8") as f:
                 f.write(content)
             size = os.path.getsize(path)
             return f"✅ Файл создан: {path} ({size} байт)"
@@ -192,7 +243,7 @@ class ArgosAdmin:
     def append_file(self, path: str, content: str) -> str:
         """Дописывает текст в конец файла."""
         try:
-            with open(path, 'a', encoding='utf-8') as f:
+            with open(path, "a", encoding="utf-8") as f:
                 f.write(content + "\n")
             return f"✅ Данные добавлены в {path}"
         except Exception as e:

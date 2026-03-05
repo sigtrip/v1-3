@@ -1,6 +1,7 @@
 """
 biosphere_tools.py — Инструменты (ноды) для графа управления биосферами
 """
+
 import logging
 
 log = logging.getLogger("argos.biosphere.tools")
@@ -85,6 +86,7 @@ class ActuatorNode:
 # README alias
 class BiosphereTools:
     """Facade for biosphere pipeline nodes."""
+
     SensorReader = SensorReaderNode
     ClimateAnalyzer = ClimateAnalyzerNode
     Actuator = ActuatorNode

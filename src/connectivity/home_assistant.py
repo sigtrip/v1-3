@@ -4,6 +4,7 @@ home_assistant.py — Интеграция Аргоса с Home Assistant
   - REST API (states/services)
   - MQTT publish (опционально)
 """
+
 import json
 import os
 from typing import Any
@@ -51,7 +52,7 @@ class HomeAssistantBridge:
             r = requests.get(f"{self.base_url}/api/states", headers=self._headers(), timeout=10)
             if not r.ok:
                 return f"❌ HA states HTTP {r.status_code}"
-            states = r.json()[:max(1, min(limit, 100))]
+            states = r.json()[: max(1, min(limit, 100))]
             lines = [f"🏠 Home Assistant состояния ({len(states)}):"]
             for s in states:
                 lines.append(f"  • {s.get('entity_id','?')} = {s.get('state','?')}")

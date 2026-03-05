@@ -3,11 +3,13 @@ agent.py — Режим автономного агента Аргоса
   Разбивает сложную задачу на шаги и выполняет цепочку команд.
   "сканируй сеть → найди новые устройства → запиши в файл → отправь в Telegram"
 """
+
+import os
 import re
 import time
-import os
-from src.argos_logger import get_logger
+
 from src.agenticseek_adapter import AgenticSeekAdapter
+from src.argos_logger import get_logger
 
 log = get_logger("argos.agent")
 
@@ -16,7 +18,7 @@ STEP_SEPARATORS = [" затем ", " потом ", " после этого ", " 
 
 class ArgosAgent:
     def __init__(self, core):
-        self.core    = core
+        self.core = core
         self._running = False
         self._results = []
         self._agenticseek = AgenticSeekAdapter()
@@ -33,7 +35,12 @@ class ArgosAgent:
             return None
 
         strict = (os.getenv("ARGOS_AGENTICSEEK_STRICT", "off") or "off").strip().lower() in {
-            "1", "true", "on", "yes", "да", "вкл"
+            "1",
+            "true",
+            "on",
+            "yes",
+            "да",
+            "вкл",
         }
 
         if not self._agenticseek.available():
@@ -94,7 +101,7 @@ class ArgosAgent:
             time.sleep(0.5)
 
         self._running = False
-        ok_count   = sum(1 for r in self._results if r["ok"])
+        ok_count = sum(1 for r in self._results if r["ok"])
         fail_count = len(self._results) - ok_count
 
         results.append(f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -111,7 +118,7 @@ class ArgosAgent:
                 new_result.extend(part.split(sep))
             result = new_result
         # Дополнительно по нумерованным пунктам "1. ... 2. ..."
-        numbered = re.split(r'\d+\.\s+', text)
+        numbered = re.split(r"\d+\.\s+", text)
         if len(numbered) > 2:
             return [s.strip() for s in numbered if s.strip()]
         return [s.strip() for s in result if s.strip()]

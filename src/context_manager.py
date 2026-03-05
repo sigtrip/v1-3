@@ -3,11 +3,15 @@ context_manager.py v2.0 — Трёхуровневый контекст диал
   Уровень 1: Локальный (текущая сессия, скользящее окно)
   Уровень 2: Долгосрочная память (SQLite факты)
   Уровень 3: Семантический поиск (TF-IDF / embeddings)
-  
+
   Квантовые профили: каждое состояние имеет свои параметры контекста.
 """
-import re, time, math
+
+import math
+import re
+import time
 from collections import deque
+
 from src.argos_logger import get_logger
 
 log = get_logger("argos.context")
@@ -16,15 +20,15 @@ log = get_logger("argos.context")
 # ── КВАНТОВЫЕ ПРОФИЛИ КОНТЕКСТА ───────────────────────────
 QUANTUM_PROFILES = {
     "Analytic": {
-        "window":     6,      # узкое окно — меньше шума
+        "window": 6,  # узкое окно — меньше шума
         "memory_use": False,  # без долгосрочных воспоминаний
-        "creativity": 0.2,   # низкая температура ИИ
+        "creativity": 0.2,  # низкая температура ИИ
         "description": "Чистый ввод/вывод, минимальный шум",
         "system_hint": "Отвечай чётко, структурированно. Только факты.",
         "allow_root_cmds": True,
     },
     "Creative": {
-        "window":     15,
+        "window": 15,
         "memory_use": True,
         "creativity": 0.9,
         "description": "Расширенный контекст, цепочки разрешены",
@@ -32,7 +36,7 @@ QUANTUM_PROFILES = {
         "allow_root_cmds": False,
     },
     "Protective": {
-        "window":     8,
+        "window": 8,
         "memory_use": False,
         "creativity": 0.1,
         "description": "Фокус на безопасности, root-команды ограничены",
@@ -40,7 +44,7 @@ QUANTUM_PROFILES = {
         "allow_root_cmds": False,  # заблокировано в защитном режиме
     },
     "Unstable": {
-        "window":     4,
+        "window": 4,
         "memory_use": False,
         "creativity": 0.5,
         "description": "Нестабильное состояние — минимальный контекст",
@@ -48,7 +52,7 @@ QUANTUM_PROFILES = {
         "allow_root_cmds": False,
     },
     "All-Seeing": {
-        "window":     20,
+        "window": 20,
         "memory_use": True,
         "creativity": 0.7,
         "description": "Полный доступ к памяти, максимальный контекст",
@@ -56,7 +60,7 @@ QUANTUM_PROFILES = {
         "allow_root_cmds": True,
     },
     "System": {
-        "window":     5,
+        "window": 5,
         "memory_use": False,
         "creativity": 0.0,
         "description": "Системные команды — без диалога",
@@ -72,16 +76,16 @@ class SemanticLayer:
     Не требует тяжёлых зависимостей — работает на чистом Python."""
 
     def __init__(self, max_docs: int = 200):
-        self._docs: list[dict] = []   # {"text": str, "role": str, "ts": float}
-        self._max  = max_docs
+        self._docs: list[dict] = []  # {"text": str, "role": str, "ts": float}
+        self._max = max_docs
 
     def add(self, text: str, role: str = "user"):
         self._docs.append({"text": text, "role": role, "ts": time.time()})
         if len(self._docs) > self._max:
-            self._docs = self._docs[-self._max:]
+            self._docs = self._docs[-self._max :]
 
     def _tokenize(self, text: str) -> list:
-        return re.findall(r'\b\w+\b', text.lower())
+        return re.findall(r"\b\w+\b", text.lower())
 
     def _tfidf_score(self, query_tokens: list, doc_text: str) -> float:
         doc_tokens = self._tokenize(doc_text)
@@ -91,19 +95,19 @@ class SemanticLayer:
         for t in doc_tokens:
             tf[t] = tf.get(t, 0) + 1
         n_docs = len(self._docs) + 1
-        score  = 0.0
+        score = 0.0
         for t in set(query_tokens):
-            tf_val  = tf.get(t, 0) / len(doc_tokens)
-            df      = sum(1 for d in self._docs if t in self._tokenize(d["text"]))
-            idf     = math.log((n_docs + 1) / (df + 1)) + 1
-            score  += tf_val * idf
+            tf_val = tf.get(t, 0) / len(doc_tokens)
+            df = sum(1 for d in self._docs if t in self._tokenize(d["text"]))
+            idf = math.log((n_docs + 1) / (df + 1)) + 1
+            score += tf_val * idf
         return score
 
     def search(self, query: str, top_k: int = 3) -> list[dict]:
         if not self._docs or not query:
             return []
         q_tokens = self._tokenize(query)
-        scored   = [(self._tfidf_score(q_tokens, d["text"]), d) for d in self._docs]
+        scored = [(self._tfidf_score(q_tokens, d["text"]), d) for d in self._docs]
         scored.sort(key=lambda x: -x[0])
         return [d for score, d in scored[:top_k] if score > 0.1]
 
@@ -114,15 +118,17 @@ class SemanticLayer:
         lines = ["Похожие прошлые фрагменты разговора:"]
         for d in results:
             icon = "👤" if d["role"] == "user" else "👁️"
-            ago  = _ago(d["ts"])
+            ago = _ago(d["ts"])
             lines.append(f"  {icon} ({ago}): {d['text'][:100]}")
         return "\n".join(lines)
 
 
 def _ago(ts: float) -> str:
     s = int(time.time() - ts)
-    if s < 60: return f"{s}с назад"
-    if s < 3600: return f"{s//60}м назад"
+    if s < 60:
+        return f"{s}с назад"
+    if s < 3600:
+        return f"{s//60}м назад"
     return f"{s//3600}ч назад"
 
 
@@ -130,15 +136,15 @@ def _ago(ts: float) -> str:
 class DialogContext:
     def __init__(self, max_turns: int = 10, quantum_state: str = "Analytic"):
         self._quantum_state = quantum_state
-        self._profile       = QUANTUM_PROFILES.get(quantum_state, QUANTUM_PROFILES["Analytic"])
-        self._window        = self._profile["window"]
+        self._profile = QUANTUM_PROFILES.get(quantum_state, QUANTUM_PROFILES["Analytic"])
+        self._window = self._profile["window"]
         # Уровень 1: локальный буфер
-        self._local  = deque(maxlen=self._window * 2)
+        self._local = deque(maxlen=self._window * 2)
         # Уровень 3: семантика
         self._semantic = SemanticLayer()
         # Разделённые контексты
-        self._chat_buf    = deque(maxlen=20)   # диалог
-        self._command_buf = deque(maxlen=10)   # команды
+        self._chat_buf = deque(maxlen=20)  # диалог
+        self._command_buf = deque(maxlen=10)  # команды
         # Внешняя память (уровень 2 — ссылка на ArgosMemory)
         self.memory_ref = None
 
@@ -147,13 +153,13 @@ class DialogContext:
         profile = QUANTUM_PROFILES.get(state)
         if not profile:
             return
-        old_state     = self._quantum_state
+        old_state = self._quantum_state
         self._quantum_state = state
         self._profile = profile
-        new_window    = profile["window"]
+        new_window = profile["window"]
         if new_window != self._window:
             self._window = new_window
-            self._local  = deque(list(self._local)[-new_window*2:], maxlen=new_window*2)
+            self._local = deque(list(self._local)[-new_window * 2 :], maxlen=new_window * 2)
         log.debug("Квантовый профиль: %s → %s (окно=%d)", old_state, state, new_window)
 
     @property
@@ -205,7 +211,7 @@ class DialogContext:
         local_msgs = [m for m in self._local if not m["cmd"]]
         if local_msgs:
             lines = ["Текущий диалог:"]
-            for m in local_msgs[-self._window:]:
+            for m in local_msgs[-self._window :]:
                 icon = "👤" if m["role"] == "user" else "👁️"
                 lines.append(f"  {icon}: {m['text'][:150]}")
             parts.append("\n".join(lines))
@@ -229,14 +235,16 @@ class DialogContext:
 
     def summary(self) -> str:
         prof = self._profile
-        return (f"💬 КОНТЕКСТ ДИАЛОГА:\n"
-                f"  Состояние:     {self._quantum_state} — {prof['description']}\n"
-                f"  Окно:          {len(self._local)}/{self._window*2} сообщений\n"
-                f"  Команд:        {len(self._command_buf)}\n"
-                f"  Семант. индекс:{len(self._semantic._docs)} фрагментов\n"
-                f"  Допуск root:   {'✅' if self.allow_root else '🚫'}\n"
-                f"  Память:        {'✅' if prof['memory_use'] else '—'}\n"
-                f"  Креативность:  {int(self.creativity*100)}%")
+        return (
+            f"💬 КОНТЕКСТ ДИАЛОГА:\n"
+            f"  Состояние:     {self._quantum_state} — {prof['description']}\n"
+            f"  Окно:          {len(self._local)}/{self._window*2} сообщений\n"
+            f"  Команд:        {len(self._command_buf)}\n"
+            f"  Семант. индекс:{len(self._semantic._docs)} фрагментов\n"
+            f"  Допуск root:   {'✅' if self.allow_root else '🚫'}\n"
+            f"  Память:        {'✅' if prof['memory_use'] else '—'}\n"
+            f"  Креативность:  {int(self.creativity*100)}%"
+        )
 
     def get_command_history(self, n: int = 5) -> str:
         cmds = list(self._command_buf)[-n:]

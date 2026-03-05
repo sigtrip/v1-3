@@ -2,17 +2,23 @@
 observability.py — Observability Layer Аргоса
   JSON-структурированные логи + метрики + трейсинг спанов.
   Унифицированный слой наблюдаемости поверх argos_logger.py.
-  
+
   Паттерн: каждое действие — span с duration, tags, статусом.
 """
-import time, json, os, threading, contextlib
-from collections import defaultdict, deque
-from src.argos_logger import get_logger
-from src.event_bus import get_bus, Events
 
-log    = get_logger("argos.obs")
-_bus   = get_bus()
-_lock  = threading.Lock()
+import contextlib
+import json
+import os
+import threading
+import time
+from collections import defaultdict, deque
+
+from src.argos_logger import get_logger
+from src.event_bus import Events, get_bus
+
+log = get_logger("argos.obs")
+_bus = get_bus()
+_lock = threading.Lock()
 _acceptance_events = deque(maxlen=3000)
 
 # JSON-лог
@@ -22,8 +28,8 @@ os.makedirs("logs", exist_ok=True)
 
 # ── МЕТРИКИ ───────────────────────────────────────────────
 class Metrics:
-    _counters  : dict = defaultdict(int)
-    _gauges    : dict = defaultdict(float)
+    _counters: dict = defaultdict(int)
+    _gauges: dict = defaultdict(float)
     _histograms: dict = defaultdict(list)
 
     @classmethod
@@ -51,13 +57,16 @@ class Metrics:
             if vals:
                 s = sorted(vals)
                 hist_summary[k] = {
-                    "count": len(s), "min": s[0], "max": s[-1],
-                    "avg": sum(s)/len(s),
-                    "p50": s[len(s)//2], "p95": s[int(len(s)*.95)],
+                    "count": len(s),
+                    "min": s[0],
+                    "max": s[-1],
+                    "avg": sum(s) / len(s),
+                    "p50": s[len(s) // 2],
+                    "p95": s[int(len(s) * 0.95)],
                 }
         return {
             "counters": dict(cls._counters),
-            "gauges":   dict(cls._gauges),
+            "gauges": dict(cls._gauges),
             "histograms": hist_summary,
         }
 
@@ -90,12 +99,12 @@ def _tag_key(name: str, tags: dict = None) -> str:
 # ── ТРЕЙСИНГ СПАНОВ ───────────────────────────────────────
 class Span:
     def __init__(self, name: str, tags: dict = None):
-        self.name     = name
-        self.tags     = tags or {}
-        self._start   = time.perf_counter()
+        self.name = name
+        self.tags = tags or {}
+        self._start = time.perf_counter()
         self._start_t = time.time()
-        self.status   = "ok"
-        self.error    = None
+        self.status = "ok"
+        self.error = None
 
     def set_tag(self, key: str, value):
         self.tags[key] = value
@@ -103,23 +112,23 @@ class Span:
     def finish(self, status: str = "ok", error: str = None):
         elapsed_ms = (time.perf_counter() - self._start) * 1000
         self.status = status
-        self.error  = error
+        self.error = error
         Metrics.observe("span.duration_ms", elapsed_ms, {"name": self.name})
         Metrics.inc("span.count", tags={"name": self.name, "status": status})
         record = {
-            "type":  "span",
-            "name":  self.name,
-            "tags":  self.tags,
-            "ms":    round(elapsed_ms, 2),
+            "type": "span",
+            "name": self.name,
+            "tags": self.tags,
+            "ms": round(elapsed_ms, 2),
             "status": status,
-            "ts":    self._start_t,
+            "ts": self._start_t,
             "error": error,
         }
         _write_json(record)
         if status == "error":
             log.error("SPAN %-25s %6.1fms [%s] %s", self.name, elapsed_ms, status, error or "")
         else:
-            log.debug("SPAN %-25s %6.1fms [%s]",    self.name, elapsed_ms, status)
+            log.debug("SPAN %-25s %6.1fms [%s]", self.name, elapsed_ms, status)
         return elapsed_ms
 
     def __enter__(self):
@@ -147,6 +156,7 @@ def trace(name: str, tags: dict = None):
 # ── JSON СТРУКТУРИРОВАННЫЙ ЛОГ ────────────────────────────
 _jsonl_lock = threading.Lock()
 
+
 def _write_json(record: dict):
     try:
         with _jsonl_lock:
@@ -158,8 +168,7 @@ def _write_json(record: dict):
 
 def log_event(event_type: str, data: dict, source: str = "argos"):
     """Записать произвольное структурированное событие."""
-    record = {"type": event_type, "source": source,
-              "ts": time.time(), **data}
+    record = {"type": event_type, "source": source, "ts": time.time(), **data}
     _write_json(record)
     Metrics.inc(f"event.{event_type}")
     _bus.emit(f"obs.{event_type}", data, source)
@@ -168,8 +177,7 @@ def log_event(event_type: str, data: dict, source: str = "argos"):
 def log_iot(device: str, metric: str, value, unit: str = ""):
     """Удобная запись IoT-данных."""
     Metrics.gauge(f"iot.{device}.{metric}", float(value) if isinstance(value, (int, float)) else 0)
-    log_event("iot_reading", {"device": device, "metric": metric,
-                               "value": value, "unit": unit})
+    log_event("iot_reading", {"device": device, "metric": metric, "value": value, "unit": unit})
 
 
 def log_intent(text: str, intent: str, state: str, ms: float):
@@ -209,11 +217,14 @@ def record_acceptance(accepted: bool, drafter: str, verifier: str, similarity: f
         _acceptance_events.append(row)
 
     snap = get_acceptance_snapshot(window=120)
-    Metrics.inc("consensus.acceptance", tags={
-        "result": "accepted" if ok else "rejected",
-        "drafter": row[2],
-        "verifier": row[3],
-    })
+    Metrics.inc(
+        "consensus.acceptance",
+        tags={
+            "result": "accepted" if ok else "rejected",
+            "drafter": row[2],
+            "verifier": row[3],
+        },
+    )
     Metrics.gauge("consensus.acceptance_rate", float(snap.get("rate", 1.0)))
     Metrics.gauge("consensus.acceptance_samples", float(snap.get("samples", 0)))
 
@@ -222,15 +233,19 @@ def record_acceptance(accepted: bool, drafter: str, verifier: str, similarity: f
     Metrics.gauge(f"drafter.acceptance_rate.{row[2]}", float(drafter_snap.get("rate", 1.0)))
     Metrics.gauge(f"drafter.avg_similarity.{row[2]}", float(drafter_snap.get("avg_similarity", 1.0)))
 
-    log_event("consensus_acceptance", {
-        "accepted": ok,
-        "drafter": row[2],
-        "verifier": row[3],
-        "similarity": sim,
-        "acceptance_rate": snap.get("rate", 1.0),
-        "drafter_rate": drafter_snap.get("rate", 1.0),
-        "samples": snap.get("samples", 0),
-    }, source="consensus")
+    log_event(
+        "consensus_acceptance",
+        {
+            "accepted": ok,
+            "drafter": row[2],
+            "verifier": row[3],
+            "similarity": sim,
+            "acceptance_rate": snap.get("rate", 1.0),
+            "drafter_rate": drafter_snap.get("rate", 1.0),
+            "samples": snap.get("samples", 0),
+        },
+        source="consensus",
+    )
 
 
 def get_drafter_acceptance(drafter: str, window: int = 120) -> dict:
@@ -239,8 +254,7 @@ def get_drafter_acceptance(drafter: str, window: int = 120) -> dict:
     horizon = max(10, int(window))
     drafter_norm = (drafter or "unknown")[:40]
     with _lock:
-        rows = [r for r in _acceptance_events
-                if (now - r[0]) <= horizon and r[2] == drafter_norm]
+        rows = [r for r in _acceptance_events if (now - r[0]) <= horizon and r[2] == drafter_norm]
     samples = len(rows)
     accepted = sum(1 for r in rows if r[1])
     rate = (accepted / samples) if samples > 0 else 1.0
@@ -288,10 +302,7 @@ def drafter_quality_report(window: int = 300) -> str:
             delta = late_sim - early_sim
             trend = f" trend={'📈' if delta > 0.02 else '📉' if delta < -0.02 else '➡️'}{delta:+.3f}"
         status = "✅" if rate >= 0.7 else "⚠️" if rate >= 0.5 else "❌"
-        lines.append(
-            f"  {status} {name}: rate={rate*100:.0f}% ({accepted}/{count}) "
-            f"sim={avg_sim:.3f}{trend}"
-        )
+        lines.append(f"  {status} {name}: rate={rate*100:.0f}% ({accepted}/{count}) " f"sim={avg_sim:.3f}{trend}")
 
     # Global summary
     total = len(rows)
@@ -324,8 +335,8 @@ def tail_json(n: int = 20, event_type: str = None) -> str:
             return "Нет записей."
         out = [f"📋 ПОСЛЕДНИЕ {len(records)} ЗАПИСЕЙ ({JSON_LOG}):"]
         for r in reversed(records):
-            ts   = time.strftime("%H:%M:%S", time.localtime(r.get("ts", 0)))
-            rtype = r.get("type","?")
+            ts = time.strftime("%H:%M:%S", time.localtime(r.get("ts", 0)))
+            rtype = r.get("type", "?")
             out.append(f"  [{ts}] {rtype}: {_format_record(r)}")
         return "\n".join(out)
     except Exception as e:
@@ -339,7 +350,7 @@ def _format_record(r: dict) -> str:
         return f"{r['device']}.{r['metric']}={r['value']}{r.get('unit','')}"
     if r.get("type") == "intent":
         return f"\"{r.get('text','')[:40]}\" → {r.get('intent','?')}"
-    return str({k: v for k, v in r.items() if k not in ("type","ts","source")})[:80]
+    return str({k: v for k, v in r.items() if k not in ("type", "ts", "source")})[:80]
 
 
 # README alias

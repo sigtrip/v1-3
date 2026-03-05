@@ -5,8 +5,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from src.connectivity.bluetooth_scanner import ArgosBluetoothScanner, DeviceType as BTDeviceType
 import src.connectivity.iot_bridge as iot_bridge_module
+from src.connectivity.bluetooth_scanner import ArgosBluetoothScanner
+from src.connectivity.bluetooth_scanner import DeviceType as BTDeviceType
 from src.connectivity.iot_bridge import (
     IoTBridge,
     IoTRegistry,

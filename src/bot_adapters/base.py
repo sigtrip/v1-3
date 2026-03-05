@@ -1,7 +1,9 @@
 """
 Базовый адаптер для каналов (Telegram, Web, Discord, ...)
 """
+
 from abc import ABC, abstractmethod
+
 
 class BotAdapter(ABC):
     def __init__(self, config=None):
@@ -28,7 +30,7 @@ class BotAdapter(ABC):
 
     def process_middlewares(self, update):
         """Пропустить update через middleware-цепочку (если есть)."""
-        if hasattr(self, 'middleware') and self.middleware:
+        if hasattr(self, "middleware") and self.middleware:
             for mw in self.middleware:
                 update = mw(update)
         return update

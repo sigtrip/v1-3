@@ -2,6 +2,7 @@
 fastapi_dashboard.py — современный dashboard Аргоса на FastAPI.
 Если FastAPI/uvicorn недоступны, core автоматически использует legacy dashboard.
 """
+
 import hashlib
 import json
 import os
@@ -34,10 +35,10 @@ class FastAPIDashboard:
 
     def start(self) -> str:
         try:
-            from fastapi import FastAPI, Request, Response
-            from fastapi.responses import HTMLResponse, JSONResponse
             import psutil
             import uvicorn
+            from fastapi import FastAPI, Request, Response
+            from fastapi.responses import HTMLResponse, JSONResponse
         except Exception as e:
             return f"❌ FastAPI Dashboard: {e}"
 
@@ -78,7 +79,7 @@ class FastAPIDashboard:
             uptime = f"{h}ч {m}мин"
             cpu = psutil.cpu_percent(interval=None)
             ram = psutil.virtual_memory().percent
-            disk = psutil.disk_usage('/').percent
+            disk = psutil.disk_usage("/").percent
             state = self.core.quantum.generate_state()["name"] if self.core else "Offline"
             voice = bool(self.core.voice_on) if self.core else False
             p2p_nodes = len(self.core.p2p.registry.all()) if self.core and self.core.p2p else 0
@@ -135,7 +136,9 @@ class FastAPIDashboard:
             if inm and self._log_etag and inm == self._log_etag:
                 return Response(status_code=304, headers={"ETag": self._log_etag, "Cache-Control": "no-cache"})
 
-            return JSONResponse({"lines": self._log_cache}, headers={"ETag": self._log_etag, "Cache-Control": "no-cache"})
+            return JSONResponse(
+                {"lines": self._log_cache}, headers={"ETag": self._log_etag, "Cache-Control": "no-cache"}
+            )
 
         @app.get("/api/dashboard")
         async def dashboard(request: Request):

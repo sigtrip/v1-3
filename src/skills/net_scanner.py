@@ -2,19 +2,21 @@
 net_scanner.py — Сетевой Призрак (NetGhost)
   Сканирование локальной сети, обнаружение новых устройств
 """
+
+import json
+import os
+import platform
 import socket
 import subprocess
-import platform
-import os
-import json
 import threading
 import time
 
 KNOWN_DEVICES_FILE = "config/known_devices.json"
 
+
 class NetGhost:
     def __init__(self):
-        self.known    = self._load_known()
+        self.known = self._load_known()
         self._running = False
 
     def _load_known(self) -> set:
@@ -45,12 +47,11 @@ class NetGhost:
             subnet = ".".join(local.split(".")[:3])
 
         active = []
-        flag   = "-n" if platform.system() == "Windows" else "-c"
+        flag = "-n" if platform.system() == "Windows" else "-c"
 
         def _ping(ip):
             r = subprocess.run(
-                ["ping", flag, "1", "-W", "300", ip],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                ["ping", flag, "1", "-W", "300", ip], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
             )
             if r.returncode == 0:
                 active.append(ip)
@@ -68,7 +69,7 @@ class NetGhost:
     def scan(self) -> str:
         """Полное сканирование с детектом новых устройств."""
         current = set(self.ping_scan())
-        new     = current - self.known
+        new = current - self.known
 
         result = [f"📡 Активных устройств: {len(current)}"]
 
@@ -110,10 +111,12 @@ class NetGhost:
     def start_patrol(self, interval_hours: int = 24):
         """Периодическое патрулирование сети."""
         self._running = True
+
         def _loop():
             while self._running:
                 report = self.scan()
                 print(f"[NET-GHOST PATROL]:\n{report}")
                 time.sleep(interval_hours * 3600)
+
         threading.Thread(target=_loop, daemon=True).start()
         return f"Сетевой Призрак на патруле. Интервал: {interval_hours}ч."

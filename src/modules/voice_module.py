@@ -6,11 +6,23 @@ class VoiceModule(BaseModule):
     title = "Voice"
 
     def can_handle(self, text: str, lowered: str) -> bool:
-        return any(k in lowered for k in [
-            "голос вкл", "включи голос", "голос включи", "voice on", "voice_on",
-            "голос выкл", "выключи голос", "голос отключи", "voice off", "voice_off",
-            "включи wake word", "wake word вкл"
-        ])
+        return any(
+            k in lowered
+            for k in [
+                "голос вкл",
+                "включи голос",
+                "голос включи",
+                "voice on",
+                "voice_on",
+                "голос выкл",
+                "выключи голос",
+                "голос отключи",
+                "voice off",
+                "voice_off",
+                "включи wake word",
+                "wake word вкл",
+            ]
+        )
 
     def handle(self, text: str, lowered: str, admin=None, flasher=None) -> str | None:
         if not self.core:

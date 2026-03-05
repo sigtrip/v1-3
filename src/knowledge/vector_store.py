@@ -153,12 +153,14 @@ class ArgosVectorStore:
                 for i, text in enumerate(docs):
                     dist = dists[i] if i < len(dists) else None
                     score = 1.0 / (1.0 + float(dist)) if dist is not None else 0.0
-                    out.append({
-                        "id": ids[i] if i < len(ids) else "",
-                        "text": text,
-                        "metadata": metas[i] if i < len(metas) else {},
-                        "score": score,
-                    })
+                    out.append(
+                        {
+                            "id": ids[i] if i < len(ids) else "",
+                            "text": text,
+                            "metadata": metas[i] if i < len(metas) else {},
+                            "score": score,
+                        }
+                    )
                 return out
             except Exception as e:
                 log.warning("Vector search fallback: %s", e)

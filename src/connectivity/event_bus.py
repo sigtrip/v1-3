@@ -3,53 +3,56 @@ event_bus.py — Централизованная шина событий Арг
   Все подсистемы публикуют события → подписчики реагируют асинхронно.
   Архитектура publish/subscribe с фильтрацией по типу и приоритету.
 """
+
+import json
 import threading
 import time
-import json
-from queue import Queue, PriorityQueue
-from typing import Callable, Any
 from dataclasses import dataclass, field
+from queue import PriorityQueue, Queue
+from typing import Any, Callable
+
 from src.argos_logger import get_logger
 
 log = get_logger("argos.events")
 
+
 # ── ТИПЫ СОБЫТИЙ ──────────────────────────────────────────
 class EventType:
     # Система
-    SYSTEM_START     = "system.start"
-    SYSTEM_STOP      = "system.stop"
-    SYSTEM_ALERT     = "system.alert"
-    SYSTEM_METRIC    = "system.metric"
+    SYSTEM_START = "system.start"
+    SYSTEM_STOP = "system.stop"
+    SYSTEM_ALERT = "system.alert"
+    SYSTEM_METRIC = "system.metric"
     # Устройства IoT
-    SENSOR_UPDATE    = "sensor.update"
-    DEVICE_ONLINE    = "device.online"
-    DEVICE_OFFLINE   = "device.offline"
-    DEVICE_CMD       = "device.command"
+    SENSOR_UPDATE = "sensor.update"
+    DEVICE_ONLINE = "device.online"
+    DEVICE_OFFLINE = "device.offline"
+    DEVICE_CMD = "device.command"
     # Сеть
-    NODE_JOIN        = "p2p.node.join"
-    NODE_LEAVE       = "p2p.node.leave"
-    SKILL_SYNC       = "p2p.skill.sync"
+    NODE_JOIN = "p2p.node.join"
+    NODE_LEAVE = "p2p.node.leave"
+    SKILL_SYNC = "p2p.skill.sync"
     # Умные системы
-    SMART_TRIGGER    = "smart.trigger"
-    SMART_RULE_FIRE  = "smart.rule.fire"
-    SMART_ALERT      = "smart.alert"
+    SMART_TRIGGER = "smart.trigger"
+    SMART_RULE_FIRE = "smart.rule.fire"
+    SMART_ALERT = "smart.alert"
     # Диалог
-    USER_INPUT       = "dialog.user_input"
-    ARGOS_RESPONSE   = "dialog.argos_response"
-    AGENT_STEP       = "agent.step"
-    AGENT_DONE       = "agent.done"
+    USER_INPUT = "dialog.user_input"
+    ARGOS_RESPONSE = "dialog.argos_response"
+    AGENT_STEP = "agent.step"
+    AGENT_DONE = "agent.done"
     # Mesh
-    MESH_PACKET      = "mesh.packet"
-    MESH_NODE_FOUND  = "mesh.node.found"
+    MESH_PACKET = "mesh.packet"
+    MESH_NODE_FOUND = "mesh.node.found"
 
 
 @dataclass(order=True)
 class Event:
     priority: int
-    type:     str      = field(compare=False)
-    payload:  Any      = field(compare=False, default=None)
-    source:   str      = field(compare=False, default="system")
-    ts:       float    = field(compare=False, default_factory=time.time)
+    type: str = field(compare=False)
+    payload: Any = field(compare=False, default=None)
+    source: str = field(compare=False, default="system")
+    ts: float = field(compare=False, default_factory=time.time)
 
     @property
     def data(self):
@@ -68,18 +71,26 @@ class Event:
         return default
 
     def to_json(self) -> str:
-        return json.dumps({
-            "type":    self.type,
-            "source":  self.source,
-            "ts":      self.ts,
-            "payload": self.payload if isinstance(self.payload, (dict, list, str, int, float, bool, type(None))) else str(self.payload),
-        }, ensure_ascii=False)
+        return json.dumps(
+            {
+                "type": self.type,
+                "source": self.source,
+                "ts": self.ts,
+                "payload": (
+                    self.payload
+                    if isinstance(self.payload, (dict, list, str, int, float, bool, type(None)))
+                    else str(self.payload)
+                ),
+            },
+            ensure_ascii=False,
+        )
 
 
 class EventBus:
     """Глобальная шина событий. Singleton."""
+
     _instance = None
-    _lock     = threading.Lock()
+    _lock = threading.Lock()
 
     def __new__(cls):
         with cls._lock:
@@ -91,11 +102,11 @@ class EventBus:
     def _init(self):
         self._subscribers: dict[str, list[Callable]] = {}
         self._wildcard: list[Callable] = []
-        self._queue   = PriorityQueue()
+        self._queue = PriorityQueue()
         self._history = []
         self._max_history = 500
         self._running = False
-        self._thread  = None
+        self._thread = None
         self.start()
 
     # ── ПОДПИСКА ──────────────────────────────────────────
@@ -111,15 +122,11 @@ class EventBus:
 
     def unsubscribe(self, event_type: str, callback: Callable):
         if event_type in self._subscribers:
-            self._subscribers[event_type] = [
-                c for c in self._subscribers[event_type] if c != callback
-            ]
+            self._subscribers[event_type] = [c for c in self._subscribers[event_type] if c != callback]
 
     # ── ПУБЛИКАЦИЯ ────────────────────────────────────────
-    def publish(self, event_type: str, payload: Any = None,
-                source: str = "system", priority: int = 5):
-        ev = Event(priority=priority, type=event_type,
-                   payload=payload, source=source)
+    def publish(self, event_type: str, payload: Any = None, source: str = "system", priority: int = 5):
+        ev = Event(priority=priority, type=event_type, payload=payload, source=source)
         self._queue.put(ev)
 
     def publish_urgent(self, event_type: str, payload: Any = None, source: str = "system"):
@@ -128,7 +135,7 @@ class EventBus:
     # ── ОБРАБОТКА ─────────────────────────────────────────
     def start(self):
         self._running = True
-        self._thread  = threading.Thread(target=self._dispatch_loop, daemon=True)
+        self._thread = threading.Thread(target=self._dispatch_loop, daemon=True)
         self._thread.start()
 
     def stop(self):
@@ -167,7 +174,7 @@ class EventBus:
             return "📭 История событий пуста."
         lines = [f"📡 СОБЫТИЯ (последние {limit}):"]
         for ev in reversed(events):
-            t  = time.strftime("%H:%M:%S", time.localtime(ev.ts))
+            t = time.strftime("%H:%M:%S", time.localtime(ev.ts))
             pl = str(ev.payload)[:50] if ev.payload else ""
             lines.append(f"  [{t}] {ev.type:30s} ← {ev.source:15s} {pl}")
         return "\n".join(lines)

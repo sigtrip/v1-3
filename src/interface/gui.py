@@ -1,15 +1,17 @@
-import customtkinter as ctk
 import threading
+
+import customtkinter as ctk
+
 
 class ArgosGUI(ctk.CTk):
     def __init__(self, core, admin, flasher, location):
         super().__init__()
-        self.core    = core
-        self.admin   = admin
+        self.core = core
+        self.admin = admin
         self.flasher = flasher
         self._listening = False
         self.dialog_history = []  # История диалогов
-        self.last_commands = []   # Последние команды
+        self.last_commands = []  # Последние команды
 
         self.title("ARGOS UNIVERSAL OS")
         self.geometry("1100x700")
@@ -22,9 +24,18 @@ class ArgosGUI(ctk.CTk):
         self.speaker_index = 0
         try:
             import pyaudio
+
             pa = pyaudio.PyAudio()
-            mic_list = [f"{i}: {pa.get_device_info_by_index(i)['name']}" for i in range(pa.get_device_count()) if pa.get_device_info_by_index(i).get('maxInputChannels', 0) > 0]
-            speaker_list = [f"{i}: {pa.get_device_info_by_index(i)['name']}" for i in range(pa.get_device_count()) if pa.get_device_info_by_index(i).get('maxOutputChannels', 0) > 0]
+            mic_list = [
+                f"{i}: {pa.get_device_info_by_index(i)['name']}"
+                for i in range(pa.get_device_count())
+                if pa.get_device_info_by_index(i).get("maxInputChannels", 0) > 0
+            ]
+            speaker_list = [
+                f"{i}: {pa.get_device_info_by_index(i)['name']}"
+                for i in range(pa.get_device_count())
+                if pa.get_device_info_by_index(i).get("maxOutputChannels", 0) > 0
+            ]
         except Exception:
             mic_list = ["0: Default"]
             speaker_list = ["0: Default"]
@@ -33,14 +44,18 @@ class ArgosGUI(ctk.CTk):
         self.sidebar.pack(side="left", fill="y", padx=10, pady=10)
         self.sidebar.pack_propagate(False)
 
-        ctk.CTkLabel(self.sidebar, text="🎤 Микрофон", font=("Consolas", 11), text_color="#bbbbbb").pack(pady=(8,2))
+        ctk.CTkLabel(self.sidebar, text="🎤 Микрофон", font=("Consolas", 11), text_color="#bbbbbb").pack(pady=(8, 2))
         self.mic_var = ctk.StringVar(value=mic_list[0] if mic_list else "0: Default")
-        self.mic_menu = ctk.CTkOptionMenu(self.sidebar, values=mic_list, variable=self.mic_var, command=self._on_mic_changed)
+        self.mic_menu = ctk.CTkOptionMenu(
+            self.sidebar, values=mic_list, variable=self.mic_var, command=self._on_mic_changed
+        )
         self.mic_menu.pack(fill="x", padx=10, pady=3)
 
-        ctk.CTkLabel(self.sidebar, text="🔈 Динамик", font=("Consolas", 11), text_color="#bbbbbb").pack(pady=(8,2))
+        ctk.CTkLabel(self.sidebar, text="🔈 Динамик", font=("Consolas", 11), text_color="#bbbbbb").pack(pady=(8, 2))
         self.speaker_var = ctk.StringVar(value=speaker_list[0] if speaker_list else "0: Default")
-        self.speaker_menu = ctk.CTkOptionMenu(self.sidebar, values=speaker_list, variable=self.speaker_var, command=self._on_speaker_changed)
+        self.speaker_menu = ctk.CTkOptionMenu(
+            self.sidebar, values=speaker_list, variable=self.speaker_var, command=self._on_speaker_changed
+        )
         self.speaker_menu.pack(fill="x", padx=10, pady=3)
 
     def _on_mic_changed(self, selected):
@@ -56,20 +71,23 @@ class ArgosGUI(ctk.CTk):
         self.sidebar.pack(side="left", fill="y", padx=10, pady=10)
         self.sidebar.pack_propagate(False)
 
-        ctk.CTkLabel(self.sidebar, text="👁️ ARGOS OS",
-                     font=("Consolas", 20, "bold"), text_color="#00FFFF").pack(pady=16)
+        ctk.CTkLabel(self.sidebar, text="👁️ ARGOS OS", font=("Consolas", 20, "bold"), text_color="#00FFFF").pack(
+            pady=16
+        )
 
-        loc_val = getattr(self, 'location', None)
+        loc_val = getattr(self, "location", None)
         loc_text = f"📍 {loc_val}" if loc_val is not None else "📍 Неизвестно"
-        ctk.CTkLabel(self.sidebar, text=loc_text,
-                 wraplength=230, justify="left", font=("Consolas", 11)).pack(pady=4)
+        ctk.CTkLabel(self.sidebar, text=loc_text, wraplength=230, justify="left", font=("Consolas", 11)).pack(pady=4)
 
-        self.q_label = ctk.CTkLabel(self.sidebar, text="⚛ Состояние: —",
-                                    text_color="#00FF88", font=("Consolas", 12))
+        self.q_label = ctk.CTkLabel(self.sidebar, text="⚛ Состояние: —", text_color="#00FF88", font=("Consolas", 12))
         self.q_label.pack(pady=6)
 
-        self.voice_label = ctk.CTkLabel(self.sidebar, text=f"🔊 Голос: {'ВКЛ' if self.core.voice_on else 'ВЫКЛ'}",
-                                        text_color="#88FF00", font=("Consolas", 11))
+        self.voice_label = ctk.CTkLabel(
+            self.sidebar,
+            text=f"🔊 Голос: {'ВКЛ' if self.core.voice_on else 'ВЫКЛ'}",
+            text_color="#88FF00",
+            font=("Consolas", 11),
+        )
         self.voice_label.pack(pady=2)
 
         self.voice_toggle_btn = ctk.CTkButton(
@@ -80,8 +98,7 @@ class ArgosGUI(ctk.CTk):
         )
         self.voice_toggle_btn.pack(fill="x", padx=10, pady=4)
 
-        ctk.CTkLabel(self.sidebar, text="🤖 Модель ИИ",
-                     font=("Consolas", 11), text_color="#bbbbbb").pack(pady=(8, 2))
+        ctk.CTkLabel(self.sidebar, text="🤖 Модель ИИ", font=("Consolas", 11), text_color="#bbbbbb").pack(pady=(8, 2))
         self.ai_mode_var = ctk.StringVar(value=self._ai_mode_to_ui(self.core.ai_mode))
         self.ai_mode_menu = ctk.CTkOptionMenu(
             self.sidebar,
@@ -121,7 +138,7 @@ class ArgosGUI(ctk.CTk):
         if not text or not text.strip():
             return
         self.entry.delete(0, "end")
-        state = self.core.quantum.generate_state()['name'][:3].upper()
+        state = self.core.quantum.generate_state()["name"][:3].upper()
         self._append(f"[{state}] ВСЕВОЛОД: {text}\n", "#5599ff")
         self._add_to_history(f"[{state}] ВСЕВОЛОД: {text}")
         self._add_command(text)
@@ -138,9 +155,8 @@ class ArgosGUI(ctk.CTk):
         # Голос — уже вызывается внутри core.process_logic через self.say()
         v = "ВКЛ" if self.core.voice_on else "ВЫКЛ"
         self.voice_label.configure(text=f"🔊 Голос: {v}")
-        self.voice_toggle_btn.configure(
-            text=("🔇 Отключить голос" if self.core.voice_on else "🔊 Включить голос")
-        )
+        self.voice_toggle_btn.configure(text=("🔇 Отключить голос" if self.core.voice_on else "🔊 Включить голос"))
+
     def _add_to_history(self, text: str):
         self.dialog_history.append(text)
         if len(self.dialog_history) > 50:
@@ -174,9 +190,7 @@ class ArgosGUI(ctk.CTk):
         self.core.voice_on = not self.core.voice_on
         v = "ВКЛ" if self.core.voice_on else "ВЫКЛ"
         self.voice_label.configure(text=f"🔊 Голос: {v}")
-        self.voice_toggle_btn.configure(
-            text=("🔇 Отключить голос" if self.core.voice_on else "🔊 Включить голос")
-        )
+        self.voice_toggle_btn.configure(text=("🔇 Отключить голос" if self.core.voice_on else "🔊 Включить голос"))
         self._append(f"🔈 Голосовой режим: {v}\n", "#88ff88")
 
     def _ai_mode_to_ui(self, mode: str) -> str:
@@ -241,8 +255,7 @@ class ArgosGUI(ctk.CTk):
 
     def _prompt_create_firmware(self):
         dlg = ctk.CTkInputDialog(
-            text="Формат: id шаблон [порт]\nПример: gw1 esp32_lora /dev/ttyUSB0",
-            title="Создай прошивку"
+            text="Формат: id шаблон [порт]\nПример: gw1 esp32_lora /dev/ttyUSB0", title="Создай прошивку"
         )
         args = (dlg.get_input() or "").strip()
         if args:

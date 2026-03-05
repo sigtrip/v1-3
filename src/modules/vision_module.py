@@ -6,7 +6,16 @@ class VisionModule(BaseModule):
     title = "Vision"
 
     def can_handle(self, text: str, lowered: str) -> bool:
-        keys = ["посмотри на экран", "что на экране", "скриншот", "посмотри в камеру", "что видит камера", "включи камеру", "проанализируй изображение", "анализ фото"]
+        keys = [
+            "посмотри на экран",
+            "что на экране",
+            "скриншот",
+            "посмотри в камеру",
+            "что видит камера",
+            "включи камеру",
+            "проанализируй изображение",
+            "анализ фото",
+        ]
         return any(k in lowered for k in keys)
 
     def handle(self, text: str, lowered: str, admin=None, flasher=None) -> str | None:
@@ -14,11 +23,19 @@ class VisionModule(BaseModule):
             return None
 
         if any(k in lowered for k in ["посмотри на экран", "что на экране", "скриншот"]):
-            question = text.replace("аргос", "").replace("посмотри на экран", "").replace("что на экране", "").replace("скриншот", "").strip()
+            question = (
+                text.replace("аргос", "")
+                .replace("посмотри на экран", "")
+                .replace("что на экране", "")
+                .replace("скриншот", "")
+                .strip()
+            )
             return self.core.vision.look_at_screen(question or "Что происходит на экране?")
 
         if any(k in lowered for k in ["посмотри в камеру", "что видит камера", "включи камеру"]):
-            question = text.replace("аргос", "").replace("посмотри в камеру", "").replace("что видит камера", "").strip()
+            question = (
+                text.replace("аргос", "").replace("посмотри в камеру", "").replace("что видит камера", "").strip()
+            )
             return self.core.vision.look_through_camera(question or "Что ты видишь?")
 
         if "проанализируй изображение" in lowered or "анализ фото" in lowered:

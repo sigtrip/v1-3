@@ -2,79 +2,83 @@
 event_bus.py — Шина событий Аргоса
   Все подсистемы публикуют и подписываются на события.
   Async-first, thread-safe, с историей и replay.
-  
+
   Использование:
     bus = get_bus()
     bus.subscribe("sensor.cpu_high", handler)
     bus.publish("sensor.cpu_high", {"value": 92.5})
 """
-import threading
-import time
+
 import json
 import queue
+import threading
+import time
 from collections import defaultdict, deque
-from typing import Callable, Any
+from typing import Any, Callable
+
 from src.argos_logger import get_logger
 
 log = get_logger("argos.eventbus")
 
+
 # Категории событий
 class Events:
     # Система
-    SYSTEM_BOOT       = "system.boot"
-    SYSTEM_SHUTDOWN   = "system.shutdown"
-    SYSTEM_ERROR      = "system.error"
+    SYSTEM_BOOT = "system.boot"
+    SYSTEM_SHUTDOWN = "system.shutdown"
+    SYSTEM_ERROR = "system.error"
     # Сенсоры
-    SENSOR_CPU_HIGH   = "sensor.cpu_high"
-    SENSOR_RAM_HIGH   = "sensor.ram_high"
-    SENSOR_DISK_HIGH  = "sensor.disk_high"
-    SENSOR_TEMP_HIGH  = "sensor.temp_high"
-    SENSOR_UPDATE     = "sensor.update"
+    SENSOR_CPU_HIGH = "sensor.cpu_high"
+    SENSOR_RAM_HIGH = "sensor.ram_high"
+    SENSOR_DISK_HIGH = "sensor.disk_high"
+    SENSOR_TEMP_HIGH = "sensor.temp_high"
+    SENSOR_UPDATE = "sensor.update"
     # IoT
-    IOT_DEVICE_FOUND  = "iot.device_found"
-    IOT_DEVICE_LOST   = "iot.device_lost"
+    IOT_DEVICE_FOUND = "iot.device_found"
+    IOT_DEVICE_LOST = "iot.device_lost"
     IOT_VALUE_CHANGED = "iot.value_changed"
-    IOT_ALERT         = "iot.alert"
-    IOT_COMMAND       = "iot.command"
+    IOT_ALERT = "iot.alert"
+    IOT_COMMAND = "iot.command"
     # P2P
-    P2P_NODE_JOINED   = "p2p.node_joined"
-    P2P_NODE_LEFT     = "p2p.node_left"
-    P2P_SKILL_SYNCED  = "p2p.skill_synced"
-    P2P_TASK_ROUTED   = "p2p.task_routed"
+    P2P_NODE_JOINED = "p2p.node_joined"
+    P2P_NODE_LEFT = "p2p.node_left"
+    P2P_SKILL_SYNCED = "p2p.skill_synced"
+    P2P_TASK_ROUTED = "p2p.task_routed"
     # ИИ
-    AI_QUERY          = "ai.query"
-    AI_RESPONSE       = "ai.response"
-    AI_INTENT         = "ai.intent"
+    AI_QUERY = "ai.query"
+    AI_RESPONSE = "ai.response"
+    AI_INTENT = "ai.intent"
     # Диалог
-    DIALOG_USER       = "dialog.user"
-    DIALOG_ARGOS      = "dialog.argos"
-    DIALOG_WAKE_WORD  = "dialog.wake_word"
+    DIALOG_USER = "dialog.user"
+    DIALOG_ARGOS = "dialog.argos"
+    DIALOG_WAKE_WORD = "dialog.wake_word"
     # Алерты
-    ALERT_FIRED       = "alert.fired"
-    ALERT_CLEARED     = "alert.cleared"
+    ALERT_FIRED = "alert.fired"
+    ALERT_CLEARED = "alert.cleared"
     # Навыки
-    SKILL_LOADED      = "skill.loaded"
-    SKILL_EXECUTED    = "skill.executed"
-    SKILL_ERROR       = "skill.error"
-    SKILL_UPDATED     = "skill.updated"
+    SKILL_LOADED = "skill.loaded"
+    SKILL_EXECUTED = "skill.executed"
+    SKILL_ERROR = "skill.error"
+    SKILL_UPDATED = "skill.updated"
     # DAG
-    DAG_STARTED       = "dag.started"
-    DAG_NODE_DONE     = "dag.node_done"
-    DAG_COMPLETED     = "dag.completed"
-    DAG_FAILED        = "dag.failed"
+    DAG_STARTED = "dag.started"
+    DAG_NODE_DONE = "dag.node_done"
+    DAG_COMPLETED = "dag.completed"
+    DAG_FAILED = "dag.failed"
     # Smart environments
-    ENV_TEMP_CHANGED  = "env.temp_changed"
-    ENV_HUMIDITY      = "env.humidity_changed"
+    ENV_TEMP_CHANGED = "env.temp_changed"
+    ENV_HUMIDITY = "env.humidity_changed"
     ENV_LIGHT_CHANGED = "env.light_changed"
-    ENV_ALERT         = "env.alert"
+    ENV_ALERT = "env.alert"
 
 
 class Event:
     __slots__ = ("topic", "data", "ts", "source")
+
     def __init__(self, topic: str, data: Any = None, source: str = "core"):
-        self.topic  = topic
-        self.data   = data
-        self.ts     = time.time()
+        self.topic = topic
+        self.data = data
+        self.ts = time.time()
         self.source = source
 
     @property
@@ -102,8 +106,7 @@ class Event:
         return isinstance(self.data, dict) and key in self.data
 
     def to_dict(self) -> dict:
-        return {"topic": self.topic, "data": self.data,
-                "ts": self.ts, "source": self.source}
+        return {"topic": self.topic, "data": self.data, "ts": self.ts, "source": self.source}
 
     def __repr__(self):
         return f"Event({self.topic}, src={self.source})"
@@ -112,18 +115,17 @@ class Event:
 class EventBus:
     def __init__(self, history_size: int = 500):
         self._handlers: dict[str, list[Callable]] = defaultdict(list)
-        self._wildcard: list[Callable] = []          # подписчики на "*"
-        self._history  = deque(maxlen=history_size)
-        self._lock     = threading.Lock()
-        self._async_q  = queue.Queue()
-        self._running  = True
-        self._worker   = threading.Thread(target=self._dispatch_worker, daemon=True)
+        self._wildcard: list[Callable] = []  # подписчики на "*"
+        self._history = deque(maxlen=history_size)
+        self._lock = threading.Lock()
+        self._async_q = queue.Queue()
+        self._running = True
+        self._worker = threading.Thread(target=self._dispatch_worker, daemon=True)
         self._worker.start()
         log.info("EventBus запущен (history=%d)", history_size)
 
     # ── ПУБЛИКАЦИЯ ────────────────────────────────────────
-    def publish(self, topic: str, data: Any = None,
-                source: str = "core", sync: bool = False):
+    def publish(self, topic: str, data: Any = None, source: str = "core", sync: bool = False):
         ev = Event(topic, data, source)
         with self._lock:
             self._history.append(ev)
@@ -154,9 +156,11 @@ class EventBus:
 
     def on(self, topic: str):
         """Декоратор: @bus.on('sensor.cpu_high')"""
+
         def decorator(fn: Callable):
             self.subscribe(topic, fn)
             return fn
+
         return decorator
 
     # ── DISPATCH ──────────────────────────────────────────
@@ -204,11 +208,13 @@ class EventBus:
 
     def stats(self) -> str:
         topics = set(e.topic for e in self._history)
-        return (f"📡 EVENT BUS:\n"
-                f"  История: {len(self._history)} событий\n"
-                f"  Топиков: {len(topics)}\n"
-                f"  Подписчиков: {sum(len(v) for v in self._handlers.values())}\n"
-                f"  Очередь: {self._async_q.qsize()}")
+        return (
+            f"📡 EVENT BUS:\n"
+            f"  История: {len(self._history)} событий\n"
+            f"  Топиков: {len(topics)}\n"
+            f"  Подписчиков: {sum(len(v) for v in self._handlers.values())}\n"
+            f"  Очередь: {self._async_q.qsize()}"
+        )
 
     def stop(self):
         self._running = False
@@ -216,6 +222,7 @@ class EventBus:
 
 # Синглтон
 _bus: EventBus | None = None
+
 
 def get_bus() -> EventBus:
     global _bus

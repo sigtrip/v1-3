@@ -2,11 +2,14 @@
 spatial.py — Геолокация и IP-разведка
   Определяет местоположение, сохраняет в БД, строит историю маршрутов.
 """
-import requests
+
 import socket
 
+import requests
+
+
 class SpatialAwareness:
-    API_PRIMARY  = "http://ip-api.com/json/"
+    API_PRIMARY = "http://ip-api.com/json/"
     API_FALLBACK = "https://ipinfo.io/json"
 
     def __init__(self, db=None):
@@ -23,13 +26,13 @@ class SpatialAwareness:
         try:
             resp = requests.get(self.API_PRIMARY, timeout=5)
             data = resp.json()
-            if data.get('status') == 'fail':
+            if data.get("status") == "fail":
                 raise ValueError("Primary API failed")
 
-            city    = data.get('city',    'Unknown')
-            country = data.get('country', 'Unknown')
-            isp     = data.get('isp',     'Unknown')
-            ip      = data.get('query',   self.get_public_ip())
+            city = data.get("city", "Unknown")
+            country = data.get("country", "Unknown")
+            isp = data.get("isp", "Unknown")
+            ip = data.get("query", self.get_public_ip())
 
             if self.db:
                 self.db.log_geo(city, country, isp, ip)
@@ -42,10 +45,10 @@ class SpatialAwareness:
         # Fallback: ipinfo.io
         try:
             data = requests.get(self.API_FALLBACK, timeout=5).json()
-            city    = data.get('city',    'Unknown')
-            country = data.get('country', 'Unknown')
-            org     = data.get('org',     'Unknown')
-            ip      = data.get('ip',      'unknown')
+            city = data.get("city", "Unknown")
+            country = data.get("country", "Unknown")
+            org = data.get("org", "Unknown")
+            ip = data.get("ip", "unknown")
             return f"{city}, {country} | {org} | {ip}"
         except Exception:
             return "Координаты не определены (Offline)."
@@ -53,7 +56,7 @@ class SpatialAwareness:
     def get_full_report(self) -> str:
         try:
             data = requests.get(self.API_PRIMARY, timeout=5).json()
-            if data.get('status') == 'success':
+            if data.get("status") == "success":
                 return (
                     f"📍 ГЕОЛОКАЦИЯ:\n"
                     f"  IP:       {data.get('query')}\n"

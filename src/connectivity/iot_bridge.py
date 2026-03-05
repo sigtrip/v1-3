@@ -6,13 +6,20 @@ iot_bridge.py — IoT-мост Аргоса
   Аргос — оператор умных систем: дом, теплица, гараж, погреб,
   инкубатор, аквариум, террариум.
 """
-import json, os, time, threading, socket, struct
-import logging
-import sqlite3
+
 import importlib.util
+import json
+import logging
+import os
+import socket
+import sqlite3
+import struct
+import threading
+import time
 from collections import defaultdict
+
 from src.argos_logger import get_logger
-from src.event_bus import get_bus, Events
+from src.event_bus import Events, get_bus
 from src.observability import log_iot, trace
 
 log = get_logger("argos.iot")
@@ -21,6 +28,7 @@ bus = get_bus()
 
 try:
     from pymodbus.client import ModbusSerialClient, ModbusTcpClient
+
     MODBUS_OK = True
 except ImportError:
     MODBUS_OK = False
@@ -57,43 +65,44 @@ IOT_DB_PATH = "data/argos.db"
 
 
 class IoTDevice:
-    def __init__(self, device_id: str, dtype: str, protocol: str,
-                 address: str = "", name: str = ""):
-        self.id       = device_id
-        self.type     = dtype       # sensor | actuator | gateway
-        self.protocol = protocol    # zigbee | lora | mesh | mqtt | modbus
-        self.address  = address
-        self.name     = name or device_id
-        self.state    : dict = {}
+    def __init__(self, device_id: str, dtype: str, protocol: str, address: str = "", name: str = ""):
+        self.id = device_id
+        self.type = dtype  # sensor | actuator | gateway
+        self.protocol = protocol  # zigbee | lora | mesh | mqtt | modbus
+        self.address = address
+        self.name = name or device_id
+        self.state: dict = {}
         self.last_seen: float = 0
-        self.online   : bool  = False
+        self.online: bool = False
 
     def to_dict(self) -> dict:
         return {
-            "id": self.id, "type": self.type, "protocol": self.protocol,
-            "address": self.address, "name": self.name,
-            "state": self.state, "last_seen": self.last_seen, "online": self.online,
+            "id": self.id,
+            "type": self.type,
+            "protocol": self.protocol,
+            "address": self.address,
+            "name": self.name,
+            "state": self.state,
+            "last_seen": self.last_seen,
+            "online": self.online,
         }
 
     @classmethod
     def from_dict(cls, d: dict) -> "IoTDevice":
-        dev = cls(d["id"], d["type"], d["protocol"],
-                  d.get("address",""), d.get("name",""))
-        dev.state     = d.get("state", {})
+        dev = cls(d["id"], d["type"], d["protocol"], d.get("address", ""), d.get("name", ""))
+        dev.state = d.get("state", {})
         dev.last_seen = d.get("last_seen", 0)
-        dev.online    = d.get("online", False)
+        dev.online = d.get("online", False)
         return dev
 
     def update(self, key: str, value):
         old = self.state.get(key)
-        self.state[key]  = value
-        self.last_seen   = time.time()
-        self.online      = True
+        self.state[key] = value
+        self.last_seen = time.time()
+        self.online = True
         log_iot(self.id, key, value)
         if old != value:
-            bus.emit(Events.IOT_VALUE_CHANGED,
-                     {"device": self.id, "key": key, "old": old, "new": value},
-                     "iot_bridge")
+            bus.emit(Events.IOT_VALUE_CHANGED, {"device": self.id, "key": key, "old": old, "new": value}, "iot_bridge")
 
 
 class IoTRegistry:
@@ -116,8 +125,7 @@ class IoTRegistry:
     def save(self):
         try:
             data = [d.to_dict() for d in self._devices.values()]
-            json.dump(data, open(DEVICES_FILE, "w", encoding="utf-8"),
-                      indent=2, ensure_ascii=False)
+            json.dump(data, open(DEVICES_FILE, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
         except Exception as e:
             log.error("IoT save error: %s", e)
 
@@ -149,18 +157,22 @@ class IoTRegistry:
             lines.append(f"\n  [{proto.upper()}]")
             for d in devs:
                 status = "🟢" if d.online else "🔴"
-                ago    = _ago(d.last_seen)
-                state  = ", ".join(f"{k}={v}" for k, v in list(d.state.items())[:3])
+                ago = _ago(d.last_seen)
+                state = ", ".join(f"{k}={v}" for k, v in list(d.state.items())[:3])
                 lines.append(f"    {status} {d.name} [{d.type}] {ago}")
-                if state: lines.append(f"       {state}")
+                if state:
+                    lines.append(f"       {state}")
         return "\n".join(lines)
 
 
 def _ago(ts: float) -> str:
-    if not ts: return "никогда"
+    if not ts:
+        return "никогда"
     s = int(time.time() - ts)
-    if s < 60:   return f"{s}с назад"
-    if s < 3600: return f"{s//60}м назад"
+    if s < 60:
+        return f"{s}с назад"
+    if s < 3600:
+        return f"{s//60}м назад"
     return f"{s//3600}ч назад"
 
 
@@ -168,16 +180,18 @@ def _ago(ts: float) -> str:
 # ПРОТОКОЛЫ
 # ══════════════════════════════════════════════════════════
 
+
 class ZigbeeAdapter:
     """Адаптер Zigbee через zigbee2mqtt (MQTT) или zigpy."""
+
     def __init__(self, registry: IoTRegistry):
         self.registry = registry
-        self._mqtt    = None
+        self._mqtt = None
 
-    def connect_mqtt(self, host: str = "localhost",
-                     port: int = 1883, topic: str = "zigbee2mqtt/#") -> str:
+    def connect_mqtt(self, host: str = "localhost", port: int = 1883, topic: str = "zigbee2mqtt/#") -> str:
         try:
             import paho.mqtt.client as mqtt
+
             client = mqtt.Client()
             client.on_message = self._on_mqtt_message
             client.connect(host, port, 60)
@@ -193,8 +207,8 @@ class ZigbeeAdapter:
 
     def _on_mqtt_message(self, client, userdata, msg):
         try:
-            topic  = msg.topic.replace("zigbee2mqtt/", "")
-            data   = json.loads(msg.payload.decode())
+            topic = msg.topic.replace("zigbee2mqtt/", "")
+            data = json.loads(msg.payload.decode())
             dev_id = f"zb_{topic.replace('/','_')}"
             dev = self.registry.get(dev_id)
             if not dev:
@@ -218,18 +232,19 @@ class ZigbeeAdapter:
 
 class LoRaAdapter:
     """Адаптер LoRa через UART (AT-команды) или pyserial."""
+
     def __init__(self, registry: IoTRegistry):
         self.registry = registry
-        self._serial  = None
-        self._port    = None
+        self._serial = None
+        self._port = None
         self._running = False
 
-    def connect(self, port: str = "/dev/ttyUSB0",
-                baud: int = 9600, freq: float = 433.0) -> str:
+    def connect(self, port: str = "/dev/ttyUSB0", baud: int = 9600, freq: float = 433.0) -> str:
         try:
             import serial
+
             self._serial = serial.Serial(port, baud, timeout=2)
-            self._port   = port
+            self._port = port
             # Инициализация LoRa модема AT-командами
             self._serial.write(b"AT+RESET\r\n")
             time.sleep(1)
@@ -294,10 +309,11 @@ class LoRaAdapter:
 
 class MeshAdapter:
     """UDP Mesh сеть (ESP-NOW совместимый протокол через Wi-Fi)."""
+
     def __init__(self, registry: IoTRegistry, port: int = 9876):
         self.registry = registry
-        self.port     = port
-        self._sock    = None
+        self.port = port
+        self._sock = None
         self._running = False
 
     def start(self) -> str:
@@ -328,8 +344,7 @@ class MeshAdapter:
             dev_id = f"mesh_{pkt.get('id', ip.replace('.','_'))}"
             dev = self.registry.get(dev_id)
             if not dev:
-                dev = IoTDevice(dev_id, pkt.get("type","sensor"),
-                               "mesh", ip, pkt.get("name", dev_id))
+                dev = IoTDevice(dev_id, pkt.get("type", "sensor"), "mesh", ip, pkt.get("name", dev_id))
                 self.registry.register(dev)
             for k, v in pkt.get("data", {}).items():
                 dev.update(k, v)
@@ -352,17 +367,19 @@ class MeshAdapter:
 
 class MQTTBroker:
     """Обёртка над paho-mqtt для общего MQTT брокера."""
+
     def __init__(self, registry: IoTRegistry):
-        self.registry    = registry
-        self._client     = None
-        self._callbacks  = {}
+        self.registry = registry
+        self._client = None
+        self._callbacks = {}
 
     def connect(self, host: str = "localhost", port: int = 1883) -> str:
         try:
             import paho.mqtt.client as mqtt
+
             self._client = mqtt.Client()
-            self._client.on_message  = self._on_message
-            self._client.on_connect  = lambda c, u, f, rc: log.info("MQTT connected rc=%d", rc)
+            self._client.on_message = self._on_message
+            self._client.on_connect = lambda c, u, f, rc: log.info("MQTT connected rc=%d", rc)
             self._client.connect(host, port, 60)
             self._client.loop_start()
             return f"✅ MQTT брокер: {host}:{port}"
@@ -388,10 +405,12 @@ class MQTTBroker:
 
     def _on_message(self, client, userdata, msg):
         topic = msg.topic
-        cb    = self._callbacks.get(topic)
+        cb = self._callbacks.get(topic)
         if cb:
-            try: cb(msg.topic, msg.payload)
-            except Exception as e: log.error("MQTT cb: %s", e)
+            try:
+                cb(msg.topic, msg.payload)
+            except Exception as e:
+                log.error("MQTT cb: %s", e)
 
 
 class ModbusAdapter:
@@ -403,9 +422,15 @@ class ModbusAdapter:
         self._mode = None
         self._endpoint = None
 
-    def connect_serial(self, port: str = "/dev/ttyUSB0", baudrate: int = 9600,
-                       parity: str = "N", stopbits: int = 1, bytesize: int = 8,
-                       timeout: float = 2.0) -> str:
+    def connect_serial(
+        self,
+        port: str = "/dev/ttyUSB0",
+        baudrate: int = 9600,
+        parity: str = "N",
+        stopbits: int = 1,
+        bytesize: int = 8,
+        timeout: float = 2.0,
+    ) -> str:
         if not MODBUS_OK:
             return "❌ Modbus: установи pip install pymodbus"
 
@@ -434,8 +459,7 @@ class ModbusAdapter:
         """Совместимость с командами core: подключи modbus [port] [baud]."""
         return self.connect_serial(port=port, baudrate=baudrate)
 
-    def connect_tcp(self, host: str = "127.0.0.1", port: int = 502,
-                    timeout: float = 2.0) -> str:
+    def connect_tcp(self, host: str = "127.0.0.1", port: int = 502, timeout: float = 2.0) -> str:
         if not MODBUS_OK:
             return "❌ Modbus: установи pip install pymodbus"
 
@@ -547,10 +571,10 @@ class TasmotaDiscoveryBridge:
         except Exception as e:
             log.warning("TasmotaDiscovery DB init error: %s", e)
 
-    def connect(self, host: str = "localhost", port: int = 1883,
-                topic: str = "homeassistant/#") -> str:
+    def connect(self, host: str = "localhost", port: int = 1883, topic: str = "homeassistant/#") -> str:
         try:
             import paho.mqtt.client as mqtt
+
             self._client = mqtt.Client()
             self._client.on_connect = self._on_connect
             self._client.on_message = self._on_message
@@ -683,7 +707,8 @@ class TasmotaDiscoveryBridge:
         ts = time.time()
         try:
             conn = sqlite3.connect(self.db_path)
-            conn.execute("""
+            conn.execute(
+                """
                 INSERT INTO iot_devices (
                     device_id, name, protocol, dtype, address,
                     source_topic, component, payload_json, first_seen, last_seen
@@ -697,18 +722,20 @@ class TasmotaDiscoveryBridge:
                     component=excluded.component,
                     payload_json=excluded.payload_json,
                     last_seen=excluded.last_seen
-            """, (
-                dev.id,
-                dev.name,
-                dev.protocol,
-                dev.type,
-                dev.address,
-                source_topic,
-                component,
-                json.dumps(payload, ensure_ascii=False),
-                ts,
-                ts,
-            ))
+            """,
+                (
+                    dev.id,
+                    dev.name,
+                    dev.protocol,
+                    dev.type,
+                    dev.address,
+                    source_topic,
+                    component,
+                    json.dumps(payload, ensure_ascii=False),
+                    ts,
+                    ts,
+                ),
+            )
             conn.commit()
             conn.close()
         except Exception as e:
@@ -722,21 +749,26 @@ class TasmotaDiscoveryBridge:
 # ГЛАВНЫЙ КЛАСС IoTBridge
 # ══════════════════════════════════════════════════════════
 
+
 class IoTBridge:
     def __init__(self):
         self.registry = IoTRegistry()
-        self.zigbee   = ZigbeeAdapter(self.registry)
-        self.lora     = LoRaAdapter(self.registry)
-        self.mesh     = MeshAdapter(self.registry)
-        self.mqtt     = MQTTBroker(self.registry)
-        self.modbus   = ModbusAdapter(self.registry)
-        self.tasmota  = TasmotaDiscoveryBridge(self.registry)
+        self.zigbee = ZigbeeAdapter(self.registry)
+        self.lora = LoRaAdapter(self.registry)
+        self.mesh = MeshAdapter(self.registry)
+        self.mqtt = MQTTBroker(self.registry)
+        self.modbus = ModbusAdapter(self.registry)
+        self.tasmota = TasmotaDiscoveryBridge(self.registry)
         self._init_tasmota_discovery()
         log.info("IoTBridge инициализирован. Устройств: %d", len(self.registry.all()))
 
     def _init_tasmota_discovery(self):
         enabled = (os.getenv("ARGOS_TASMOTA_DISCOVERY", "on") or "on").strip().lower() not in {
-            "0", "off", "false", "no", "нет"
+            "0",
+            "off",
+            "false",
+            "no",
+            "нет",
         }
         if not enabled:
             log.info("Tasmota Discovery: OFF")
@@ -780,8 +812,7 @@ class IoTBridge:
     def connect_tasmota_discovery(self, host="localhost", port=1883, topic="homeassistant/#") -> str:
         return self.tasmota.connect(host, port, topic)
 
-    def register_device(self, dev_id: str, dtype: str, protocol: str,
-                        address: str = "", name: str = "") -> str:
+    def register_device(self, dev_id: str, dtype: str, protocol: str, address: str = "", name: str = "") -> str:
         dev = IoTDevice(dev_id, dtype, protocol, address, name)
         return self.registry.register(dev)
 
@@ -790,10 +821,11 @@ class IoTBridge:
         raw = "".join(ch for ch in str(value or "") if ch.isalnum()).upper()
         if len(raw) != 12:
             return str(value or "").strip().upper()
-        return ":".join(raw[i:i + 2] for i in range(0, 12, 2))
+        return ":".join(raw[i : i + 2] for i in range(0, 12, 2))
 
-    def register_gateway(self, dev_id: str, protocol: str = "zigbee",
-                         ip: str = "", mac: str = "", name: str = "") -> str:
+    def register_gateway(
+        self, dev_id: str, protocol: str = "zigbee", ip: str = "", mac: str = "", name: str = ""
+    ) -> str:
         gateway_id = (dev_id or "").strip() or f"gw_{int(time.time())}"
         normalized_mac = self._normalize_mac(mac) if mac else ""
         address = (ip or normalized_mac or "").strip()
@@ -838,6 +870,7 @@ class IoTBridge:
 
     def capability_report(self) -> str:
         """Показывает фактические возможности IoT-стека на текущей ноде."""
+
         def has(mod: str) -> bool:
             try:
                 return importlib.util.find_spec(mod) is not None

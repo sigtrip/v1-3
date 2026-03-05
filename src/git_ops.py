@@ -2,9 +2,10 @@
 git_ops.py — Управление Git-операциями из Аргоса
   Безопасные операции status/add/commit/push через subprocess без shell=True.
 """
+
+import fnmatch
 import os
 import subprocess
-import fnmatch
 
 from src.argos_logger import get_logger
 
@@ -105,11 +106,7 @@ class ArgosGitOps:
 
         lines = short.splitlines()[:20]
         suffix = "\n..." if len(short.splitlines()) > 20 else ""
-        return (
-            f"🌿 Git status ({branch.strip() if code_branch == 0 else 'unknown'}):\n"
-            + "\n".join(lines)
-            + suffix
-        )
+        return f"🌿 Git status ({branch.strip() if code_branch == 0 else 'unknown'}):\n" + "\n".join(lines) + suffix
 
     def commit(self, message: str) -> str:
         if not self._is_repo():

@@ -4,13 +4,15 @@ p2p_transport.py — транспортный слой P2P (этап мигра�
 Расширенные транспорты: WireGuard, ZeroTier (UDP-tunnel overlay).
 ZKP-proof: подпись пакетов через ArgosZKPEngine (privacy-routing).
 """
+
 import importlib.util
 import json
 import os
 import socket
 import struct
 import subprocess
-from typing import Tuple, Optional
+from typing import Optional, Tuple
+
 from src.argos_logger import get_logger
 
 log = get_logger("argos.p2p.transport")
@@ -108,10 +110,7 @@ class WireGuardTransport(P2PTransportBase):
         if self._wg_ip:
             return self._wg_ip
         try:
-            result = subprocess.run(
-                ["ip", "-4", "addr", "show", self.iface],
-                capture_output=True, text=True, timeout=5
-            )
+            result = subprocess.run(["ip", "-4", "addr", "show", self.iface], capture_output=True, text=True, timeout=5)
             if result.returncode != 0:
                 return None
             for line in result.stdout.split("\n"):
@@ -162,24 +161,23 @@ class WireGuardTransport(P2PTransportBase):
         """Получает список пиров WireGuard через wg show."""
         peers = []
         try:
-            result = subprocess.run(
-                ["wg", "show", self.iface, "dump"],
-                capture_output=True, text=True, timeout=5
-            )
+            result = subprocess.run(["wg", "show", self.iface, "dump"], capture_output=True, text=True, timeout=5)
             if result.returncode != 0:
                 return peers
             lines = result.stdout.strip().split("\n")
             for line in lines[1:]:  # Пропускаем заголовок
                 parts = line.split("\t")
                 if len(parts) >= 4:
-                    peers.append({
-                        "public_key": parts[0],
-                        "endpoint": parts[2] if parts[2] != "(none)" else None,
-                        "allowed_ips": parts[3],
-                        "latest_handshake": int(parts[4]) if len(parts) > 4 else 0,
-                        "transfer_rx": int(parts[5]) if len(parts) > 5 else 0,
-                        "transfer_tx": int(parts[6]) if len(parts) > 6 else 0,
-                    })
+                    peers.append(
+                        {
+                            "public_key": parts[0],
+                            "endpoint": parts[2] if parts[2] != "(none)" else None,
+                            "allowed_ips": parts[3],
+                            "latest_handshake": int(parts[4]) if len(parts) > 4 else 0,
+                            "transfer_rx": int(parts[5]) if len(parts) > 5 else 0,
+                            "transfer_tx": int(parts[6]) if len(parts) > 6 else 0,
+                        }
+                    )
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
         return peers
@@ -213,10 +211,7 @@ class ZeroTierTransport(P2PTransportBase):
         if self._zt_ip:
             return self._zt_ip
         try:
-            result = subprocess.run(
-                ["zerotier-cli", "listnetworks", "-j"],
-                capture_output=True, text=True, timeout=5
-            )
+            result = subprocess.run(["zerotier-cli", "listnetworks", "-j"], capture_output=True, text=True, timeout=5)
             if result.returncode != 0:
                 return None
             networks = json.loads(result.stdout or "[]")
@@ -266,10 +261,7 @@ class ZeroTierTransport(P2PTransportBase):
     def get_peers(self) -> list[dict]:
         """Список пиров ZeroTier."""
         try:
-            result = subprocess.run(
-                ["zerotier-cli", "listpeers", "-j"],
-                capture_output=True, text=True, timeout=5
-            )
+            result = subprocess.run(["zerotier-cli", "listpeers", "-j"], capture_output=True, text=True, timeout=5)
             if result.returncode != 0:
                 return []
             return json.loads(result.stdout or "[]")
@@ -323,8 +315,7 @@ class TransportRegistry:
     def best(self) -> Optional[P2PTransportBase]:
         """Возвращает транспорт с наибольшим весом среди доступных."""
         available = [
-            (name, t) for name, t in self._transports.items()
-            if t.is_available() and self._weights.get(name, 0) > 0
+            (name, t) for name, t in self._transports.items() if t.is_available() and self._weights.get(name, 0) > 0
         ]
         if not available:
             return None
@@ -332,10 +323,7 @@ class TransportRegistry:
         return self._transports[best_name]
 
     def all_available(self) -> list[tuple[str, P2PTransportBase]]:
-        return [
-            (name, t) for name, t in self._transports.items()
-            if t.is_available()
-        ]
+        return [(name, t) for name, t in self._transports.items() if t.is_available()]
 
     def status(self) -> str:
         lines = ["📡 TRANSPORT REGISTRY:"]
@@ -372,6 +360,7 @@ class ZKPTransportWrapper(P2PTransportBase):
         """Подписывает запрос ZKP-proof если engine активен."""
         if self.zkp and self.zkp.enabled:
             import uuid as _uuid
+
             req_id = payload.get("request_id", str(_uuid.uuid4()))
             action = payload.get("action", "request")
             challenge = self.zkp.challenge(action, req_id)
@@ -383,6 +372,7 @@ class ZKPTransportWrapper(P2PTransportBase):
         """Подписывает payload ZKP-proof при отправке."""
         if self.zkp and self.zkp.enabled:
             from hashlib import sha256
+
             proof_bytes = sha256(payload + self.zkp.node_id.encode()).digest()
             payload = proof_bytes + payload
         self.inner.send(peer_id, payload)

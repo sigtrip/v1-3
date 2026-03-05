@@ -4,15 +4,17 @@ root_manager.py — Управление привилегиями суперпо
   Linux:   sudo / pkexec
   Android: su через Magisk/SuperSU
 """
+
 import os
 import platform
 import subprocess
 import sys
 
+
 class RootManager:
     def __init__(self):
-        self.os_type   = platform.system()
-        self.is_root   = self._check_root()
+        self.os_type = platform.system()
+        self.is_root = self._check_root()
         self.is_android = "ANDROID_ROOT" in os.environ
 
     def _check_root(self) -> bool:
@@ -20,6 +22,7 @@ class RootManager:
         if self.os_type == "Windows":
             try:
                 import ctypes
+
                 return ctypes.windll.shell32.IsUserAnAdmin() != 0
             except Exception:
                 return False
@@ -29,9 +32,11 @@ class RootManager:
     def status(self) -> str:
         if self.is_android:
             rooted = self._check_android_root()
-            return (f"📱 Android\n"
-                    f"  Root доступен: {'✅ ДА' if rooted else '❌ НЕТ'}\n"
-                    f"  {'Используй Magisk для root-доступа.' if not rooted else 'su команды доступны.'}")
+            return (
+                f"📱 Android\n"
+                f"  Root доступен: {'✅ ДА' if rooted else '❌ НЕТ'}\n"
+                f"  {'Используй Magisk для root-доступа.' if not rooted else 'su команды доступны.'}"
+            )
         if self.is_root:
             return f"✅ Права суперпользователя активны ({self.os_type})"
         return f"⚠️ Обычные права пользователя ({self.os_type}). Некоторые функции недоступны."
@@ -64,10 +69,9 @@ class RootManager:
         """UAC-запрос на Windows."""
         try:
             import ctypes
+
             script = os.path.abspath(sys.argv[0])
-            result = ctypes.windll.shell32.ShellExecuteW(
-                None, "runas", sys.executable, f'"{script}"', None, 1
-            )
+            result = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, f'"{script}"', None, 1)
             if result > 32:
                 return "✅ Запрос администратора отправлен. Подтверди в UAC-диалоге."
             return "❌ UAC запрос отклонён или уже запущен с правами."
@@ -79,10 +83,7 @@ class RootManager:
         script = os.path.abspath(sys.argv[0])
         # Пробуем pkexec (графический sudo)
         try:
-            result = subprocess.run(
-                ["pkexec", sys.executable, script] + sys.argv[1:],
-                timeout=5
-            )
+            result = subprocess.run(["pkexec", sys.executable, script] + sys.argv[1:], timeout=5)
             return "✅ Запуск через pkexec инициирован."
         except FileNotFoundError:
             pass
@@ -105,10 +106,7 @@ class RootManager:
                 "⚠️ Это аннулирует гарантию устройства."
             )
         try:
-            result = subprocess.run(
-                ["su", "-c", "id"],
-                capture_output=True, text=True, timeout=5
-            )
+            result = subprocess.run(["su", "-c", "id"], capture_output=True, text=True, timeout=5)
             if "uid=0" in result.stdout:
                 return "✅ ROOT доступ подтверждён. Аргос работает как суперпользователь."
             return "⚠️ su найден, но uid=0 не получен."
@@ -119,10 +117,7 @@ class RootManager:
         """Выполняет команду с правами суперпользователя."""
         if self.is_android:
             try:
-                result = subprocess.run(
-                    ["su", "-c", command],
-                    capture_output=True, text=True, timeout=15
-                )
+                result = subprocess.run(["su", "-c", command], capture_output=True, text=True, timeout=15)
                 return result.stdout or result.stderr or "Команда выполнена."
             except Exception as e:
                 return f"❌ su ошибка: {e}"
@@ -131,10 +126,7 @@ class RootManager:
             command = f"sudo {command}"
 
         try:
-            result = subprocess.check_output(
-                command, shell=True, stderr=subprocess.STDOUT,
-                text=True, timeout=30
-            )
+            result = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT, text=True, timeout=30)
             return result[:1000]
         except subprocess.CalledProcessError as e:
             return f"❌ Ошибка: {e.output[:500]}"

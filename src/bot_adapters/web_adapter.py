@@ -1,9 +1,11 @@
 """
 Web Bot Adapter (универсальный, для Argos)
 """
+
 from .base import BotAdapter
 from flask import Flask, request, jsonify
 import threading
+
 
 class WebAdapter(BotAdapter):
     def __init__(self, core, host="0.0.0.0", port=8080):

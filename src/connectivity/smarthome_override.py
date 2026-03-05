@@ -13,18 +13,19 @@ smarthome_override.py — SmartHome Override
 
     ⚠ ТОЛЬКО собственные устройства в собственной сети.
 """
+
+import hashlib
+import json
 import os
 import re
-import time
-import json
 import socket
 import struct
-import hashlib
 import threading
+import time
+from collections import deque
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
-from collections import deque
-from dataclasses import dataclass, field, asdict
 
 from src.argos_logger import get_logger
 
@@ -33,6 +34,7 @@ log = get_logger("argos.smarthome_override")
 # ── Graceful imports ─────────────────────────────────────
 try:
     import paho.mqtt.client as mqtt
+
     MQTT_OK = True
 except ImportError:
     mqtt = None
@@ -40,6 +42,7 @@ except ImportError:
 
 try:
     import serial as _serial
+
     SERIAL_OK = True
 except ImportError:
     _serial = None
@@ -65,6 +68,7 @@ class DeviceState(Enum):
 @dataclass
 class OverrideDevice:
     """Устройство, управляемое напрямую."""
+
     device_id: str
     friendly_name: str
     protocol: Protocol
@@ -88,16 +92,19 @@ class SmartHomeOverride:
     Принцип: подключается к zigbee2mqtt / zwavejs / local UDP
     и отправляет команды target-устройствам напрямую.
     """
+
     MAX_DEVICES = 256
     MAX_LOG = 500
     WATCHDOG_INTERVAL = 60  # сек
 
-    def __init__(self,
-                 mqtt_host: str = "localhost",
-                 mqtt_port: int = 1883,
-                 z2m_topic: str = "zigbee2mqtt",
-                 zwave_topic: str = "zwave",
-                 data_path: str = "data/smarthome_override.json"):
+    def __init__(
+        self,
+        mqtt_host: str = "localhost",
+        mqtt_port: int = 1883,
+        z2m_topic: str = "zigbee2mqtt",
+        zwave_topic: str = "zwave",
+        data_path: str = "data/smarthome_override.json",
+    ):
         self._mqtt_host = mqtt_host
         self._mqtt_port = mqtt_port
         self._z2m_topic = z2m_topic
@@ -174,9 +181,7 @@ class SmartHomeOverride:
             self._mqtt_client.loop_start()
             self._running = True
 
-            self._watchdog_thread = threading.Thread(
-                target=self._watchdog_loop, daemon=True, name="override-watchdog"
-            )
+            self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True, name="override-watchdog")
             self._watchdog_thread.start()
 
             self._log_event("start", "SmartHome Override запущен")
@@ -347,8 +352,7 @@ class SmartHomeOverride:
         return f"✅ MQTT raw → {topic}"
 
     # ── Регистрация устройств ────────────────────────────
-    def register_device(self, device_id: str, friendly_name: str,
-                        protocol: str = "zigbee", **kwargs) -> str:
+    def register_device(self, device_id: str, friendly_name: str, protocol: str = "zigbee", **kwargs) -> str:
         with self._lock:
             if device_id in self._devices:
                 return f"⚠ '{device_id}' уже зарегистрировано."
@@ -423,8 +427,7 @@ class SmartHomeOverride:
                         if dev.last_seen and (now - dev.last_seen) > 300:
                             if dev.state == DeviceState.LOCAL_READY:
                                 dev.state = DeviceState.CLOUD_ONLY
-                                self._log_event("cloud_drift",
-                                                f"{dev.friendly_name} → cloud_only (не виден >5мин)")
+                                self._log_event("cloud_drift", f"{dev.friendly_name} → cloud_only (не виден >5мин)")
                                 log.warning("Override watchdog: %s ушёл в cloud", dev.friendly_name)
             except Exception as e:
                 log.debug("Watchdog tick: %s", e)
@@ -447,14 +450,12 @@ class SmartHomeOverride:
     def get_local_devices(self) -> List[dict]:
         """Устройства в режиме LOCAL_READY."""
         with self._lock:
-            return [asdict(d) for d in self._devices.values()
-                    if d.state == DeviceState.LOCAL_READY]
+            return [asdict(d) for d in self._devices.values() if d.state == DeviceState.LOCAL_READY]
 
     def get_cloud_drift(self) -> List[dict]:
         """Устройства, ушедшие в cloud_only."""
         with self._lock:
-            return [asdict(d) for d in self._devices.values()
-                    if d.state == DeviceState.CLOUD_ONLY]
+            return [asdict(d) for d in self._devices.values() if d.state == DeviceState.CLOUD_ONLY]
 
     def get_firewall_rules(self) -> List[str]:
         return list(self._cloud_firewall_rules)
@@ -512,6 +513,7 @@ class SmartHomeOverride:
 
 # ── Singleton ────────────────────────────────────────────
 _instance: Optional[SmartHomeOverride] = None
+
 
 def get_smarthome_override(**kwargs) -> SmartHomeOverride:
     global _instance

@@ -4,12 +4,17 @@ dag_agent.py — DAG-агент Аргоса
   JSON-декларации DAG хранятся в config/dags/.
   P2P-синхронизация: DAG может распределяться по нодам сети.
 """
-import json, os, threading, time
+
+import json
+import os
+import threading
+import time
 from queue import Queue
-from typing import Callable, Any
+from typing import Any, Callable
+
 from src.argos_logger import get_logger
-from src.event_bus import get_bus, Events
-from src.observability import trace, Metrics
+from src.event_bus import Events, get_bus
+from src.observability import Metrics, trace
 
 log = get_logger("argos.dag")
 bus = get_bus()
@@ -21,34 +26,45 @@ os.makedirs(DAG_DIR, exist_ok=True)
 # ── ПРЕДУСТАНОВЛЕННЫЕ ФУНКЦИИ УЗЛОВ ───────────────────────
 BUILTIN_FUNCTIONS: dict[str, Callable] = {}
 
+
 def register(name: str):
     def decorator(fn: Callable):
         BUILTIN_FUNCTIONS[name] = fn
         return fn
+
     return decorator
+
 
 @register("status")
 def node_status(core, data):
     return core.sensors.get_full_report() if core else "no core"
 
+
 @register("crypto")
 def node_crypto(core, data):
     from src.skills.crypto_monitor import CryptoSentinel
+
     return CryptoSentinel().report()
+
 
 @register("scan_net")
 def node_scan_net(core, data):
     from src.skills.net_scanner import NetGhost
+
     return NetGhost().scan()
+
 
 @register("digest")
 def node_digest(core, data):
     from src.skills.content_gen import ContentGen
+
     return ContentGen().generate_digest()
+
 
 @register("replicate")
 def node_replicate(core, data):
     return core.replicator.create_replica() if core else "no core"
+
 
 @register("telegram_notify")
 def node_telegram(core, data):
@@ -58,6 +74,7 @@ def node_telegram(core, data):
     log.info("telegram_notify: %s", msg[:80])
     return f"Уведомление отправлено: {msg[:50]}..."
 
+
 @register("ai_query")
 def node_ai(core, data):
     """Запрос к ИИ с данными предыдущего узла как контекстом."""
@@ -65,6 +82,7 @@ def node_ai(core, data):
         return "no core"
     result = core.process_logic(str(data)[:500] if data else "статус", None, None)
     return result.get("answer", "")
+
 
 @register("save_file")
 def node_save(core, data):
@@ -77,13 +95,13 @@ def node_save(core, data):
 # ── ОСНОВНОЙ КЛАСС DAG ────────────────────────────────────
 class DAGAgent:
     def __init__(self, core=None):
-        self.core      = core
+        self.core = core
         self.nodes: dict[str, Callable] = {}
-        self.edges: dict[str, list]     = {}
-        self.results: dict[str, Any]    = {}
-        self.incoming: dict[str, int]   = {}
-        self._errors: dict[str, str]    = {}
-        self._dag_id  = None
+        self.edges: dict[str, list] = {}
+        self.results: dict[str, Any] = {}
+        self.incoming: dict[str, int] = {}
+        self._errors: dict[str, str] = {}
+        self._dag_id = None
 
     def add_node(self, node_id: str, func: Callable | str):
         """func может быть callable или строкой из BUILTIN_FUNCTIONS."""
@@ -108,16 +126,16 @@ class DAGAgent:
                     self.incoming[t] += 1
 
     def run(self, initial_input=None, dag_id: str = "unnamed") -> dict:
-        self._dag_id  = dag_id
-        self.results  = {}
-        self._errors  = {}
+        self._dag_id = dag_id
+        self.results = {}
+        self._errors = {}
         self._compute_incoming()
 
         bus.emit(Events.DAG_STARTED, {"dag_id": dag_id, "nodes": list(self.nodes.keys())}, "dag")
         log.info("DAG [%s] старт — %d узлов", dag_id, len(self.nodes))
 
-        q       = Queue()
-        q_lock  = threading.Lock()
+        q = Queue()
+        q_lock = threading.Lock()
         threads = []
 
         # Узлы без входящих зависимостей идут первыми
@@ -130,9 +148,9 @@ class DAGAgent:
                 try:
                     result = self.nodes[node_id](self.core, input_data)
                     self.results[node_id] = result
-                    bus.emit(Events.DAG_NODE_DONE,
-                             {"dag_id": dag_id, "node": node_id, "result": str(result)[:200]},
-                             "dag")
+                    bus.emit(
+                        Events.DAG_NODE_DONE, {"dag_id": dag_id, "node": node_id, "result": str(result)[:200]}, "dag"
+                    )
                     log.debug("DAG [%s] ✅ %s", dag_id, node_id)
                     # Разблокируем следующие узлы
                     with q_lock:
@@ -158,10 +176,11 @@ class DAGAgent:
             t.join(timeout=30)
 
         Metrics.inc("dag.runs", tags={"dag_id": dag_id})
-        ok  = len(self.results)
+        ok = len(self.results)
         err = len(self._errors)
-        bus.emit(Events.DAG_COMPLETED if not err else Events.DAG_FAILED,
-                 {"dag_id": dag_id, "ok": ok, "errors": err}, "dag")
+        bus.emit(
+            Events.DAG_COMPLETED if not err else Events.DAG_FAILED, {"dag_id": dag_id, "ok": ok, "errors": err}, "dag"
+        )
         log.info("DAG [%s] завершён: ✅%d / ❌%d", dag_id, ok, err)
         return {"results": self.results, "errors": self._errors, "dag_id": dag_id}
 
@@ -216,36 +235,36 @@ class DAGManager:
             "morning_routine": {
                 "description": "Утренний чекап системы",
                 "nodes": [
-                    {"id": "status",   "func": "status"},
-                    {"id": "crypto",   "func": "crypto"},
-                    {"id": "digest",   "func": "digest"},
-                    {"id": "notify",   "func": "telegram_notify"},
+                    {"id": "status", "func": "status"},
+                    {"id": "crypto", "func": "crypto"},
+                    {"id": "digest", "func": "digest"},
+                    {"id": "notify", "func": "telegram_notify"},
                 ],
                 "edges": [
                     {"from": "status", "to": "notify"},
                     {"from": "crypto", "to": "notify"},
                     {"from": "digest", "to": "notify"},
-                ]
+                ],
             },
             "security_scan": {
                 "description": "Сканирование безопасности",
                 "nodes": [
-                    {"id": "scan",     "func": "scan_net"},
-                    {"id": "save",     "func": "save_file"},
-                    {"id": "notify",   "func": "telegram_notify"},
+                    {"id": "scan", "func": "scan_net"},
+                    {"id": "save", "func": "save_file"},
+                    {"id": "notify", "func": "telegram_notify"},
                 ],
                 "edges": [
-                    {"from": "scan",   "to": "save"},
-                    {"from": "save",   "to": "notify"},
-                ]
+                    {"from": "scan", "to": "save"},
+                    {"from": "save", "to": "notify"},
+                ],
             },
             "backup_all": {
                 "description": "Полное резервное копирование",
                 "nodes": [
                     {"id": "replicate", "func": "replicate"},
-                    {"id": "notify",    "func": "telegram_notify"},
+                    {"id": "notify", "func": "telegram_notify"},
                 ],
-                "edges": [{"from": "replicate", "to": "notify"}]
+                "edges": [{"from": "replicate", "to": "notify"}],
             },
         }
         for name, spec in dags.items():
@@ -264,9 +283,14 @@ class DAGManager:
         """Аргос сам генерирует DAG из описания через ИИ."""
         # Парсим простые описания: "задача1 затем задача2 и параллельно задача3"
         FUNC_MAP = {
-            "статус": "status", "крипто": "crypto", "сканируй": "scan_net",
-            "дайджест": "digest", "репликация": "replicate", "сохрани": "save_file",
-            "уведоми": "telegram_notify", "запрос ии": "ai_query",
+            "статус": "status",
+            "крипто": "crypto",
+            "сканируй": "scan_net",
+            "дайджест": "digest",
+            "репликация": "replicate",
+            "сохрани": "save_file",
+            "уведоми": "telegram_notify",
+            "запрос ии": "ai_query",
         }
         t = text.lower()
         nodes, edges = [], []
@@ -284,10 +308,11 @@ class DAGManager:
                 edges.append({"from": f"step_{i-1}", "to": f"step_{i}"})
 
         import hashlib
+
         name = "dag_" + hashlib.md5(text.encode()).hexdigest()[:6]
         spec = {"description": text[:100], "nodes": nodes, "edges": edges}
         path = DAGAgent.save_spec(spec, name)
-        dag  = DAGAgent.from_json(spec, self.core)
+        dag = DAGAgent.from_json(spec, self.core)
         result = dag.run_report(dag_id=name)
         return f"🔷 DAG создан и выполнен:\n{result}"
 
@@ -301,7 +326,7 @@ class DAGManager:
                 path = os.path.join(DAG_DIR, f"{name}.json")
                 spec = json.load(open(path, encoding="utf-8"))
                 desc = spec.get("description", "")
-                n    = len(spec.get("nodes", []))
+                n = len(spec.get("nodes", []))
                 lines.append(f"  • {name} ({n} узлов) — {desc}")
             except Exception:
                 lines.append(f"  • {name}")

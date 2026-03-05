@@ -5,6 +5,7 @@ github_marketplace.py — Установка навыков из GitHub.
   - fallback на raw skill.py в src/skills/
   - публичные и приватные репозитории через GITHUB_TOKEN
 """
+
 import base64
 import json
 import os

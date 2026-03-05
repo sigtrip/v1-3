@@ -3,7 +3,9 @@ streamlit_dashboard.py — легкая админка Аргоса поверх
 Запуск:
   streamlit run src/interface/streamlit_dashboard.py
 """
+
 import os
+
 import requests
 import streamlit as st
 
@@ -22,12 +24,14 @@ with col1:
         st.metric("CPU", f"{status.get('cpu', 0):.1f}%")
         st.metric("RAM", f"{status.get('ram', 0):.1f}%")
         st.metric("Disk", f"{status.get('disk', 0):.1f}%")
-        st.write({
-            "state": status.get("state"),
-            "uptime": status.get("uptime"),
-            "p2p_nodes": status.get("p2p_nodes"),
-            "voice_on": status.get("voice_on"),
-        })
+        st.write(
+            {
+                "state": status.get("state"),
+                "uptime": status.get("uptime"),
+                "p2p_nodes": status.get("p2p_nodes"),
+                "voice_on": status.get("voice_on"),
+            }
+        )
     except Exception as e:
         st.error(f"Не удалось получить статус: {e}")
 
@@ -53,5 +57,6 @@ except Exception as e:
 def run_streamlit():
     """Точка входа (для импорта); реальный запуск: streamlit run <этот файл>."""
     pass
+
 
 StreamlitDashboard = type("StreamlitDashboard", (), {"run": staticmethod(run_streamlit)})

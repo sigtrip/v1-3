@@ -2,13 +2,14 @@
 android_service.py — Фоновый сервис Android (Omni-Tool)
   Запускается при загрузке устройства, держит Аргоса активным.
   Работает в уведомлении статуса даже когда приложение свёрнуто.
-  
+
   Интегрированные подсистемы:
   - SensorBridge: CPU/RAM/диск/батарея/температура
   - NFCManager: мониторинг собственных NFC-меток
   - USBDiagnostics: диагностика авторизованных USB-устройств
   - BluetoothScanner: инвентаризация IoT по BLE/Classic
 """
+
 import os
 import sys
 import time
@@ -22,9 +23,11 @@ def _is_android() -> bool:
     """Проверка запуска на Android."""
     try:
         from jnius import autoclass
+
         return True
     except ImportError:
         return False
+
 
 ANDROID = _is_android()
 
@@ -45,7 +48,7 @@ def _safe_init(name: str, factory):
 class ArgosOmniService:
     """
     Единый фоновый сервис, объединяющий все подсистемы мониторинга.
-    
+
     Цикл работы:
       1. Инициализация всех доступных модулей
       2. Периодический опрос сенсоров (CPU/RAM/диск/батарея)
@@ -71,6 +74,7 @@ class ArgosOmniService:
         """Инициализация всех модулей с graceful-деградацией."""
         try:
             from dotenv import load_dotenv
+
             load_dotenv()
         except ImportError:
             pass
@@ -94,21 +98,25 @@ class ArgosOmniService:
     @staticmethod
     def _make_sensors():
         from src.connectivity.sensor_bridge import ArgosSensorBridge
+
         return ArgosSensorBridge()
 
     @staticmethod
     def _make_nfc():
         from src.connectivity.nfc_manager import NFCManager
+
         return NFCManager(android_mode=ANDROID)
 
     @staticmethod
     def _make_usb():
         from src.connectivity.usb_diagnostics import USBDiagnostics
+
         return USBDiagnostics(android_mode=ANDROID)
 
     @staticmethod
     def _make_bluetooth():
         from src.connectivity.bluetooth_scanner import ArgosBluetoothScanner
+
         return ArgosBluetoothScanner()
 
     # ── Основной цикл ────────────────────────────────────────────
@@ -203,6 +211,7 @@ class ArgosOmniService:
         # Публикация в шину событий (если доступна)
         try:
             from src.event_bus import get_bus
+
             bus = get_bus()
             if bus:
                 bus.emit("service.health", report)
@@ -240,7 +249,8 @@ def main():
     if ANDROID:
         try:
             from jnius import autoclass
-            PythonService = autoclass('org.kivy.android.PythonService')
+
+            PythonService = autoclass("org.kivy.android.PythonService")
             PythonService.mService.setAutoRestartService(True)
         except Exception:
             pass

@@ -9,15 +9,16 @@ self_healing.py — Self-Healing Engine
     3. Runtime patch: обёртка config + retry при RuntimeError
     4. Hot-reload: перезагрузка модуля после патча
 """
+
+import ast
+import importlib
+import json
 import os
 import re
-import ast
 import sys
-import time
-import json
-import traceback
 import threading
-import importlib
+import time
+import traceback
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -29,11 +30,12 @@ log = get_logger("argos.healing")
 
 class HealingRecord:
     """Запись об исцелении."""
-    __slots__ = ("ts", "module", "error_type", "error_msg",
-                 "strategy", "success", "patch_summary")
 
-    def __init__(self, module: str, error_type: str, error_msg: str,
-                 strategy: str, success: bool, patch_summary: str = ""):
+    __slots__ = ("ts", "module", "error_type", "error_msg", "strategy", "success", "patch_summary")
+
+    def __init__(
+        self, module: str, error_type: str, error_msg: str, strategy: str, success: bool, patch_summary: str = ""
+    ):
         self.ts = time.time()
         self.module = module
         self.error_type = error_type
@@ -72,8 +74,7 @@ class SelfHealingEngine:
 
     def __init__(self, core=None):
         self.core = core
-        self._enabled = os.getenv("ARGOS_SELF_HEALING", "on").strip().lower() \
-            not in {"0", "off", "false", "no", "нет"}
+        self._enabled = os.getenv("ARGOS_SELF_HEALING", "on").strip().lower() not in {"0", "off", "false", "no", "нет"}
         self._lock = threading.Lock()
         self._history: List[HealingRecord] = []
         self._attempt_counts: Dict[str, int] = {}
@@ -136,8 +137,7 @@ class SelfHealingEngine:
             # Проверка безопасности через EmpathyEngine
             guardian = EmpathyEngine()
             status, message = guardian.analyze_intent(
-                task_description="Self-Healing: исправление кода после ошибки",
-                generated_code=fixed_code
+                task_description="Self-Healing: исправление кода после ошибки", generated_code=fixed_code
             )
             if status == SafetyLevel.CRITICAL:
                 log.error(f"EmpathyEngine заблокировал heal_code: {message}")
@@ -184,8 +184,7 @@ class SelfHealingEngine:
         self.attempt_heal(module_name, exc_type.__name__, str(exc_value))
 
     # ── Основной метод исцеления ─────────────────────────
-    def attempt_heal(self, module_path: str, error_type: str,
-                     error_msg: str) -> bool:
+    def attempt_heal(self, module_path: str, error_type: str, error_msg: str) -> bool:
         """
         Пытается исцелить модуль. Возвращает True при успехе.
         """
@@ -193,8 +192,9 @@ class SelfHealingEngine:
             count = self._attempt_counts.get(module_path, 0)
             if count >= self.MAX_HEAL_ATTEMPTS:
                 log.warning("Healing: лимит попыток для %s (%d)", module_path, count)
-                rec = HealingRecord(module_path, error_type, error_msg,
-                                    "limit_reached", False, f"max attempts ({count})")
+                rec = HealingRecord(
+                    module_path, error_type, error_msg, "limit_reached", False, f"max attempts ({count})"
+                )
                 self._history.append(rec)
                 return False
             self._attempt_counts[module_path] = count + 1
@@ -205,8 +205,7 @@ class SelfHealingEngine:
             log.warning("Healing: файл не найден для %s", module_path)
             return False
 
-        log.info("Healing: попытка исцеления %s (%s: %s)",
-                 module_path, error_type, error_msg[:80])
+        log.info("Healing: попытка исцеления %s (%s: %s)", module_path, error_type, error_msg[:80])
 
         # Backup
         self._backup(file_path)
@@ -221,8 +220,7 @@ class SelfHealingEngine:
         for name, strategy_fn in strategies:
             try:
                 success, summary = strategy_fn(file_path, error_type, error_msg)
-                rec = HealingRecord(module_path, error_type, error_msg,
-                                    name, success, summary)
+                rec = HealingRecord(module_path, error_type, error_msg, name, success, summary)
                 self._history.append(rec)
                 if success:
                     log.info("Healing SUCCESS: %s via %s — %s", module_path, name, summary)
@@ -231,14 +229,12 @@ class SelfHealingEngine:
             except Exception as e:
                 log.error("Healing strategy %s failed: %s", name, e)
 
-        rec = HealingRecord(module_path, error_type, error_msg,
-                            "all_failed", False, "no strategy worked")
+        rec = HealingRecord(module_path, error_type, error_msg, "all_failed", False, "no strategy worked")
         self._history.append(rec)
         return False
 
     # ── Стратегии исцеления ──────────────────────────────
-    def _strategy_syntax_fix(self, file_path: str, error_type: str,
-                             error_msg: str) -> Tuple[bool, str]:
+    def _strategy_syntax_fix(self, file_path: str, error_type: str, error_msg: str) -> Tuple[bool, str]:
         """Исправляет синтаксические ошибки."""
         if error_type != "SyntaxError":
             return (False, "not a syntax error")
@@ -282,8 +278,7 @@ class SelfHealingEngine:
                 next_indent = None
                 if i + 1 < len(lines):
                     next_line = lines[i + 1]
-                    if next_line.strip() == "" or \
-                       (not next_line.startswith(" ") and not next_line.startswith("\t")):
+                    if next_line.strip() == "" or (not next_line.startswith(" ") and not next_line.startswith("\t")):
                         curr_indent = len(line) - len(line.lstrip())
                         new_lines.append(" " * (curr_indent + 4) + "pass")
                         fixes_applied.append(f"added pass after line {i+1}")
@@ -302,8 +297,7 @@ class SelfHealingEngine:
 
         return (True, "; ".join(fixes_applied))
 
-    def _strategy_import_fix(self, file_path: str, error_type: str,
-                             error_msg: str) -> Tuple[bool, str]:
+    def _strategy_import_fix(self, file_path: str, error_type: str, error_msg: str) -> Tuple[bool, str]:
         """Исправляет ImportError: оборачивает проблемный import в try/except."""
         if error_type not in ("ImportError", "ModuleNotFoundError"):
             return (False, "not an import error")
@@ -324,7 +318,7 @@ class SelfHealingEngine:
         pattern = re.compile(
             rf"^((?:from\s+\S*{re.escape(bad_module)}\S*\s+import\s+.+)|"
             rf"(?:import\s+\S*{re.escape(bad_module)}\S*.*))$",
-            re.MULTILINE
+            re.MULTILINE,
         )
         m = pattern.search(source)
         if not m:
@@ -354,8 +348,7 @@ class SelfHealingEngine:
 
         return (True, f"wrapped import {bad_module} in try/except")
 
-    def _strategy_runtime_patch(self, file_path: str, error_type: str,
-                                error_msg: str) -> Tuple[bool, str]:
+    def _strategy_runtime_patch(self, file_path: str, error_type: str, error_msg: str) -> Tuple[bool, str]:
         """
         Runtime-патч: если ошибка в конкретной строке,
         оборачиваем блок в try/except с логированием.
@@ -382,7 +375,7 @@ class SelfHealingEngine:
 
         # Оборачиваем блок (текущую + 2 след. строки) в try/except
         end = min(err_line + 2, len(lines))
-        block_lines = lines[err_line - 1:end]
+        block_lines = lines[err_line - 1 : end]
 
         try_block = [f"{pad}try:\n"]
         for bl in block_lines:
@@ -390,7 +383,7 @@ class SelfHealingEngine:
         try_block.append(f"{pad}except Exception as _heal_e:\n")
         try_block.append(f"{pad}    pass  # self-healing: {error_type}\n")
 
-        new_lines = lines[:err_line - 1] + try_block + lines[end:]
+        new_lines = lines[: err_line - 1] + try_block + lines[end:]
         patched = "".join(new_lines)
 
         try:

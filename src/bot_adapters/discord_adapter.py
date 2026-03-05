@@ -1,13 +1,18 @@
 """
 Discord Bot Adapter (универсальный, для Argos)
 """
-from .base import BotAdapter
+
 import os
+
+from .base import BotAdapter
+
 try:
     import discord
+
     DISCORD_OK = True
 except ImportError:
     DISCORD_OK = False
+
 
 class DiscordAdapter(BotAdapter):
     def __init__(self, core, token=None):

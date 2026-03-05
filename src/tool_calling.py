@@ -35,9 +35,7 @@ class ArgosToolCallingEngine:
                 "description": "Получить детальный статус диска: свободно/занято в GB и процентах.",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "path": {"type": "string", "description": "Точка монтирования, по умолчанию '/'"}
-                    },
+                    "properties": {"path": {"type": "string", "description": "Точка монтирования, по умолчанию '/'"}},
                     "required": [],
                     "additionalProperties": False,
                 },
@@ -68,9 +66,7 @@ class ArgosToolCallingEngine:
                 "description": "Показать содержимое директории.",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "path": {"type": "string", "description": "Путь до каталога, по умолчанию '.'"}
-                    },
+                    "properties": {"path": {"type": "string", "description": "Путь до каталога, по умолчанию '.'"}},
                     "required": [],
                     "additionalProperties": False,
                 },
@@ -111,9 +107,7 @@ class ArgosToolCallingEngine:
                 "description": "Отправить запрос на вычислительно лучшую ноду P2P сети.",
                 "parameters": {
                     "type": "object",
-                    "properties": {
-                        "prompt": {"type": "string", "description": "Текст запроса"}
-                    },
+                    "properties": {"prompt": {"type": "string", "description": "Текст запроса"}},
                     "required": ["prompt"],
                     "additionalProperties": False,
                 },
@@ -153,7 +147,9 @@ class ArgosToolCallingEngine:
             "read_file_preview": self._tool_read_file_preview,
             "network_status": lambda args: self.core.p2p.network_status() if self.core.p2p else "P2P не запущен.",
             "start_p2p": lambda args: self.core.start_p2p(),
-            "route_p2p_query": lambda args: self.core.p2p.route_query(args.get("prompt", "")) if self.core.p2p else "P2P не запущен.",
+            "route_p2p_query": lambda args: (
+                self.core.p2p.route_query(args.get("prompt", "")) if self.core.p2p else "P2P не запущен."
+            ),
         }
 
         fn = tools.get(name)
@@ -169,9 +165,9 @@ class ArgosToolCallingEngine:
         path = arguments.get("path") or "/"
         try:
             usage = psutil.disk_usage(path)
-            total_gb = usage.total / (1024 ** 3)
-            free_gb = usage.free / (1024 ** 3)
-            used_gb = usage.used / (1024 ** 3)
+            total_gb = usage.total / (1024**3)
+            free_gb = usage.free / (1024**3)
+            used_gb = usage.used / (1024**3)
             return (
                 f"Диск {path}: занято {used_gb:.1f} GB ({usage.percent}%), "
                 f"свободно {free_gb:.1f} GB из {total_gb:.1f} GB"
@@ -213,9 +209,9 @@ class ArgosToolCallingEngine:
             "Выбери до 3 вызовов инструментов, если они действительно нужны для ответа.\n\n"
             "Верни СТРОГО JSON без markdown:\n"
             "{\n"
-            "  \"confidence\": 0.0,\n"
-            "  \"tool_calls\": [{\"name\": \"...\", \"arguments\": {...}}],\n"
-            "  \"final_answer\": \"...\"\n"
+            '  "confidence": 0.0,\n'
+            '  "tool_calls": [{"name": "...", "arguments": {...}}],\n'
+            '  "final_answer": "..."\n'
             "}\n\n"
             "Правила:\n"
             "- Если инструменты не нужны, верни пустой tool_calls и ответ в final_answer.\n"
@@ -295,7 +291,7 @@ class ArgosToolCallingEngine:
         left = candidate.find("{")
         right = candidate.rfind("}")
         if left >= 0 and right > left:
-            chunk = candidate[left:right + 1]
+            chunk = candidate[left : right + 1]
             try:
                 obj = json.loads(chunk)
                 if isinstance(obj, dict):

@@ -4,6 +4,7 @@ agenticseek_adapter.py — опциональный адаптер к внешн
 Интеграция сделана через HTTP API (по умолчанию http://127.0.0.1:7777),
 без копирования исходников AgenticSeek в этот репозиторий.
 """
+
 from __future__ import annotations
 
 import os
@@ -28,7 +29,12 @@ class AgenticSeekAdapter:
             timeout = 120.0
         self.timeout_sec = max(5.0, min(timeout, 600.0))
         self._autostart = (os.getenv("ARGOS_AGENTICSEEK_AUTOSTART", "off") or "off").strip().lower() in {
-            "1", "true", "on", "yes", "да", "вкл"
+            "1",
+            "true",
+            "on",
+            "yes",
+            "да",
+            "вкл",
         }
         self._autostart_attempted = False
 

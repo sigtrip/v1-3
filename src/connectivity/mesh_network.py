@@ -5,8 +5,9 @@ mesh_network.py — Mesh-сеть: Zigbee, LoRa, WiFi Mesh
              WiFi Mesh (ESP-NOW, Meshtastic), Z-Wave.
   Прошивка gateway прямо из Аргоса.
 """
-import os
+
 import json
+import os
 import threading
 import time
 from typing import Any
@@ -17,32 +18,36 @@ except ImportError:
     serial = None
 
 from src.argos_logger import get_logger
-from src.connectivity.event_bus import bus, EventType
+from src.connectivity.event_bus import EventType, bus
 
 log = get_logger("argos.mesh")
 
 GATEWAY_DIR = "assets/firmware/gateways"
-DEVICES_DB  = "config/mesh_devices.json"
+DEVICES_DB = "config/mesh_devices.json"
 
 
 class MeshDevice:
-    def __init__(self, dev_id: str, protocol: str, addr: str,
-                 name: str = "", room: str = "", role: str = "sensor"):
-        self.id       = dev_id
-        self.protocol = protocol   # zigbee | lora | wifi | zwave
-        self.addr     = addr
-        self.name     = name or dev_id
-        self.room     = room
-        self.role     = role       # sensor | actuator | gateway | coordinator
-        self.online   = False
+    def __init__(self, dev_id: str, protocol: str, addr: str, name: str = "", room: str = "", role: str = "sensor"):
+        self.id = dev_id
+        self.protocol = protocol  # zigbee | lora | wifi | zwave
+        self.addr = addr
+        self.name = name or dev_id
+        self.room = room
+        self.role = role  # sensor | actuator | gateway | coordinator
+        self.online = False
         self.last_seen = 0.0
-        self.data     = {}         # последние данные
+        self.data = {}  # последние данные
 
     def to_dict(self) -> dict:
         return {
-            "id": self.id, "protocol": self.protocol, "addr": self.addr,
-            "name": self.name, "room": self.room, "role": self.role,
-            "online": self.online, "last_seen": self.last_seen,
+            "id": self.id,
+            "protocol": self.protocol,
+            "addr": self.addr,
+            "name": self.name,
+            "room": self.room,
+            "role": self.role,
+            "online": self.online,
+            "last_seen": self.last_seen,
             "data": self.data,
         }
 
@@ -71,11 +76,11 @@ class MeshNetwork:
     def _save_devices(self):
         os.makedirs("config", exist_ok=True)
         data = [d.to_dict() for d in self.devices.values()]
-        json.dump(data, open(DEVICES_DB, "w", encoding="utf-8"),
-                  indent=2, ensure_ascii=False)
+        json.dump(data, open(DEVICES_DB, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
 
-    def add_device(self, dev_id: str, protocol: str, addr: str,
-                   name: str = "", room: str = "", role: str = "sensor") -> str:
+    def add_device(
+        self, dev_id: str, protocol: str, addr: str, name: str = "", room: str = "", role: str = "sensor"
+    ) -> str:
         dev = MeshDevice(dev_id, protocol, addr, name, room, role)
         self.devices[dev_id] = dev
         self._save_devices()
@@ -93,22 +98,20 @@ class MeshNetwork:
 
     def update_device_data(self, dev_id: str, data: dict):
         if dev_id in self.devices:
-            self.devices[dev_id].data      = {**self.devices[dev_id].data, **data}
-            self.devices[dev_id].online    = True
+            self.devices[dev_id].data = {**self.devices[dev_id].data, **data}
+            self.devices[dev_id].online = True
             self.devices[dev_id].last_seen = time.time()
             bus.publish(EventType.SENSOR_UPDATE, {"id": dev_id, "data": data}, "mesh")
 
     # ── ПРОТОКОЛЫ ─────────────────────────────────────────
-    def start_zigbee(self, port: str = "/dev/ttyUSB0",
-                     baud: int = 115200) -> str:
+    def start_zigbee(self, port: str = "/dev/ttyUSB0", baud: int = 115200) -> str:
         bridge = ZigbeeBridge(port, baud, self)
         result = bridge.start()
         if "✅" in result:
             self._bridges["zigbee"] = bridge
         return result
 
-    def start_lora(self, port: str = "/dev/ttyUSB1",
-                   baud: int = 9600) -> str:
+    def start_lora(self, port: str = "/dev/ttyUSB1", baud: int = 9600) -> str:
         bridge = LoRaBridge(port, baud, self)
         result = bridge.start()
         if "✅" in result:
@@ -123,18 +126,16 @@ class MeshNetwork:
         return result
 
     # ── КОМАНДЫ ───────────────────────────────────────────
-    def send_command(self, dev_id: str, command: str,
-                     value: Any = None) -> str:
+    def send_command(self, dev_id: str, command: str, value: Any = None) -> str:
         if dev_id not in self.devices:
             return f"❌ Устройство не найдено: {dev_id}"
-        dev     = self.devices[dev_id]
-        bridge  = self._bridges.get(dev.protocol)
+        dev = self.devices[dev_id]
+        bridge = self._bridges.get(dev.protocol)
         if not bridge:
             return f"❌ Bridge для {dev.protocol} не запущен"
         return bridge.send(dev.addr, command, value)
 
-    def broadcast(self, protocol: str, command: str,
-                  value: Any = None) -> str:
+    def broadcast(self, protocol: str, command: str, value: Any = None) -> str:
         bridge = self._bridges.get(protocol)
         if not bridge:
             return f"❌ Bridge {protocol} не запущен"
@@ -148,7 +149,9 @@ class MeshNetwork:
     # ── ОТЧЁТ ─────────────────────────────────────────────
     def status_report(self) -> str:
         if not self.devices:
-            return "📭 Mesh-сеть: устройств нет.\n  Добавь: аргос, добавь устройство zigbee [id] [адрес] [имя] [комната]"
+            return (
+                "📭 Mesh-сеть: устройств нет.\n  Добавь: аргос, добавь устройство zigbee [id] [адрес] [имя] [комната]"
+            )
         lines = [f"📡 MESH-СЕТЬ ({len(self.devices)} устройств):"]
         by_proto = {}
         for dev in self.devices.values():
@@ -156,10 +159,10 @@ class MeshNetwork:
         for proto, devs in sorted(by_proto.items()):
             lines.append(f"\n  [{proto.upper()}]")
             for dev in devs:
-                ago     = int(time.time() - dev.last_seen) if dev.last_seen else 0
-                status  = "🟢" if dev.online and ago < 120 else "🔴"
-                last    = f"{ago}с назад" if dev.last_seen else "никогда"
-                data_s  = ", ".join(f"{k}={v}" for k, v in list(dev.data.items())[:3])
+                ago = int(time.time() - dev.last_seen) if dev.last_seen else 0
+                status = "🟢" if dev.online and ago < 120 else "🔴"
+                last = f"{ago}с назад" if dev.last_seen else "никогда"
+                data_s = ", ".join(f"{k}={v}" for k, v in list(dev.data.items())[:3])
                 lines.append(f"    {status} {dev.name:20s} [{dev.room}] addr={dev.addr} | {data_s}")
         for proto, bridge in self._bridges.items():
             lines.append(f"\n  Bridge {proto}: {bridge.status()}")
@@ -170,14 +173,12 @@ class MeshNetwork:
         """Прошивает gateway через COM-порт используя esptool/avrdude."""
         fw_path = f"{GATEWAY_DIR}/{firmware}.bin"
         if not os.path.exists(fw_path):
-            return (f"❌ Прошивка не найдена: {fw_path}\n"
-                    f"  Доступные: {self._list_firmware()}")
+            return f"❌ Прошивка не найдена: {fw_path}\n" f"  Доступные: {self._list_firmware()}"
         return GatewayFlasher().flash(port, fw_path)
 
     def _list_firmware(self) -> str:
         os.makedirs(GATEWAY_DIR, exist_ok=True)
-        files = [f[:-4] for f in os.listdir(GATEWAY_DIR)
-                 if f.endswith(".bin")]
+        files = [f[:-4] for f in os.listdir(GATEWAY_DIR) if f.endswith(".bin")]
         return ", ".join(files) if files else "нет (положи .bin в assets/firmware/gateways/)"
 
 
@@ -186,19 +187,20 @@ class MeshNetwork:
 
 class ZigbeeBridge:
     """Zigbee через serial (CC2531/CC2652/sonoff dongle)."""
+
     def __init__(self, port: str, baud: int, mesh: MeshNetwork):
-        self.port  = port
-        self.baud  = baud
-        self.mesh  = mesh
-        self._ser  = None
+        self.port = port
+        self.baud = baud
+        self.mesh = mesh
+        self._ser = None
         self._thread = None
         self._running = False
 
     def start(self) -> str:
         try:
-            self._ser     = serial.Serial(self.port, self.baud, timeout=1)
+            self._ser = serial.Serial(self.port, self.baud, timeout=1)
             self._running = True
-            self._thread  = threading.Thread(target=self._read_loop, daemon=True)
+            self._thread = threading.Thread(target=self._read_loop, daemon=True)
             self._thread.start()
             log.info("Zigbee: %s@%d", self.port, self.baud)
             return f"✅ Zigbee запущен: {self.port}@{self.baud}"
@@ -241,20 +243,23 @@ class ZigbeeBridge:
 
 class LoRaBridge:
     """LoRa через serial (SX1276/SX1262/Meshtastic)."""
+
     def __init__(self, port: str, baud: int, mesh: MeshNetwork):
-        self.port   = port
-        self.baud   = baud
-        self.mesh   = mesh
-        self._ser   = None
+        self.port = port
+        self.baud = baud
+        self.mesh = mesh
+        self._ser = None
         self._running = False
 
     def start(self) -> str:
         try:
-            self._ser     = serial.Serial(self.port, self.baud, timeout=2)
+            self._ser = serial.Serial(self.port, self.baud, timeout=2)
             self._running = True
             # Инициализация LoRa модуля
-            self._ser.write(b"AT+RST\r\n"); time.sleep(0.5)
-            self._ser.write(b"AT+MODE=0\r\n"); time.sleep(0.3)  # Normal mode
+            self._ser.write(b"AT+RST\r\n")
+            time.sleep(0.5)
+            self._ser.write(b"AT+MODE=0\r\n")
+            time.sleep(0.3)  # Normal mode
             threading.Thread(target=self._read_loop, daemon=True).start()
             log.info("LoRa: %s@%d", self.port, self.baud)
             return f"✅ LoRa запущен: {self.port}@{self.baud}"
@@ -274,20 +279,19 @@ class LoRaBridge:
         # LoRa пакет: "+RCV=addr,len,data,rssi,snr"
         if line.startswith("+RCV="):
             try:
-                parts  = line[5:].split(",")
-                addr   = parts[0]
+                parts = line[5:].split(",")
+                addr = parts[0]
                 data_s = parts[2] if len(parts) > 2 else ""
-                rssi   = int(parts[3]) if len(parts) > 3 else 0
-                snr    = float(parts[4]) if len(parts) > 4 else 0.0
+                rssi = int(parts[3]) if len(parts) > 3 else 0
+                snr = float(parts[4]) if len(parts) > 4 else 0.0
                 try:
                     payload = json.loads(data_s)
                 except Exception:
                     payload = {"raw": data_s}
                 payload["rssi"] = rssi
-                payload["snr"]  = snr
+                payload["snr"] = snr
                 self.mesh.update_device_data(addr, payload)
-                bus.publish(EventType.MESH_PACKET,
-                            {"protocol": "lora", "addr": addr, "data": payload}, "lora")
+                bus.publish(EventType.MESH_PACKET, {"protocol": "lora", "addr": addr, "data": payload}, "lora")
             except Exception as e:
                 log.error("LoRa parse: %s — %s", line[:60], e)
 
@@ -296,7 +300,7 @@ class LoRaBridge:
             return "❌ LoRa порт закрыт"
         try:
             payload = json.dumps({"cmd": command, "val": value})
-            at_cmd  = f"AT+SEND={addr},{len(payload)},{payload}\r\n"
+            at_cmd = f"AT+SEND={addr},{len(payload)},{payload}\r\n"
             self._ser.write(at_cmd.encode())
             return f"✅ LoRa → {addr}: {command}"
         except Exception as e:
@@ -308,9 +312,10 @@ class LoRaBridge:
 
 class WiFiMeshBridge:
     """WiFi Mesh через HTTP API (ESP-NOW координатор / Meshtastic)."""
+
     def __init__(self, ssid: str, mesh: MeshNetwork):
-        self.ssid  = ssid
-        self.mesh  = mesh
+        self.ssid = ssid
+        self.mesh = mesh
         self._running = False
 
     def start(self) -> str:
@@ -320,6 +325,7 @@ class WiFiMeshBridge:
 
     def _discovery_loop(self):
         import socket
+
         while self._running:
             try:
                 # mDNS broadcast для поиска нод
@@ -332,8 +338,7 @@ class WiFiMeshBridge:
                     info = json.loads(data.decode("utf-8", errors="ignore"))
                     dev_id = info.get("id", addr[0])
                     self.mesh.update_device_data(dev_id, {**info, "ip": addr[0]})
-                    bus.publish(EventType.MESH_NODE_FOUND,
-                                {"ip": addr[0], "info": info}, "wifi_mesh")
+                    bus.publish(EventType.MESH_NODE_FOUND, {"ip": addr[0], "info": info}, "wifi_mesh")
                 except Exception:
                     pass
                 sock.close()
@@ -343,13 +348,11 @@ class WiFiMeshBridge:
 
     def send(self, addr: str, command: str, value: Any = None) -> str:
         import urllib.request
+
         try:
             payload = json.dumps({"cmd": command, "val": value}).encode()
             req = urllib.request.Request(
-                f"http://{addr}/api/cmd",
-                data=payload,
-                headers={"Content-Type": "application/json"},
-                method="POST"
+                f"http://{addr}/api/cmd", data=payload, headers={"Content-Type": "application/json"}, method="POST"
             )
             with urllib.request.urlopen(req, timeout=3) as r:
                 return f"✅ WiFi → {addr}: {command} → {r.read().decode()[:50]}"
@@ -362,6 +365,7 @@ class WiFiMeshBridge:
 
 class GatewayFlasher:
     """Прошивка gateway устройств (ESP32/Arduino) из Аргоса."""
+
     def flash(self, port: str, fw_path: str) -> str:
         ext = os.path.splitext(fw_path)[1].lower()
         log.info("Прошивка: %s → %s", fw_path, port)
@@ -374,11 +378,13 @@ class GatewayFlasher:
     def _flash_esp(self, port: str, fw_path: str) -> str:
         """ESP32/ESP8266 через esptool."""
         import subprocess
+
         try:
             result = subprocess.run(
-                ["esptool.py", "--port", port, "--baud", "921600",
-                 "write_flash", "-z", "0x0", fw_path],
-                capture_output=True, text=True, timeout=120
+                ["esptool.py", "--port", port, "--baud", "921600", "write_flash", "-z", "0x0", fw_path],
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             if result.returncode == 0:
                 return f"✅ ESP прошит: {os.path.basename(fw_path)}"
@@ -391,12 +397,13 @@ class GatewayFlasher:
     def _flash_avr(self, port: str, fw_path: str) -> str:
         """Arduino/AVR через avrdude."""
         import subprocess
+
         try:
             result = subprocess.run(
-                ["avrdude", "-p", "m328p", "-c", "arduino",
-                 "-P", port, "-b", "115200",
-                 "-U", f"flash:w:{fw_path}:i"],
-                capture_output=True, text=True, timeout=120
+                ["avrdude", "-p", "m328p", "-c", "arduino", "-P", port, "-b", "115200", "-U", f"flash:w:{fw_path}:i"],
+                capture_output=True,
+                text=True,
+                timeout=120,
             )
             if result.returncode == 0:
                 return f"✅ AVR прошит: {os.path.basename(fw_path)}"

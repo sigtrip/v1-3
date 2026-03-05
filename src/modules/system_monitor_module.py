@@ -6,7 +6,14 @@ class SystemMonitorModule(BaseModule):
     title = "System Monitor"
 
     def can_handle(self, text: str, lowered: str) -> bool:
-        keys = ["статус системы", "чек-ап", "состояние здоровья", "список процессов", "убей процесс", "завершить процесс"]
+        keys = [
+            "статус системы",
+            "чек-ап",
+            "состояние здоровья",
+            "список процессов",
+            "убей процесс",
+            "завершить процесс",
+        ]
         return any(k in lowered for k in keys)
 
     def handle(self, text: str, lowered: str, admin=None, flasher=None) -> str | None:

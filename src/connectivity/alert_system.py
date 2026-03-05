@@ -3,6 +3,7 @@ alert_system.py — Система автоматических алертов
   Следит за CPU/RAM/диском/температурой.
   При превышении порогов — уведомление в Telegram + консоль.
 """
+
 import threading
 import time
 import os
@@ -13,11 +14,12 @@ from src.argos_logger import get_logger
 log = get_logger("argos.alerts")
 
 THRESHOLDS = {
-    "cpu":    90.0,   # %
-    "ram":    85.0,   # %
-    "disk":   90.0,   # %
-    "temp":   85.0,   # °C
+    "cpu": 90.0,  # %
+    "ram": 85.0,  # %
+    "disk": 90.0,  # %
+    "temp": 85.0,  # °C
 }
+
 
 class AlertSystem:
     def __init__(self, on_alert=None):
@@ -25,11 +27,11 @@ class AlertSystem:
         on_alert: callable(msg) — вызывается при срабатывании алерта.
         Если None — использует Telegram Bot API напрямую.
         """
-        self._on_alert  = on_alert
-        self._running   = False
-        self._cooldown  = {}   # name → last_alert_time (избегаем спама)
+        self._on_alert = on_alert
+        self._running = False
+        self._cooldown = {}  # name → last_alert_time (избегаем спама)
         self._cooldown_sec = 300  # 5 минут между одинаковыми алертами
-        self._tg_token  = os.getenv("TELEGRAM_BOT_TOKEN")
+        self._tg_token = os.getenv("TELEGRAM_BOT_TOKEN")
         self._tg_chatid = os.getenv("USER_ID")
 
     def start(self, interval_sec: int = 30) -> str:
@@ -62,9 +64,9 @@ class AlertSystem:
 
         # Диск
         try:
-            disk = psutil.disk_usage('/').percent
+            disk = psutil.disk_usage("/").percent
             if disk >= THRESHOLDS["disk"]:
-                free_gb = psutil.disk_usage('/').free // (2**30)
+                free_gb = psutil.disk_usage("/").free // (2**30)
                 alerts.append(self._fire("disk", f"💿 Диск почти заполнен: {disk:.1f}% (свободно {free_gb}GB)"))
         except Exception:
             pass
@@ -82,7 +84,7 @@ class AlertSystem:
 
         # Процессы-зомби
         try:
-            zombies = [p for p in psutil.process_iter(['status']) if p.info['status'] == 'zombie']
+            zombies = [p for p in psutil.process_iter(["status"]) if p.info["status"] == "zombie"]
             if len(zombies) > 5:
                 alerts.append(self._fire("zombie", f"👻 Зомби-процессов: {len(zombies)}"))
         except Exception:
@@ -103,8 +105,10 @@ class AlertSystem:
 
         # Callback (например, GUI или Telegram bot)
         if self._on_alert:
-            try: self._on_alert(full_msg)
-            except Exception as e: log.error("Alert callback error: %s", e)
+            try:
+                self._on_alert(full_msg)
+            except Exception as e:
+                log.error("Alert callback error: %s", e)
         else:
             self._send_telegram(full_msg)
 
@@ -129,10 +133,12 @@ class AlertSystem:
         return f"✅ Порог {metric} установлен: {value}"
 
     def status(self) -> str:
-        cpu  = psutil.cpu_percent(interval=0.5)
-        ram  = psutil.virtual_memory().percent
-        try: disk = psutil.disk_usage('/').percent
-        except: disk = 0
+        cpu = psutil.cpu_percent(interval=0.5)
+        ram = psutil.virtual_memory().percent
+        try:
+            disk = psutil.disk_usage("/").percent
+        except:
+            disk = 0
         lines = [
             "🔔 СИСТЕМА АЛЕРТОВ:",
             f"  CPU:  {cpu:.1f}% {'🔥' if cpu >= THRESHOLDS['cpu'] else '✅'} (порог {THRESHOLDS['cpu']}%)",

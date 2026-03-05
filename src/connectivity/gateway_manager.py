@@ -5,7 +5,12 @@ gateway_manager.py — Менеджер IoT-шлюзов Аргоса
   Протоколы: Zigbee2MQTT, LoRaWAN (TTN/Chirpstack), MQTT broker,
              ESP-NOW mesh, Modbus TCP/RTU.
 """
-import json, os, time, subprocess
+
+import json
+import os
+import subprocess
+import time
+
 from src.argos_logger import get_logger
 from src.event_bus import get_bus
 
@@ -13,7 +18,7 @@ log = get_logger("argos.gateway")
 bus = get_bus()
 
 GATEWAY_DIR = "config/gateways"
-FIRMWARE_DIR= "assets/firmware"
+FIRMWARE_DIR = "assets/firmware"
 CUSTOM_TEMPLATES_FILE = "config/gateway_templates.custom.json"
 os.makedirs(GATEWAY_DIR, exist_ok=True)
 os.makedirs(FIRMWARE_DIR, exist_ok=True)
@@ -28,10 +33,10 @@ GATEWAY_TEMPLATES = {
         "firmware": "zigbee2mqtt",
         "config": {
             "serial": {"port": "/dev/ttyUSB0", "baudrate": 115200},
-            "mqtt":   {"base_topic": "zigbee2mqtt", "server": "mqtt://localhost"},
+            "mqtt": {"base_topic": "zigbee2mqtt", "server": "mqtt://localhost"},
             "homeassistant": False,
             "permit_join": True,
-        }
+        },
     },
     "esp32_lora": {
         "description": "ESP32 + SX1276/1278 LoRa шлюз",
@@ -43,7 +48,7 @@ GATEWAY_TEMPLATES = {
             "spreading_factor": 7,
             "bandwidth": 125000,
             "mqtt_topic": "argos/lora",
-        }
+        },
     },
     "rpi_mesh": {
         "description": "Raspberry Pi Mesh-шлюз (Wi-Fi + Ethernet)",
@@ -55,7 +60,7 @@ GATEWAY_TEMPLATES = {
             "mqtt_host": "localhost",
             "bridge_to_mqtt": True,
             "node_id": "rpi_gw_01",
-        }
+        },
     },
     "modbus_rtu": {
         "description": "USB-RS485 Modbus RTU шлюз",
@@ -69,7 +74,7 @@ GATEWAY_TEMPLATES = {
             "stopbits": 1,
             "scan_interval": 5,
             "devices": [],
-        }
+        },
     },
     "lorawan_ttn": {
         "description": "LoRaWAN шлюз → The Things Network",
@@ -81,7 +86,7 @@ GATEWAY_TEMPLATES = {
             "server_address": "eu1.cloud.thethings.network",
             "server_port_up": 1700,
             "server_port_down": 1700,
-        }
+        },
     },
 }
 
@@ -101,19 +106,18 @@ def _load_custom_templates() -> dict:
 
 def _save_custom_templates(custom_templates: dict):
     os.makedirs("config", exist_ok=True)
-    json.dump(custom_templates, open(CUSTOM_TEMPLATES_FILE, "w", encoding="utf-8"),
-              indent=2, ensure_ascii=False)
+    json.dump(custom_templates, open(CUSTOM_TEMPLATES_FILE, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
 
 
 class GatewayConfig:
     def __init__(self, gw_id: str, template: str, overrides: dict = None):
-        self.id       = gw_id
+        self.id = gw_id
         self.template = template
-        self.spec     = dict(GATEWAY_TEMPLATES.get(template, {}))
+        self.spec = dict(GATEWAY_TEMPLATES.get(template, {}))
         if overrides:
             self._deep_merge(self.spec.get("config", {}), overrides)
         self.created_at = time.time()
-        self.status     = "configured"
+        self.status = "configured"
 
     def _deep_merge(self, base: dict, override: dict):
         for k, v in override.items():
@@ -124,21 +128,22 @@ class GatewayConfig:
 
     def to_dict(self) -> dict:
         return {
-            "id": self.id, "template": self.template,
-            "spec": self.spec, "created_at": self.created_at,
+            "id": self.id,
+            "template": self.template,
+            "spec": self.spec,
+            "created_at": self.created_at,
             "status": self.status,
         }
 
     def save(self) -> str:
         path = os.path.join(GATEWAY_DIR, f"{self.id}.json")
-        json.dump(self.to_dict(), open(path, "w", encoding="utf-8"),
-                  indent=2, ensure_ascii=False)
+        json.dump(self.to_dict(), open(path, "w", encoding="utf-8"), indent=2, ensure_ascii=False)
         return path
 
 
 class GatewayManager:
     def __init__(self, iot_bridge=None):
-        self.iot      = iot_bridge
+        self.iot = iot_bridge
         self._gateways: dict[str, GatewayConfig] = {}
         self._templates: dict[str, dict] = dict(GATEWAY_TEMPLATES)
         self._templates.update(_load_custom_templates())
@@ -149,8 +154,8 @@ class GatewayManager:
             if f.endswith(".json"):
                 try:
                     data = json.load(open(os.path.join(GATEWAY_DIR, f), encoding="utf-8"))
-                    gw   = GatewayConfig(data["id"], data["template"])
-                    gw.spec   = data["spec"]
+                    gw = GatewayConfig(data["id"], data["template"])
+                    gw.spec = data["spec"]
                     gw.status = data.get("status", "configured")
                     self._gateways[gw.id] = gw
                 except Exception as e:
@@ -168,12 +173,11 @@ class GatewayManager:
             "mesh": "argos_mesh_gw",
         }.get(protocol_name, "custom_bridge")
 
-    def create_gateway(self, gw_id: str, template: str,
-                       overrides: dict = None) -> str:
+    def create_gateway(self, gw_id: str, template: str, overrides: dict = None) -> str:
         if template not in self._templates:
             avail = ", ".join(self._templates.keys())
             return f"❌ Шаблон не найден. Доступные: {avail}"
-        gw   = GatewayConfig(gw_id, template, overrides)
+        gw = GatewayConfig(gw_id, template, overrides)
         gw.spec = dict(self._templates.get(template, gw.spec))
         if overrides:
             gw._deep_merge(gw.spec.get("config", {}), overrides)
@@ -181,10 +185,12 @@ class GatewayManager:
         self._gateways[gw_id] = gw
         bus.emit("gateway.created", {"id": gw_id, "template": template}, "gateway_manager")
         log.info("Шлюз создан: %s (%s) → %s", gw_id, template, path)
-        return (f"✅ Шлюз '{gw_id}' создан:\n"
-                f"   Шаблон: {template}\n"
-                f"   Описание: {self._templates[template].get('description', 'custom gateway template')}\n"
-                f"   Конфиг: {path}")
+        return (
+            f"✅ Шлюз '{gw_id}' создан:\n"
+            f"   Шаблон: {template}\n"
+            f"   Описание: {self._templates[template].get('description', 'custom gateway template')}\n"
+            f"   Конфиг: {path}"
+        )
 
     def prepare_firmware(self, gw_id: str, template: str, port: str = None) -> str:
         """Создаёт (или обновляет) шлюз по шаблону и готовит прошивку/конфиг.
@@ -231,37 +237,38 @@ class GatewayManager:
 
     def _flash_zigbee2mqtt(self, gw: GatewayConfig, port: str = None) -> str:
         """Генерирует конфиг для Zigbee2MQTT и запускает."""
-        serial_port = port or gw.spec.get("config",{}).get("serial",{}).get("port", "/dev/ttyUSB0")
-        z2m_config  = {
-            "homeassistant":    gw.spec["config"].get("homeassistant", False),
-            "permit_join":      gw.spec["config"].get("permit_join", True),
+        serial_port = port or gw.spec.get("config", {}).get("serial", {}).get("port", "/dev/ttyUSB0")
+        z2m_config = {
+            "homeassistant": gw.spec["config"].get("homeassistant", False),
+            "permit_join": gw.spec["config"].get("permit_join", True),
             "mqtt": {
-                "base_topic":   gw.spec["config"]["mqtt"]["base_topic"],
-                "server":       gw.spec["config"]["mqtt"]["server"],
+                "base_topic": gw.spec["config"]["mqtt"]["base_topic"],
+                "server": gw.spec["config"]["mqtt"]["server"],
             },
-            "serial": {
-                "port": serial_port
-            },
+            "serial": {"port": serial_port},
         }
         z2m_dir = "config/zigbee2mqtt"
         os.makedirs(z2m_dir, exist_ok=True)
         cfg_path = f"{z2m_dir}/configuration.yaml"
         import yaml as _yaml
+
         try:
             _yaml.dump(z2m_config, open(cfg_path, "w"))
         except ImportError:
-            json.dump(z2m_config, open(cfg_path.replace(".yaml",".json"), "w"), indent=2)
+            json.dump(z2m_config, open(cfg_path.replace(".yaml", ".json"), "w"), indent=2)
         gw.status = "deployed"
         gw.save()
-        return (f"✅ Zigbee2MQTT конфиг создан: {cfg_path}\n"
-                f"   Порт: {serial_port}\n"
-                f"   Запуск: npx zigbee2mqtt\n"
-                f"   Docker: docker run -d koenkk/zigbee2mqtt")
+        return (
+            f"✅ Zigbee2MQTT конфиг создан: {cfg_path}\n"
+            f"   Порт: {serial_port}\n"
+            f"   Запуск: npx zigbee2mqtt\n"
+            f"   Docker: docker run -d koenkk/zigbee2mqtt"
+        )
 
     def _flash_arduino(self, gw: GatewayConfig, port: str = None) -> str:
         """Генерирует скетч для ESP32/Arduino LoRa шлюза."""
-        freq = gw.spec.get("config",{}).get("frequency", 433.0)
-        mqtt = gw.spec.get("config",{}).get("mqtt_topic", "argos/lora")
+        freq = gw.spec.get("config", {}).get("frequency", 433.0)
+        mqtt = gw.spec.get("config", {}).get("mqtt_topic", "argos/lora")
         sketch = f"""// ArgosUniversal LoRa Gateway — автогенерация
 #include <SPI.h>
 #include <LoRa.h>
@@ -301,10 +308,12 @@ void loop() {{
         flash_cmd = ""
         if port:
             flash_cmd = f"\n   Прошивка: arduino-cli compile --upload -p {port}"
-        return (f"✅ Arduino скетч создан: {sketch_path}\n"
-                f"   Частота: {freq} MHz\n"
-                f"   MQTT топик: {mqtt}"
-                f"{flash_cmd}")
+        return (
+            f"✅ Arduino скетч создан: {sketch_path}\n"
+            f"   Частота: {freq} MHz\n"
+            f"   MQTT топик: {mqtt}"
+            f"{flash_cmd}"
+        )
 
     def _flash_lora_forwarder(self, gw: GatewayConfig) -> str:
         cfg = gw.spec.get("config", {})
@@ -318,35 +327,43 @@ void loop() {{
                 "keepalive_interval": 10,
                 "stat_interval": 30,
                 "push_timeout_ms": 100,
-            }
+            },
         }
         path = f"{GATEWAY_DIR}/{gw.id}_packet_forwarder.json"
         json.dump(pf_config, open(path, "w"), indent=2)
-        return (f"✅ LoRaWAN Packet Forwarder конфиг: {path}\n"
-                f"   Сервер: {cfg.get('server_address', 'eu1.cloud.thethings.network')}\n"
-                f"   GW ID: {cfg.get('gateway_id', 'AA555A0000000000')}\n"
-                f"   Запуск: ./packet_forwarder -c {path}")
+        return (
+            f"✅ LoRaWAN Packet Forwarder конфиг: {path}\n"
+            f"   Сервер: {cfg.get('server_address', 'eu1.cloud.thethings.network')}\n"
+            f"   GW ID: {cfg.get('gateway_id', 'AA555A0000000000')}\n"
+            f"   Запуск: ./packet_forwarder -c {path}"
+        )
 
     def _start_modbus(self, gw: GatewayConfig) -> str:
         cfg = gw.spec.get("config", {})
-        return (f"✅ Modbus RTU шлюз:\n"
-                f"   Порт: {cfg.get('serial', '/dev/ttyUSB0')}\n"
-                f"   Baudrate: {cfg.get('baudrate', 9600)}\n"
-                f"   Запуск: добавь устройства через register_device\n"
-                f"   pip install pymodbus")
+        return (
+            f"✅ Modbus RTU шлюз:\n"
+            f"   Порт: {cfg.get('serial', '/dev/ttyUSB0')}\n"
+            f"   Baudrate: {cfg.get('baudrate', 9600)}\n"
+            f"   Запуск: добавь устройства через register_device\n"
+            f"   pip install pymodbus"
+        )
 
     def _start_mesh_gw(self, gw: GatewayConfig) -> str:
         cfg = gw.spec.get("config", {})
-        return (f"✅ Mesh шлюз запущен:\n"
-                f"   UDP порт: {cfg.get('mesh_port', 9876)}\n"
-                f"   Мост к MQTT: {cfg.get('bridge_to_mqtt', True)}\n"
-                f"   Node ID: {cfg.get('node_id', 'rpi_gw_01')}")
+        return (
+            f"✅ Mesh шлюз запущен:\n"
+            f"   UDP порт: {cfg.get('mesh_port', 9876)}\n"
+            f"   Мост к MQTT: {cfg.get('bridge_to_mqtt', True)}\n"
+            f"   Node ID: {cfg.get('node_id', 'rpi_gw_01')}"
+        )
 
     def list_gateways(self) -> str:
         if not self._gateways:
-            return ("📡 Шлюзов нет.\n"
-                    f"Создай: создай шлюз [id] [шаблон]\n"
-                    f"Шаблоны: {', '.join(self._templates.keys())}")
+            return (
+                "📡 Шлюзов нет.\n"
+                f"Создай: создай шлюз [id] [шаблон]\n"
+                f"Шаблоны: {', '.join(self._templates.keys())}"
+            )
         lines = ["📡 IoT ШЛЮЗЫ:"]
         for gw in self._gateways.values():
             lines.append(f"  • {gw.id} [{gw.template}] статус={gw.status}")
@@ -358,9 +375,15 @@ void loop() {{
             lines.append(f"  • {name}: {tmpl['description']}")
         return "\n".join(lines)
 
-    def register_template(self, name: str, description: str, protocol: str,
-                          firmware: str = "custom_bridge", hardware: str = "Generic gateway",
-                          config: dict | None = None) -> str:
+    def register_template(
+        self,
+        name: str,
+        description: str,
+        protocol: str,
+        firmware: str = "custom_bridge",
+        hardware: str = "Generic gateway",
+        config: dict | None = None,
+    ) -> str:
         safe_name = (name or "").strip().lower().replace(" ", "_")
         protocol_name = (protocol or "").strip().lower()
         if not safe_name:
@@ -378,7 +401,8 @@ void loop() {{
             "hardware": hardware,
             "protocol": protocol_name,
             "firmware": selected_firmware,
-            "config": config or {
+            "config": config
+            or {
                 "transport": "serial",
                 "baudrate": 115200,
                 "notes": "auto-learned template",
@@ -386,14 +410,10 @@ void loop() {{
         }
         self._templates[safe_name] = template_data
 
-        custom = {
-            k: v for k, v in self._templates.items()
-            if k not in GATEWAY_TEMPLATES
-        }
+        custom = {k: v for k, v in self._templates.items() if k not in GATEWAY_TEMPLATES}
         _save_custom_templates(custom)
         status = "обновлён" if existed else "зарегистрирован"
-        return (f"✅ Шаблон {status}: {safe_name} [{protocol_name}]\n"
-            f"   Прошивка: {selected_firmware}")
+        return f"✅ Шаблон {status}: {safe_name} [{protocol_name}]\n" f"   Прошивка: {selected_firmware}"
 
     def templates(self) -> dict:
         return dict(self._templates)

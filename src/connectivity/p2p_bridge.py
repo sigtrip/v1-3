@@ -4,34 +4,38 @@ p2p_bridge.py — P2P Сеть Аргоса
   Объединяют вычислительную мощь, обмениваются навыками.
   Задачи распределяются по мощности и возрасту ноды.
 """
-import os
+
+import datetime
+import hashlib
 import json
+import os
+import platform
 import socket
 import threading
 import time
 import uuid
-import hashlib
-import platform
-import psutil
-import datetime
-import requests
 from collections import deque
 from types import SimpleNamespace
 from typing import Optional
 
+import psutil
+import requests
+
 try:
     from src.observability import get_acceptance_snapshot
 except Exception:  # pragma: no cover
+
     def get_acceptance_snapshot(window: int = 120) -> dict:
         return {"rate": 1.0, "samples": 0, "accepted": 0, "rejected": 0}
 
+
 # ── КОНСТАНТЫ ─────────────────────────────────────────────
-P2P_PORT        = 55771          # Порт для P2P связи
-BROADCAST_PORT  = 55772          # Порт для UDP-обнаружения
-HEARTBEAT_SEC   = 15             # Пульс каждые N секунд
-NODE_TIMEOUT    = 45             # Нода считается мёртвой через N секунд
-VERSION         = "1.0.0"
-NETWORK_SECRET  = os.getenv("ARGOS_NETWORK_SECRET", "argos_default_secret")
+P2P_PORT = 55771  # Порт для P2P связи
+BROADCAST_PORT = 55772  # Порт для UDP-обнаружения
+HEARTBEAT_SEC = 15  # Пульс каждые N секунд
+NODE_TIMEOUT = 45  # Нода считается мёртвой через N секунд
+VERSION = "1.0.0"
+NETWORK_SECRET = os.getenv("ARGOS_NETWORK_SECRET", "argos_default_secret")
 
 
 def p2p_protocol_roadmap() -> str:
@@ -65,12 +69,12 @@ def p2p_protocol_roadmap() -> str:
 # ═══════════════════════════════════════════════════════════
 class NodeProfile:
     def __init__(self):
-        self.node_id    = self._load_or_create_id()
-        self.birth      = self._load_or_create_birth()
-        self.version    = VERSION
-        self.os_type    = platform.system()
-        self.hostname   = socket.gethostname()
-        self.role       = self._resolve_role()
+        self.node_id = self._load_or_create_id()
+        self.birth = self._load_or_create_birth()
+        self.version = VERSION
+        self.os_type = platform.system()
+        self.hostname = socket.gethostname()
+        self.role = self._resolve_role()
 
     def _load_or_create_id(self) -> str:
         path = "config/node_id"
@@ -92,23 +96,19 @@ class NodeProfile:
 
     def get_power(self) -> dict:
         """Вычислительная мощность ноды (0–100)."""
-        cpu_free  = 100 - psutil.cpu_percent(interval=0.3)
-        ram       = psutil.virtual_memory()
-        ram_free  = (ram.available / ram.total) * 100
+        cpu_free = 100 - psutil.cpu_percent(interval=0.3)
+        ram = psutil.virtual_memory()
+        ram_free = (ram.available / ram.total) * 100
         cpu_cores = psutil.cpu_count(logical=False) or 1
 
         # Итоговый индекс мощности
-        power_index = int(
-            (cpu_free * 0.5) +
-            (ram_free * 0.3) +
-            min(cpu_cores * 5, 20)
-        )
+        power_index = int((cpu_free * 0.5) + (ram_free * 0.3) + min(cpu_cores * 5, 20))
         return {
-            "index":     power_index,
-            "cpu_free":  round(cpu_free, 1),
-            "ram_free":  round(ram_free, 1),
+            "index": power_index,
+            "cpu_free": round(cpu_free, 1),
+            "ram_free": round(ram_free, 1),
             "cpu_cores": cpu_cores,
-            "ram_gb":    round(ram.total / (1024**3), 1),
+            "ram_gb": round(ram.total / (1024**3), 1),
         }
 
     def get_age_days(self) -> float:
@@ -122,7 +122,8 @@ class NodeProfile:
     def get_authority(self) -> int:
         """Авторитет ноды = мощность × log(возраст+1). Старые и мощные — главные."""
         import math
-        age   = self.get_age_days()
+
+        age = self.get_age_days()
         power = self.get_power()["index"]
         return int(power * math.log(age + 2))
 
@@ -140,24 +141,23 @@ class NodeProfile:
 
     def get_skills(self) -> list:
         try:
-            return [f[:-3] for f in os.listdir("src/skills")
-                    if f.endswith(".py") and not f.startswith("__")]
+            return [f[:-3] for f in os.listdir("src/skills") if f.endswith(".py") and not f.startswith("__")]
         except Exception:
             return []
 
     def to_dict(self) -> dict:
         power = self.get_power()
         return {
-            "node_id":   self.node_id,
-            "birth":     self.birth,
-            "age_days":  round(self.get_age_days(), 2),
+            "node_id": self.node_id,
+            "birth": self.birth,
+            "age_days": round(self.get_age_days(), 2),
             "authority": self.get_authority(),
-            "version":   self.version,
-            "os":        self.os_type,
-            "hostname":  self.hostname,
-            "role":      self.role,
-            "power":     power,
-            "skills":    self.get_skills(),
+            "version": self.version,
+            "os": self.os_type,
+            "hostname": self.hostname,
+            "role": self.role,
+            "power": power,
+            "skills": self.get_skills(),
         }
 
 
@@ -176,15 +176,14 @@ class NodeRegistry:
         with self._lock:
             self._nodes[nid] = {
                 **profile,
-                "addr":      addr,
+                "addr": addr,
                 "last_seen": time.time(),
             }
 
     def remove_dead(self):
         now = time.time()
         with self._lock:
-            dead = [nid for nid, n in self._nodes.items()
-                    if now - n["last_seen"] > NODE_TIMEOUT]
+            dead = [nid for nid, n in self._nodes.items() if now - n["last_seen"] > NODE_TIMEOUT]
             for nid in dead:
                 del self._nodes[nid]
 
@@ -209,7 +208,7 @@ class NodeRegistry:
     def report(self, self_profile: dict) -> str:
         nodes = self.all()
         master = self.get_master()
-        total  = self.total_power() + self_profile.get("power", {}).get("index", 0)
+        total = self.total_power() + self_profile.get("power", {}).get("index", 0)
 
         lines = [
             f"🌐 ARGOS NETWORK — {len(nodes) + 1} нод(а) онлайн",
@@ -230,12 +229,12 @@ class NodeRegistry:
         if nodes:
             lines.append(f"\n📡 СОСЕДНИЕ НОДЫ:")
             for n in sorted(nodes, key=lambda x: -x.get("authority", 0)):
-                age   = n.get("age_days", 0)
-                pw    = n.get("power", {}).get("index", 0)
-                auth  = n.get("authority", 0)
-                host  = n.get("hostname", "unknown")
-                addr  = n.get("addr", "?")
-                sk    = len(n.get("skills", []))
+                age = n.get("age_days", 0)
+                pw = n.get("power", {}).get("index", 0)
+                auth = n.get("authority", 0)
+                host = n.get("hostname", "unknown")
+                addr = n.get("addr", "?")
+                sk = len(n.get("skills", []))
                 lines.append(
                     f"   🔹 {host} ({addr})\n"
                     f"      Возраст: {age:.1f}д | Мощность: {pw}/100 | Авторитет: {auth} | Навыки: {sk}"
@@ -251,8 +250,18 @@ class TaskDistributor:
     """Выбирает лучшую ноду для выполнения задачи."""
 
     HEAVY_KEYWORDS = (
-        "vision", "камер", "изображ", "скрин", "compile", "компиля",
-        "build", "прошив", "firmware", "video", "render", "train"
+        "vision",
+        "камер",
+        "изображ",
+        "скрин",
+        "compile",
+        "компиля",
+        "build",
+        "прошив",
+        "firmware",
+        "video",
+        "render",
+        "train",
     )
 
     def __init__(self, registry: NodeRegistry, self_profile: NodeProfile, bridge=None):
@@ -307,7 +316,7 @@ class TaskDistributor:
     def _consensus_role(self, node: dict, all_nodes: list[dict]) -> str:
         """
         Ролевая маршрутизация по формуле авторитета.
-        
+
         Правила:
           - Нода с наибольшим authority → Verifier-Node (валидация)
           - Ноды с role='gateway' или cpu_cores<=2 → Drafter-Node (черновики)
@@ -325,10 +334,13 @@ class TaskDistributor:
             return "drafter"
 
         # Самая мощная нода — Verifier (Master)
-        master = max(all_nodes, key=lambda n: (
-            float(n.get("authority", 0.0) or 0.0),
-            float(n.get("power", {}).get("ram_gb", 0.0) or 0.0),
-        ))
+        master = max(
+            all_nodes,
+            key=lambda n: (
+                float(n.get("authority", 0.0) or 0.0),
+                float(n.get("power", {}).get("ram_gb", 0.0) or 0.0),
+            ),
+        )
         if node.get("node_id") == master.get("node_id"):
             return "verifier"
 
@@ -358,11 +370,11 @@ class TaskDistributor:
         if task_type == "heavy":
             role_bonus = 22.0 if role == "server" else (8.0 if role == "worker" else -25.0)
             return (
-                (auth * self.weights["heavy_auth"]) +
-                (power * self.weights["heavy_power"]) +
-                role_bonus +
-                min(ram_gb, 64.0) * self.weights["heavy_ram"] -
-                dynamic_penalty
+                (auth * self.weights["heavy_auth"])
+                + (power * self.weights["heavy_power"])
+                + role_bonus
+                + min(ram_gb, 64.0) * self.weights["heavy_ram"]
+                - dynamic_penalty
             )
 
         if task_type == "verify":
@@ -389,12 +401,13 @@ class TaskDistributor:
           'old'   — нужен авторитет (старая нода)
         """
         nodes = self.registry.all()
-        me    = self.me.to_dict()
-        all_  = [me] + nodes
+        me = self.me.to_dict()
+        all_ = [me] + nodes
 
         if task_type == "heavy":
             candidates = [
-                n for n in all_
+                n
+                for n in all_
                 if n.get("role", "worker") != "gateway"
                 and n.get("power", {}).get("index", 0) >= 45
                 and n.get("power", {}).get("ram_gb", 0) >= 4
@@ -424,16 +437,14 @@ class TaskDistributor:
         me = self.me.to_dict()
         all_nodes = [me] + nodes
         ranked = sorted(all_nodes, key=lambda n: self._score_node(n, task_type, all_nodes), reverse=True)
-        return ranked[:max(1, min(limit, 5))]
+        return ranked[: max(1, min(limit, 5))]
 
     def _exec_local(self, prompt: str, resolved_type: str, core=None) -> str:
         if not core:
             return "[LOCAL] Ядро не подключено."
         started = time.time()
         try:
-            res = core._ask_gemini("Ты Аргос.", prompt) or \
-                  core._ask_ollama("Ты Аргос.", prompt) or \
-                  "Нет ответа от ИИ."
+            res = core._ask_gemini("Ты Аргос.", prompt) or core._ask_ollama("Ты Аргос.", prompt) or "Нет ответа от ИИ."
             if self.bridge:
                 self.bridge.record_local_query((time.time() - started) * 1000.0, ok=True)
             return f"[LOCAL:{resolved_type}] {res}"
@@ -452,13 +463,17 @@ class TaskDistributor:
             sock = socket.socket()
             sock.settimeout(8)
             sock.connect((addr, P2P_PORT))
-            sock.sendall(json.dumps({
-                "action": "query",
-                "prompt": prompt,
-                "task_type": resolved_type,
-                "request_id": req_id,
-                "secret": NETWORK_SECRET,
-            }).encode())
+            sock.sendall(
+                json.dumps(
+                    {
+                        "action": "query",
+                        "prompt": prompt,
+                        "task_type": resolved_type,
+                        "request_id": req_id,
+                        "secret": NETWORK_SECRET,
+                    }
+                ).encode()
+            )
             raw = sock.recv(65536)
             sock.close()
             data = json.loads(raw.decode() or "{}")
@@ -498,12 +513,12 @@ class TaskDistributor:
 # ═══════════════════════════════════════════════════════════
 class ArgosBridge:
     def __init__(self, core=None):
-        self.core        = core
-        self.profile     = NodeProfile()
-        self.registry    = NodeRegistry()
+        self.core = core
+        self.profile = NodeProfile()
+        self.registry = NodeRegistry()
         self.distributor = TaskDistributor(self.registry, self.profile, bridge=self)
-        self._running    = False
-        self._local_ip   = self._get_local_ip()
+        self._running = False
+        self._local_ip = self._get_local_ip()
         self._metrics_lock = threading.Lock()
         self._inflight = 0
         self._done = 0
@@ -569,12 +584,16 @@ class ArgosBridge:
             sock = socket.socket()
             sock.settimeout(10)
             sock.connect((addr, P2P_PORT))
-            sock.sendall(json.dumps({
-                "action": "run_task",
-                "task": task_data,
-                "request_id": req_id,
-                "secret": NETWORK_SECRET,
-            }).encode())
+            sock.sendall(
+                json.dumps(
+                    {
+                        "action": "run_task",
+                        "task": task_data,
+                        "request_id": req_id,
+                        "secret": NETWORK_SECRET,
+                    }
+                ).encode()
+            )
             raw = sock.recv(65536)
             sock.close()
             data = json.loads(raw.decode() or "{}")
@@ -605,12 +624,12 @@ class ArgosBridge:
         self._running = True
         self._init_transport_registry()
         threading.Thread(target=self._udp_broadcaster, daemon=True).start()
-        threading.Thread(target=self._udp_listener,    daemon=True).start()
-        threading.Thread(target=self._tcp_server,      daemon=True).start()
-        threading.Thread(target=self._heartbeat_loop,  daemon=True).start()
+        threading.Thread(target=self._udp_listener, daemon=True).start()
+        threading.Thread(target=self._tcp_server, daemon=True).start()
+        threading.Thread(target=self._heartbeat_loop, daemon=True).start()
 
         transport_lines = []
-        if hasattr(self, '_transport_registry'):
+        if hasattr(self, "_transport_registry"):
             for name, t in self._transport_registry.all_available():
                 transport_lines.append(f"   Transport: {name} ✓")
 
@@ -628,10 +647,13 @@ class ArgosBridge:
         """Инициализирует реестр транспортов: TCP + WireGuard + ZeroTier + ZKP."""
         try:
             from src.connectivity.p2p_transport import (
-                TransportRegistry, TCPTransport,
-                WireGuardTransport, ZeroTierTransport,
+                TCPTransport,
+                TransportRegistry,
+                WireGuardTransport,
+                ZeroTierTransport,
                 ZKPTransportWrapper,
             )
+
             self._transport_registry = TransportRegistry()
 
             # TCP — всегда
@@ -656,6 +678,7 @@ class ArgosBridge:
             zkp_enabled = os.getenv("ARGOS_P2P_ZKP", "off").strip().lower() in {"1", "on", "true", "yes"}
             if zkp_enabled:
                 from src.security.zkp import ArgosZKPEngine
+
                 zkp = ArgosZKPEngine(
                     node_id=self.profile.node_id,
                     network_secret=NETWORK_SECRET,
@@ -673,14 +696,14 @@ class ArgosBridge:
 
     def register_transport(self, name: str, transport, weight: float = 1.0):
         """Публичный API для регистрации custom-транспортов."""
-        if hasattr(self, '_transport_registry') and self._transport_registry:
+        if hasattr(self, "_transport_registry") and self._transport_registry:
             self._transport_registry.register(name, transport, weight)
             return f"✅ Транспорт '{name}' зарегистрирован (weight={weight:.2f})"
         return f"❌ Реестр транспортов не инициализирован"
 
     def transport_status(self) -> str:
         """Статус всех зарегистрированных транспортов."""
-        if hasattr(self, '_transport_registry') and self._transport_registry:
+        if hasattr(self, "_transport_registry") and self._transport_registry:
             return self._transport_registry.status()
         return "📡 Transport registry: не инициализирован"
 
@@ -763,11 +786,13 @@ class ArgosBridge:
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         while self._running:
             try:
-                payload = json.dumps({
-                    "type":    "ARGOS_HELLO",
-                    "profile": self.profile.to_dict(),
-                    "sign":    self._sign(self.profile.to_dict()),
-                }).encode()
+                payload = json.dumps(
+                    {
+                        "type": "ARGOS_HELLO",
+                        "profile": self.profile.to_dict(),
+                        "sign": self._sign(self.profile.to_dict()),
+                    }
+                ).encode()
                 sock.sendto(payload, ("<broadcast>", BROADCAST_PORT))
             except Exception:
                 pass
@@ -827,8 +852,8 @@ class ArgosBridge:
 
     def _handle_client(self, conn: socket.socket, addr: str):
         try:
-            raw  = conn.recv(65536)
-            msg  = json.loads(raw.decode())
+            raw = conn.recv(65536)
+            msg = json.loads(raw.decode())
 
             # Проверка секрета
             if msg.get("secret") != NETWORK_SECRET:
@@ -842,21 +867,27 @@ class ArgosBridge:
                 req_id = str(msg.get("request_id", "") or "").strip()
                 cached = self._cache_get(req_id)
                 if cached is not None:
-                    conn.sendall(json.dumps({
-                        "answer": cached,
-                        "cached": True,
-                        "node_id": self.profile.node_id,
-                        "host": self.profile.hostname,
-                    }).encode())
+                    conn.sendall(
+                        json.dumps(
+                            {
+                                "answer": cached,
+                                "cached": True,
+                                "node_id": self.profile.node_id,
+                                "host": self.profile.hostname,
+                            }
+                        ).encode()
+                    )
                     return
 
                 with self._metrics_lock:
                     self._inflight += 1
                 started = time.time()
                 if self.core:
-                    answer = (self.core._ask_gemini("Ты Аргос.", prompt) or
-                              self.core._ask_ollama("Ты Аргос.", prompt) or
-                              "Нет ответа от ИИ.")
+                    answer = (
+                        self.core._ask_gemini("Ты Аргос.", prompt)
+                        or self.core._ask_ollama("Ты Аргос.", prompt)
+                        or "Нет ответа от ИИ."
+                    )
                 else:
                     answer = "Ядро не подключено на этой ноде."
 
@@ -865,12 +896,16 @@ class ArgosBridge:
                 with self._metrics_lock:
                     self._inflight = max(0, self._inflight - 1)
                 self._cache_put(req_id, answer)
-                conn.sendall(json.dumps({
-                    "answer":  answer,
-                    "node_id": self.profile.node_id,
-                    "host":    self.profile.hostname,
-                    "runtime": self._runtime_status(),
-                }).encode())
+                conn.sendall(
+                    json.dumps(
+                        {
+                            "answer": answer,
+                            "node_id": self.profile.node_id,
+                            "host": self.profile.hostname,
+                            "runtime": self._runtime_status(),
+                        }
+                    ).encode()
+                )
 
             elif action == "sync_skills":
                 # Запрашивающая нода хочет получить список наших навыков
@@ -925,11 +960,15 @@ class ArgosBridge:
                     self.record_local_query(elapsed, ok=True)
                     with self._metrics_lock:
                         self._inflight = max(0, self._inflight - 1)
-                    conn.sendall(json.dumps({
-                        "ok": True,
-                        "output": output,
-                        "runtime": self._runtime_status(),
-                    }).encode())
+                    conn.sendall(
+                        json.dumps(
+                            {
+                                "ok": True,
+                                "output": output,
+                                "runtime": self._runtime_status(),
+                            }
+                        ).encode()
+                    )
                 except Exception as e:
                     with self._metrics_lock:
                         self._errors += 1
@@ -985,9 +1024,9 @@ class ArgosBridge:
         all_nodes = [me] + nodes
 
         # Acceptance Rate breakdown
-        acc_rate = float(acceptance.get('rate', 1.0))
-        acc_samples = int(acceptance.get('samples', 0) or 0)
-        acc_avg_sim = float(acceptance.get('avg_similarity', 1.0))
+        acc_rate = float(acceptance.get("rate", 1.0))
+        acc_samples = int(acceptance.get("samples", 0) or 0)
+        acc_avg_sim = float(acceptance.get("avg_similarity", 1.0))
 
         lines = [
             "📊 P2P TELEMETRY",
@@ -1004,9 +1043,11 @@ class ArgosBridge:
         # Per-drafter quality из metrik
         try:
             from src.observability import Metrics as ObsMetrics
+
             snap = ObsMetrics.snapshot()
-            drafter_gauges = {k: v for k, v in snap.get("gauges", {}).items()
-                             if k.startswith("drafter.last_similarity.")}
+            drafter_gauges = {
+                k: v for k, v in snap.get("gauges", {}).items() if k.startswith("drafter.last_similarity.")
+            }
             if drafter_gauges:
                 lines.append("")
                 lines.append("  🎯 PER-DRAFTER QUALITY:")
@@ -1021,11 +1062,7 @@ class ArgosBridge:
         lines.append("")
         lines.append("  Scores (ai/heavy/draft/verify):")
 
-        ranked = sorted(
-            all_nodes,
-            key=lambda n: self.distributor._score_node(n, "ai", all_nodes),
-            reverse=True
-        )
+        ranked = sorted(all_nodes, key=lambda n: self.distributor._score_node(n, "ai", all_nodes), reverse=True)
         for node in ranked[:8]:
             ai_score = self.distributor._score_node(node, "ai", all_nodes)
             heavy_score = self.distributor._score_node(node, "heavy", all_nodes)
@@ -1051,9 +1088,9 @@ class ArgosBridge:
 
     def sync_skills_from_network(self) -> str:
         """Загружает навыки от всех нод в сети."""
-        nodes   = self.registry.all()
-        synced  = []
-        errors  = []
+        nodes = self.registry.all()
+        synced = []
+        errors = []
 
         for node in nodes:
             addr = node.get("addr")
@@ -1064,11 +1101,8 @@ class ArgosBridge:
                 sock = socket.socket()
                 sock.settimeout(5)
                 sock.connect((addr, P2P_PORT))
-                sock.sendall(json.dumps({
-                    "action": "sync_skills",
-                    "secret": NETWORK_SECRET
-                }).encode())
-                raw    = sock.recv(65536)
+                sock.sendall(json.dumps({"action": "sync_skills", "secret": NETWORK_SECRET}).encode())
+                raw = sock.recv(65536)
                 sock.close()
                 remote = json.loads(raw).get("skills", [])
 
@@ -1082,11 +1116,15 @@ class ArgosBridge:
                         s2 = socket.socket()
                         s2.settimeout(8)
                         s2.connect((addr, P2P_PORT))
-                        s2.sendall(json.dumps({
-                            "action": "get_skill",
-                            "skill":  skill,
-                            "secret": NETWORK_SECRET,
-                        }).encode())
+                        s2.sendall(
+                            json.dumps(
+                                {
+                                    "action": "get_skill",
+                                    "skill": skill,
+                                    "secret": NETWORK_SECRET,
+                                }
+                            ).encode()
+                        )
                         data = json.loads(s2.recv(65536))
                         s2.close()
 
@@ -1118,10 +1156,14 @@ class ArgosBridge:
             sock = socket.socket()
             sock.settimeout(5)
             sock.connect((ip, P2P_PORT))
-            sock.sendall(json.dumps({
-                "action": "status",
-                "secret": NETWORK_SECRET,
-            }).encode())
+            sock.sendall(
+                json.dumps(
+                    {
+                        "action": "status",
+                        "secret": NETWORK_SECRET,
+                    }
+                ).encode()
+            )
             data = json.loads(sock.recv(65536))
             sock.close()
             self.registry.update(data, ip)

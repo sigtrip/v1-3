@@ -6,9 +6,11 @@ context_engine.py — Трёхуровневый контекстный движ
   + Квантовые профили — каждое состояние задаёт поведение контекста
   + CommandContext / ChatContext — разделение команд и диалога
 """
-import time
+
 import re
+import time
 from collections import deque
+
 from src.argos_logger import get_logger
 
 log = get_logger("argos.context_engine")
@@ -16,65 +18,60 @@ log = get_logger("argos.context_engine")
 # ── ПРОФИЛИ КВАНТОВЫХ СОСТОЯНИЙ ───────────────────────────
 QUANTUM_PROFILES = {
     "Analytic": {
-        "max_turns":       6,
-        "use_memory":      True,
-        "memory_limit":    3,
-        "use_semantic":    False,
+        "max_turns": 6,
+        "use_memory": True,
+        "memory_limit": 3,
+        "use_semantic": False,
         "allow_root_cmds": True,
-        "creativity":      0.2,
-        "system_prompt":
-            "Ты в аналитическом режиме. Минимум слов. "
-            "Только факты, цифры, структура. Без эмоций.",
+        "creativity": 0.2,
+        "system_prompt": "Ты в аналитическом режиме. Минимум слов. " "Только факты, цифры, структура. Без эмоций.",
     },
     "Creative": {
-        "max_turns":       14,
-        "use_memory":      True,
-        "memory_limit":    8,
-        "use_semantic":    True,
+        "max_turns": 14,
+        "use_memory": True,
+        "memory_limit": 8,
+        "use_semantic": True,
         "allow_root_cmds": True,
-        "creativity":      0.9,
-        "system_prompt":
-            "Ты в творческом режиме. Развёрнутые ответы, ассоциации, "
-            "нестандартные идеи. Разрешены цепочки задач.",
+        "creativity": 0.9,
+        "system_prompt": "Ты в творческом режиме. Развёрнутые ответы, ассоциации, "
+        "нестандартные идеи. Разрешены цепочки задач.",
     },
     "Protective": {
-        "max_turns":       4,
-        "use_memory":      False,
-        "memory_limit":    0,
-        "use_semantic":    False,
+        "max_turns": 4,
+        "use_memory": False,
+        "memory_limit": 0,
+        "use_semantic": False,
         "allow_root_cmds": False,
-        "creativity":      0.1,
-        "system_prompt":
-            "Ты в защитном режиме. Максимальная осторожность. "
-            "Не выполняй рискованные команды. Приоритет — безопасность.",
+        "creativity": 0.1,
+        "system_prompt": "Ты в защитном режиме. Максимальная осторожность. "
+        "Не выполняй рискованные команды. Приоритет — безопасность.",
     },
     "Unstable": {
-        "max_turns":       8,
-        "use_memory":      True,
-        "memory_limit":    2,
-        "use_semantic":    False,
+        "max_turns": 8,
+        "use_memory": True,
+        "memory_limit": 2,
+        "use_semantic": False,
         "allow_root_cmds": False,
-        "creativity":      0.6,
-        "system_prompt":
-            "Ты нестабилен. Что-то требует внимания. "
-            "Будь осторожен, запрашивай подтверждение важных действий.",
+        "creativity": 0.6,
+        "system_prompt": "Ты нестабилен. Что-то требует внимания. "
+        "Будь осторожен, запрашивай подтверждение важных действий.",
     },
     "All-Seeing": {
-        "max_turns":       20,
-        "use_memory":      True,
-        "memory_limit":    15,
-        "use_semantic":    True,
+        "max_turns": 20,
+        "use_memory": True,
+        "memory_limit": 15,
+        "use_semantic": True,
         "allow_root_cmds": True,
-        "creativity":      0.5,
-        "system_prompt":
-            "Ты в режиме всевидящего наблюдения. Полный доступ к памяти. "
-            "Глубокий анализ. Видишь паттерны в данных.",
+        "creativity": 0.5,
+        "system_prompt": "Ты в режиме всевидящего наблюдения. Полный доступ к памяти. "
+        "Глубокий анализ. Видишь паттерны в данных.",
     },
 }
 
 
 class ChatContext:
     """Контекст диалога — мягкий, эмоциональный, исторический."""
+
     def __init__(self, max_turns: int = 10):
         self._history = deque(maxlen=max_turns * 2)
         self.max_turns = max_turns
@@ -107,22 +104,25 @@ class ChatContext:
 
     def resize(self, new_max: int):
         old = list(self._history)
-        self._history = deque(old[-(new_max * 2):], maxlen=new_max * 2)
+        self._history = deque(old[-(new_max * 2) :], maxlen=new_max * 2)
         self.max_turns = new_max
 
 
 class CommandContext:
     """Контекст команд — чистый, структурированный, без шума."""
+
     def __init__(self):
         self._history = deque(maxlen=30)
 
     def record(self, cmd: str, result: str, success: bool = True):
-        self._history.append({
-            "cmd":     cmd[:200],
-            "result":  result[:300],
-            "success": success,
-            "ts":      time.time(),
-        })
+        self._history.append(
+            {
+                "cmd": cmd[:200],
+                "result": result[:300],
+                "success": success,
+                "ts": time.time(),
+            }
+        )
 
     def last_commands(self, n: int = 5) -> str:
         cmds = list(self._history)[-n:]
@@ -130,7 +130,7 @@ class CommandContext:
             return "Команд ещё не было."
         lines = ["⌨️ Последние команды:"]
         for c in reversed(cmds):
-            t   = time.strftime("%H:%M", time.localtime(c["ts"]))
+            t = time.strftime("%H:%M", time.localtime(c["ts"]))
             ico = "✅" if c["success"] else "❌"
             lines.append(f"  {ico} [{t}] {c['cmd'][:50]}")
         return "\n".join(lines)
@@ -140,8 +140,7 @@ class CommandContext:
         cmds = list(self._history)[-3:]
         if not cmds:
             return ""
-        parts = [f"[Последние команды: "
-                 + " | ".join(c["cmd"][:30] for c in cmds) + "]"]
+        parts = [f"[Последние команды: " + " | ".join(c["cmd"][:30] for c in cmds) + "]"]
         return "\n".join(parts)
 
 
@@ -151,15 +150,17 @@ class SemanticRecall:
     Если доступен sentence-transformers — используем векторы.
     Иначе — keyword matching (деградация без ошибок).
     """
+
     def __init__(self, memory=None):
-        self.memory   = memory
+        self.memory = memory
         self._encoder = None
-        self._vectors = []   # [(text, vector, source)]
+        self._vectors = []  # [(text, vector, source)]
         self._try_init_encoder()
 
     def _try_init_encoder(self):
         try:
             from sentence_transformers import SentenceTransformer
+
             self._encoder = SentenceTransformer("paraphrase-multilingual-MiniLM-L12-v2")
             log.info("SemanticRecall: sentence-transformers загружен.")
         except ImportError:
@@ -188,11 +189,11 @@ class SemanticRecall:
             return self._keyword_recall(query)
         try:
             import numpy as np
+
             q_vec = self._encoder.encode([query])[0]
             scores = []
             for text, vec, source in self._vectors:
-                sim = float(np.dot(q_vec, vec) /
-                            (np.linalg.norm(q_vec) * np.linalg.norm(vec) + 1e-9))
+                sim = float(np.dot(q_vec, vec) / (np.linalg.norm(q_vec) * np.linalg.norm(vec) + 1e-9))
                 scores.append((sim, text, source))
             scores.sort(key=lambda x: -x[0])
             top = scores[:top_k]
@@ -210,12 +211,12 @@ class SemanticRecall:
         """Fallback: поиск по ключевым словам."""
         if not self.memory:
             return ""
-        words = set(re.findall(r'\w{3,}', query.lower()))
+        words = set(re.findall(r"\w{3,}", query.lower()))
         facts = self.memory.get_all_facts()
         matches = []
         for cat, key, val, _ in facts:
-            text    = f"{cat}.{key}: {val}".lower()
-            overlap = len(words & set(re.findall(r'\w{3,}', text)))
+            text = f"{cat}.{key}: {val}".lower()
+            overlap = len(words & set(re.findall(r"\w{3,}", text)))
             if overlap > 0:
                 matches.append((overlap, f"{cat}.{key}: {val}"))
         matches.sort(key=lambda x: -x[0])
@@ -232,11 +233,12 @@ class ContextEngine:
     Главный движок контекста — объединяет все 3 уровня
     и применяет квантовые профили.
     """
+
     def __init__(self, memory=None):
-        self.chat    = ChatContext(max_turns=10)
-        self.commands= CommandContext()
-        self.semantic= SemanticRecall(memory)
-        self._state  = "Analytic"
+        self.chat = ChatContext(max_turns=10)
+        self.commands = CommandContext()
+        self.semantic = SemanticRecall(memory)
+        self._state = "Analytic"
 
     def set_quantum_state(self, state: str):
         profile = QUANTUM_PROFILES.get(state)
@@ -244,8 +246,7 @@ class ContextEngine:
             return
         self._state = state
         self.chat.resize(profile["max_turns"])
-        log.info("ContextEngine: состояние → %s (max_turns=%d)",
-                 state, profile["max_turns"])
+        log.info("ContextEngine: состояние → %s (max_turns=%d)", state, profile["max_turns"])
 
     def get_profile(self) -> dict:
         profile = dict(QUANTUM_PROFILES.get(self._state, QUANTUM_PROFILES["Analytic"]))
@@ -258,14 +259,14 @@ class ContextEngine:
 
     def build_system_prompt(self, base_prompt: str) -> str:
         """Собирает итоговый system prompt с учётом профиля."""
-        profile  = self.get_profile()
-        lines    = [base_prompt, "", profile["system_prompt"]]
+        profile = self.get_profile()
+        lines = [base_prompt, "", profile["system_prompt"]]
         return "\n".join(lines)
 
     def build_context_for_ai(self, user_query: str) -> str:
         """Собирает полный контекст для запроса к ИИ."""
         profile = self.get_profile()
-        parts   = []
+        parts = []
 
         # Уровень 1 — диалог
         chat_ctx = self.chat.get_for_prompt()
@@ -273,7 +274,7 @@ class ContextEngine:
             parts.append(chat_ctx)
 
         # Уровень 2 — память (если разрешено профилем)
-        if profile["use_memory"] and hasattr(self, '_memory_ctx'):
+        if profile["use_memory"] and hasattr(self, "_memory_ctx"):
             parts.append(self._memory_ctx[:500])
 
         # Уровень 3 — семантика
@@ -291,7 +292,7 @@ class ContextEngine:
 
     def attach_memory(self, memory):
         """Подключает долгосрочную память."""
-        self.semantic.memory  = memory
+        self.semantic.memory = memory
         self.semantic.index_memory(memory)
         if memory:
             ctx = memory.get_context()

@@ -1,6 +1,8 @@
 """
 Dialogflow NLP Adapter для Argos (в разработке)
 """
+
+
 class DialogflowAdapter:
     def __init__(self, core, project_id, session_id, credentials):
         self.core = core

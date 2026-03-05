@@ -3,21 +3,22 @@ bootloader_manager.py — Управление загрузчиком (своё 
   Windows: bcdedit, EFI entries
   Linux:   GRUB, systemd-boot, EFI
   Android: fastboot, TWRP
-  
+
   ⚠️ Все операции требуют явного подтверждения пользователя.
 """
+
+import json
 import os
-import sys
 import platform
 import subprocess
-import json
+import sys
 
 OS = platform.system()
 
 
 class BootloaderManager:
     def __init__(self):
-        self.os_type    = OS
+        self.os_type = OS
         self.is_android = "ANDROID_ROOT" in os.environ
         self._confirmed = False  # Флаг подтверждения пользователя
 
@@ -38,10 +39,7 @@ class BootloaderManager:
 
     def _require_confirm(self) -> str | None:
         if not self._confirmed:
-            return (
-                "🔒 Операция заблокирована. Требуется подтверждение.\n"
-                "Введи: подтверди ARGOS-BOOT-CONFIRM"
-            )
+            return "🔒 Операция заблокирована. Требуется подтверждение.\n" "Введи: подтверди ARGOS-BOOT-CONFIRM"
         return None
 
     # ══════════════════════════════════════════════════════
@@ -56,26 +54,18 @@ class BootloaderManager:
 
     def _windows_boot_info(self) -> str:
         try:
-            r = subprocess.run(
-                ["bcdedit", "/enum", "all"],
-                capture_output=True, text=True, encoding="cp866"
-            )
+            r = subprocess.run(["bcdedit", "/enum", "all"], capture_output=True, text=True, encoding="cp866")
             lines = r.stdout.strip().split("\n")[:40]
-            efi   = self._check_windows_efi()
-            return (
-                f"🖥️ ЗАГРУЗЧИК Windows:\n"
-                f"  Тип: {'UEFI/EFI' if efi else 'Legacy BIOS/MBR'}\n\n"
-                + "\n".join(lines[:25])
+            efi = self._check_windows_efi()
+            return f"🖥️ ЗАГРУЗЧИК Windows:\n" f"  Тип: {'UEFI/EFI' if efi else 'Legacy BIOS/MBR'}\n\n" + "\n".join(
+                lines[:25]
             )
         except Exception as e:
             return f"❌ bcdedit недоступен: {e}"
 
     def _check_windows_efi(self) -> bool:
         try:
-            r = subprocess.run(
-                ["bcdedit", "/enum", "firmware"],
-                capture_output=True, text=True
-            )
+            r = subprocess.run(["bcdedit", "/enum", "firmware"], capture_output=True, text=True)
             return r.returncode == 0
         except Exception:
             return False
@@ -88,10 +78,7 @@ class BootloaderManager:
 
         if is_efi:
             try:
-                r = subprocess.run(
-                    ["efibootmgr", "-v"],
-                    capture_output=True, text=True
-                )
+                r = subprocess.run(["efibootmgr", "-v"], capture_output=True, text=True)
                 lines.append("\n📋 EFI записи:")
                 lines.extend(["  " + l for l in r.stdout.split("\n")[:20]])
             except FileNotFoundError:
@@ -99,7 +86,7 @@ class BootloaderManager:
 
         # GRUB
         grub_cfg = "/boot/grub/grub.cfg"
-        grub2    = "/boot/grub2/grub.cfg"
+        grub2 = "/boot/grub2/grub.cfg"
         if os.path.exists(grub_cfg):
             lines.append(f"\n✅ GRUB: {grub_cfg}")
         elif os.path.exists(grub2):
@@ -112,29 +99,20 @@ class BootloaderManager:
     def _android_boot_info(self) -> str:
         lines = ["📱 Android ЗАГРУЗЧИК:"]
         try:
-            r = subprocess.run(
-                ["getprop", "ro.bootloader"],
-                capture_output=True, text=True
-            )
+            r = subprocess.run(["getprop", "ro.bootloader"], capture_output=True, text=True)
             lines.append(f"  Версия: {r.stdout.strip()}")
         except Exception:
             pass
 
         try:
-            r = subprocess.run(
-                ["getprop", "ro.boot.verifiedbootstate"],
-                capture_output=True, text=True
-            )
+            r = subprocess.run(["getprop", "ro.boot.verifiedbootstate"], capture_output=True, text=True)
             lines.append(f"  Verified Boot: {r.stdout.strip()}")
         except Exception:
             pass
 
         # Проверка разблокировки загрузчика
         try:
-            r = subprocess.run(
-                ["getprop", "ro.boot.flash.locked"],
-                capture_output=True, text=True
-            )
+            r = subprocess.run(["getprop", "ro.boot.flash.locked"], capture_output=True, text=True)
             locked = r.stdout.strip() == "1"
             lines.append(f"  Загрузчик: {'🔒 Заблокирован' if locked else '🔓 Разблокирован'}")
         except Exception:
@@ -147,14 +125,15 @@ class BootloaderManager:
     # ══════════════════════════════════════════════════════
     def windows_add_boot_entry(self, label: str, path: str) -> str:
         guard = self._require_confirm()
-        if guard: return guard
+        if guard:
+            return guard
         try:
             r = subprocess.run(
-                ["bcdedit", "/create", "/d", label, "/application", "bootsector"],
-                capture_output=True, text=True
+                ["bcdedit", "/create", "/d", label, "/application", "bootsector"], capture_output=True, text=True
             )
             # Получаем GUID новой записи
             import re
+
             guid = re.search(r"\{[a-f0-9-]+\}", r.stdout)
             if not guid:
                 return f"❌ Не удалось создать BCD-запись:\n{r.stdout}"
@@ -169,19 +148,18 @@ class BootloaderManager:
 
     def windows_set_timeout(self, seconds: int) -> str:
         guard = self._require_confirm()
-        if guard: return guard
+        if guard:
+            return guard
         try:
-            r = subprocess.run(
-                ["bcdedit", "/timeout", str(seconds)],
-                capture_output=True, text=True
-            )
+            r = subprocess.run(["bcdedit", "/timeout", str(seconds)], capture_output=True, text=True)
             return f"✅ Таймаут загрузки: {seconds}с"
         except Exception as e:
             return f"❌ {e}"
 
     def windows_set_default(self, entry_id: str) -> str:
         guard = self._require_confirm()
-        if guard: return guard
+        if guard:
+            return guard
         try:
             subprocess.run(["bcdedit", "/default", entry_id], check=True)
             return f"✅ Запись по умолчанию изменена: {entry_id}"
@@ -193,13 +171,11 @@ class BootloaderManager:
     # ══════════════════════════════════════════════════════
     def linux_update_grub(self) -> str:
         guard = self._require_confirm()
-        if guard: return guard
-        for cmd in ["update-grub", "grub-mkconfig -o /boot/grub/grub.cfg",
-                    "grub2-mkconfig -o /boot/grub2/grub.cfg"]:
+        if guard:
+            return guard
+        for cmd in ["update-grub", "grub-mkconfig -o /boot/grub/grub.cfg", "grub2-mkconfig -o /boot/grub2/grub.cfg"]:
             try:
-                r = subprocess.run(
-                    cmd.split(), capture_output=True, text=True
-                )
+                r = subprocess.run(cmd.split(), capture_output=True, text=True)
                 if r.returncode == 0:
                     return f"✅ GRUB обновлён:\n{r.stdout[-200:]}"
             except FileNotFoundError:
@@ -208,36 +184,39 @@ class BootloaderManager:
 
     def linux_install_grub(self, device: str = "/dev/sda") -> str:
         guard = self._require_confirm()
-        if guard: return guard
+        if guard:
+            return guard
         try:
             is_efi = os.path.exists("/sys/firmware/efi")
             if is_efi:
                 r = subprocess.run(
-                    ["sudo", "grub-install", "--target=x86_64-efi",
-                     "--efi-directory=/boot/efi", "--bootloader-id=ARGOS"],
-                    capture_output=True, text=True
+                    [
+                        "sudo",
+                        "grub-install",
+                        "--target=x86_64-efi",
+                        "--efi-directory=/boot/efi",
+                        "--bootloader-id=ARGOS",
+                    ],
+                    capture_output=True,
+                    text=True,
                 )
             else:
-                r = subprocess.run(
-                    ["sudo", "grub-install", device],
-                    capture_output=True, text=True
-                )
+                r = subprocess.run(["sudo", "grub-install", device], capture_output=True, text=True)
             if r.returncode == 0:
                 return f"✅ GRUB установлен на {device}"
             return f"❌ grub-install:\n{r.stderr[:300]}"
         except Exception as e:
             return f"❌ {e}"
 
-    def linux_add_efi_entry(self, label: str, loader: str,
-                            disk: str = "/dev/sda", part: int = 1) -> str:
+    def linux_add_efi_entry(self, label: str, loader: str, disk: str = "/dev/sda", part: int = 1) -> str:
         guard = self._require_confirm()
-        if guard: return guard
+        if guard:
+            return guard
         try:
             r = subprocess.run(
-                ["sudo", "efibootmgr", "-c",
-                 "-d", disk, "-p", str(part),
-                 "-L", label, "-l", loader],
-                capture_output=True, text=True
+                ["sudo", "efibootmgr", "-c", "-d", disk, "-p", str(part), "-L", label, "-l", loader],
+                capture_output=True,
+                text=True,
             )
             if r.returncode == 0:
                 return f"✅ EFI-запись добавлена: {label}"
@@ -247,26 +226,20 @@ class BootloaderManager:
 
     def linux_set_grub_default(self, entry: str) -> str:
         guard = self._require_confirm()
-        if guard: return guard
+        if guard:
+            return guard
         try:
-            subprocess.run(
-                ["sudo", "grub-set-default", entry], check=True
-            )
+            subprocess.run(["sudo", "grub-set-default", entry], check=True)
             return f"✅ GRUB по умолчанию: {entry}"
         except Exception as e:
             return f"❌ {e}"
 
-    def linux_add_grub_entry(self, name: str, kernel: str,
-                              initrd: str, params: str = "quiet splash") -> str:
+    def linux_add_grub_entry(self, name: str, kernel: str, initrd: str, params: str = "quiet splash") -> str:
         guard = self._require_confirm()
-        if guard: return guard
+        if guard:
+            return guard
         custom = "/etc/grub.d/40_custom"
-        entry  = (
-            f"\nmenuentry '{name}' {{\n"
-            f"    linux {kernel} {params}\n"
-            f"    initrd {initrd}\n"
-            f"}}\n"
-        )
+        entry = f"\nmenuentry '{name}' {{\n" f"    linux {kernel} {params}\n" f"    initrd {initrd}\n" f"}}\n"
         try:
             with open(custom, "a") as f:
                 f.write(entry)
@@ -280,21 +253,17 @@ class BootloaderManager:
     # ══════════════════════════════════════════════════════
     def android_fastboot_info(self) -> str:
         try:
-            r = subprocess.run(
-                ["fastboot", "getvar", "all"],
-                capture_output=True, text=True, timeout=10
-            )
+            r = subprocess.run(["fastboot", "getvar", "all"], capture_output=True, text=True, timeout=10)
             return f"📱 Fastboot:\n{r.stderr[:500]}"
         except Exception as e:
             return (
-                f"❌ fastboot недоступен: {e}\n"
-                "Устройство должно быть в режиме Fastboot:\n"
-                "  adb reboot bootloader"
+                f"❌ fastboot недоступен: {e}\n" "Устройство должно быть в режиме Fastboot:\n" "  adb reboot bootloader"
             )
 
     def android_unlock_bootloader(self) -> str:
         guard = self._require_confirm()
-        if guard: return guard
+        if guard:
+            return guard
         return (
             "📱 Разблокировка загрузчика Android:\n\n"
             "⚠️ ЭТО СОТРЁТ ВСЕ ДАННЫЕ НА УСТРОЙСТВЕ!\n\n"
@@ -312,17 +281,15 @@ class BootloaderManager:
 
     def android_flash_image(self, partition: str, img_path: str) -> str:
         guard = self._require_confirm()
-        if guard: return guard
+        if guard:
+            return guard
         if not os.path.exists(img_path):
             return f"❌ Файл не найден: {img_path}"
         safe_parts = ["recovery", "boot", "system", "vendor", "vbmeta"]
         if partition not in safe_parts:
             return f"❌ Раздел '{partition}' не в списке безопасных: {safe_parts}"
         try:
-            r = subprocess.run(
-                ["fastboot", "flash", partition, img_path],
-                capture_output=True, text=True, timeout=120
-            )
+            r = subprocess.run(["fastboot", "flash", partition, img_path], capture_output=True, text=True, timeout=120)
             if r.returncode == 0:
                 return f"✅ {partition} прошит: {img_path}"
             return f"❌ Fastboot ошибка:\n{r.stderr[:300]}"
@@ -334,7 +301,8 @@ class BootloaderManager:
     # ══════════════════════════════════════════════════════
     def install_persistence(self) -> str:
         guard = self._require_confirm()
-        if guard: return guard
+        if guard:
+            return guard
 
         results = []
 
@@ -342,10 +310,8 @@ class BootloaderManager:
             # 1. Early Launch — запуск до антивируса
             try:
                 import winreg
-                key = winreg.CreateKey(
-                    winreg.HKEY_LOCAL_MACHINE,
-                    r"SYSTEM\CurrentControlSet\Control\EarlyLaunch"
-                )
+
+                key = winreg.CreateKey(winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\EarlyLaunch")
                 results.append("✅ Windows: Early Launch запись создана")
                 winreg.CloseKey(key)
             except Exception as e:
@@ -354,15 +320,16 @@ class BootloaderManager:
             # 2. Winlogon — запуск при входе пользователя
             try:
                 import winreg
+
                 key = winreg.OpenKey(
                     winreg.HKEY_LOCAL_MACHINE,
                     r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon",
-                    0, winreg.KEY_SET_VALUE
+                    0,
+                    winreg.KEY_SET_VALUE,
                 )
-                py  = sys.executable
+                py = sys.executable
                 scr = os.path.join(os.path.abspath("."), "main.py")
-                winreg.SetValueEx(key, "Userinit", 0, winreg.REG_SZ,
-                                  f"userinit.exe, {py} {scr} --no-gui,")
+                winreg.SetValueEx(key, "Userinit", 0, winreg.REG_SZ, f"userinit.exe, {py} {scr} --no-gui,")
                 winreg.CloseKey(key)
                 results.append("✅ Windows: Winlogon persistence установлена")
             except Exception as e:
@@ -371,16 +338,23 @@ class BootloaderManager:
             # 3. Services — SCM сервис
             try:
                 svc_path = os.path.join(os.path.abspath("."), "main.py")
-                subprocess.run([
-                    "sc", "create", "ArgosCore",
-                    "binPath=",
-                    f'"{sys.executable}" "{svc_path}" --no-gui',
-                    "start=", "auto",
-                    "DisplayName=", "Argos Universal Core"
-                ], capture_output=True)
-                subprocess.run(["sc", "description", "ArgosCore",
-                                "Argos Universal OS — System Intelligence"],
-                               capture_output=True)
+                subprocess.run(
+                    [
+                        "sc",
+                        "create",
+                        "ArgosCore",
+                        "binPath=",
+                        f'"{sys.executable}" "{svc_path}" --no-gui',
+                        "start=",
+                        "auto",
+                        "DisplayName=",
+                        "Argos Universal Core",
+                    ],
+                    capture_output=True,
+                )
+                subprocess.run(
+                    ["sc", "description", "ArgosCore", "Argos Universal OS — System Intelligence"], capture_output=True
+                )
                 subprocess.run(["sc", "start", "ArgosCore"], capture_output=True)
                 results.append("✅ Windows: SCM сервис зарегистрирован")
             except Exception as e:
@@ -405,13 +379,10 @@ WantedBy=sysinit.target
             try:
                 with open("/tmp/argos_core.service", "w") as f:
                     f.write(svc)
-                subprocess.run(
-                    ["sudo", "cp", "/tmp/argos_core.service",
-                     "/etc/systemd/system/argos_core.service"]
-                )
+                subprocess.run(["sudo", "cp", "/tmp/argos_core.service", "/etc/systemd/system/argos_core.service"])
                 subprocess.run(["sudo", "systemctl", "daemon-reload"])
                 subprocess.run(["sudo", "systemctl", "enable", "argos_core"])
-                subprocess.run(["sudo", "systemctl", "start",  "argos_core"])
+                subprocess.run(["sudo", "systemctl", "start", "argos_core"])
                 results.append("✅ Linux: systemd persistence (sysinit.target)")
             except Exception as e:
                 results.append(f"⚠️ systemd: {e}")
@@ -448,14 +419,11 @@ echo "[ARGOS]: Pre-mount hook active" >> /dev/kmsg
                 with open("/tmp/argos_initramfs", "w") as f:
                     f.write(hook)
                 subprocess.run(
-                    ["sudo", "cp", "/tmp/argos_initramfs",
-                     "/etc/initramfs-tools/scripts/init-premount/argos"],
-                    capture_output=True
+                    ["sudo", "cp", "/tmp/argos_initramfs", "/etc/initramfs-tools/scripts/init-premount/argos"],
+                    capture_output=True,
                 )
                 subprocess.run(
-                    ["sudo", "chmod", "+x",
-                     "/etc/initramfs-tools/scripts/init-premount/argos"],
-                    capture_output=True
+                    ["sudo", "chmod", "+x", "/etc/initramfs-tools/scripts/init-premount/argos"], capture_output=True
                 )
                 subprocess.run(["sudo", "update-initramfs", "-u"], capture_output=True)
                 results.append("✅ Linux: initramfs hook (pre-mount уровень)")
@@ -469,7 +437,6 @@ echo "[ARGOS]: Pre-mount hook active" >> /dev/kmsg
     # ══════════════════════════════════════════════════════
     def full_report(self) -> str:
         return (
-            self.get_boot_info() + "\n\n" +
-            f"🔒 Подтверждение: {'✅ Активно' if self._confirmed else '❌ Требуется'}\n"
+            self.get_boot_info() + "\n\n" + f"🔒 Подтверждение: {'✅ Активно' if self._confirmed else '❌ Требуется'}\n"
             f"Для разблокировки: подтверди ARGOS-BOOT-CONFIRM"
         )

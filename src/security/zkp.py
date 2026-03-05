@@ -2,6 +2,7 @@
 zkp.py — легковесный Schnorr NIZK для P2P аутентификации нод.
 Не требует внешних зависимостей и работает поверх текущего транспорта.
 """
+
 import hashlib
 import secrets
 import time

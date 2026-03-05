@@ -1,8 +1,10 @@
-import psutil
 import platform
 import socket
-import time
 import subprocess
+import time
+
+import psutil
+
 
 class ArgosSensorBridge:
     def __init__(self):
@@ -14,7 +16,7 @@ class ArgosSensorBridge:
             "battery": self._check_battery(),
             "thermal": self._get_temperature(),
             "network": self._ping_status(),
-            "storage": self._disk_health()
+            "storage": self._disk_health(),
         }
         return vitals
 
@@ -25,7 +27,7 @@ class ArgosSensorBridge:
             return {
                 "percent": f"{battery.percent}%",
                 "plugged": "Connected" if battery.power_plugged else "Discharging",
-                "time_left": f"{battery.secsleft // 60} min" if battery.secsleft != -1 else "Calculating..."
+                "time_left": f"{battery.secsleft // 60} min" if battery.secsleft != -1 else "Calculating...",
             }
         return "N/A (Stationary Node)"
 
@@ -55,11 +57,8 @@ class ArgosSensorBridge:
 
     def _disk_health(self):
         """Проверка свободного места для расширения памяти Аргоса."""
-        usage = psutil.disk_usage('/')
-        return {
-            "free_gb": f"{usage.free // (2**30)} GB",
-            "load": f"{usage.percent}%"
-        }
+        usage = psutil.disk_usage("/")
+        return {"free_gb": f"{usage.free // (2**30)} GB", "load": f"{usage.percent}%"}
 
     def get_full_report(self):
         """Форматированный отчет для вывода в GUI или Telegram."""

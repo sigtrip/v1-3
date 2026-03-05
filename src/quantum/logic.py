@@ -1,21 +1,24 @@
+import math
 import os
 import random
-import math
-import time
 import threading
+import time
+from datetime import datetime
+
 import psutil
 import requests
-from datetime import datetime
 
 try:
     from qiskit import QuantumCircuit, transpile
     from qiskit_ibm_runtime import QiskitRuntimeService
+
     IBM_QISKIT_OK = True
 except Exception:
     QuantumCircuit = None
     transpile = None
     QiskitRuntimeService = None
     IBM_QISKIT_OK = False
+
 
 class BayesianNode:
     def __init__(self, name, parents=None, cpt=None):
@@ -27,29 +30,31 @@ class BayesianNode:
         key = tuple([parent_vals[p] for p in self.parents])
         return self.cpt.get(key, 0.5)
 
+
 class ArgosQuantum:
     """
     Вероятностная модель состояний Аргоса на основе упрощенных Байесовских сетей.
     Вместо if/else — матрица вероятностей, зависящая от факторов среды.
     """
+
     def __init__(self):
         self.states = ["Analytic", "Creative", "Protective", "Unstable", "All-Seeing"]
         self._lock = threading.Lock()
         self._forced_state = None
         self._forced_until = 0.0
         self._external = {"cpu": None, "ram": None, "temp": None, "until": 0.0}
-        
+
         # Факты о среде (Evidence)
         self.evidence = {
-            "high_load": False,    # CPU > 70%
-            "high_ram": False,     # RAM > 80%
-            "night_time": False,   # 22:00 - 06:00
-            "high_temp": False,    # Temperature > 75C
+            "high_load": False,  # CPU > 70%
+            "high_ram": False,  # RAM > 80%
+            "night_time": False,  # 22:00 - 06:00
+            "high_temp": False,  # Temperature > 75C
             "thermal_risk": False,
             "cpu": 0.0,
             "ram": 0.0,
             "temp": None,
-            "user_active": True    # Активность пользователя (заглушка)
+            "user_active": True,  # Активность пользователя (заглушка)
         }
 
     def force_state(self, state: str, ttl_seconds: int = 20):
@@ -59,8 +64,9 @@ class ArgosQuantum:
             self._forced_state = state
             self._forced_until = time.time() + max(1, int(ttl_seconds))
 
-    def set_external_telemetry(self, cpu: float | None = None, ram: float | None = None,
-                               temp: float | None = None, ttl_seconds: int = 15):
+    def set_external_telemetry(
+        self, cpu: float | None = None, ram: float | None = None, temp: float | None = None, ttl_seconds: int = 15
+    ):
         with self._lock:
             self._external = {
                 "cpu": cpu,
@@ -88,7 +94,7 @@ class ArgosQuantum:
         if ext.get("until", 0.0) > time.time() and ext.get(key) is not None:
             return ext.get(key)
         return sampler()
-        
+
     def _update_evidence(self):
         cpu = self._effective_metric("cpu", lambda: psutil.cpu_percent(interval=0.15))
         ram = self._effective_metric("ram", lambda: psutil.virtual_memory().percent)
@@ -100,13 +106,15 @@ class ArgosQuantum:
         self.evidence["high_load"] = self.evidence["cpu"] > 70
         self.evidence["high_ram"] = self.evidence["ram"] > 80
         self.evidence["high_temp"] = (self.evidence["temp"] or 0.0) > 75 if self.evidence["temp"] is not None else False
-        self.evidence["thermal_risk"] = (self.evidence["temp"] or 0.0) > 83 if self.evidence["temp"] is not None else False
-            
+        self.evidence["thermal_risk"] = (
+            (self.evidence["temp"] or 0.0) > 83 if self.evidence["temp"] is not None else False
+        )
+
         hour = datetime.now().hour
-        self.evidence["night_time"] = (hour >= 22 or hour < 6)
-        
+        self.evidence["night_time"] = hour >= 22 or hour < 6
+
         # TODO: Реальная проверка активности пользователя (клавиатура/мышь)
-        
+
     def infer_state(self):
         """
         Рассчитывает наиболее вероятное состояние системы на основе Bayesian Inference.
@@ -126,23 +134,23 @@ class ArgosQuantum:
                 "evidence": self.evidence,
                 "probabilities": probs,
             }
-        
-        probs = {s: 0.1 for s in self.states} # Начнем с априорной вероятности (uniform + noise)
-        
+
+        probs = {s: 0.1 for s in self.states}  # Начнем с априорной вероятности (uniform + noise)
+
         # Таблицы условных вероятностей (hardcoded simplified CPT)
         # 1. Если высокая нагрузка -> P(Protective)++, P(Analytic)+
         if self.evidence["high_load"]:
             probs["Protective"] += 0.4
-            probs["Analytic"]   += 0.2
-            probs["Creative"]   -= 0.1
+            probs["Analytic"] += 0.2
+            probs["Creative"] -= 0.1
 
         if self.evidence["high_ram"]:
             probs["Protective"] += 0.35
-            probs["Unstable"]   += 0.15
+            probs["Unstable"] += 0.15
 
         if self.evidence["high_temp"]:
             probs["Protective"] += 0.5
-            probs["Analytic"]   -= 0.1
+            probs["Analytic"] -= 0.1
 
         if self.evidence["thermal_risk"]:
             probs["Unstable"] += 1.0
@@ -151,31 +159,31 @@ class ArgosQuantum:
 
         if self.evidence["cpu"] > 92 or self.evidence["ram"] > 94:
             probs["Unstable"] += 0.8
-            
+
         # 2. Если ночь -> P(Creative)++, P(All-Seeing)+
         if self.evidence["night_time"]:
-            probs["Creative"]   += 0.5
+            probs["Creative"] += 0.5
             probs["All-Seeing"] += 0.3
-            probs["Analytic"]   -= 0.1
+            probs["Analytic"] -= 0.1
         else:
-            probs["Analytic"]   += 0.3 # Днём мы аналитики
-            
+            probs["Analytic"] += 0.3  # Днём мы аналитики
+
         # 3. Нормализация
         total = max(sum(probs.values()), 0.0001)
-        normalized_probs = {k: round(v/total, 3) for k, v in probs.items()}
-        
+        normalized_probs = {k: round(v / total, 3) for k, v in probs.items()}
+
         # Выбор наиболее вероятного (Max A Posteriori) или сэмплирование
         # Используем взвешенный выбор для "живости"
         states_list = list(normalized_probs.keys())
-        weights     = list(normalized_probs.values())
-        
+        weights = list(normalized_probs.values())
+
         chosen_state = random.choices(states_list, weights=weights, k=1)[0]
-        
+
         return {
             "state": chosen_state,
             "vector": [normalized_probs[s] for s in self.states],
             "evidence": self.evidence,
-            "probabilities": normalized_probs
+            "probabilities": normalized_probs,
         }
 
     def generate_state(self):
@@ -249,7 +257,7 @@ class ArgosQuantum:
                     continue
 
             items.sort(key=lambda x: (not x[2], x[3] if isinstance(x[3], int) else 999999, x[0]))
-            head = items[:max(1, int(limit))]
+            head = items[: max(1, int(limit))]
 
             lines = ["[🌌] IBM Quantum Runtime backend'ы:"]
             for name, simulator, operational, pending in head:
@@ -273,10 +281,7 @@ class ArgosQuantum:
             if backend_name:
                 backend = service.backend(backend_name)
             else:
-                candidates = [
-                    b for b in service.backends()
-                    if bool(getattr(b, "operational", True))
-                ]
+                candidates = [b for b in service.backends() if bool(getattr(b, "operational", True))]
                 if not candidates:
                     return "[⚠️] IBM Quantum: нет доступных operational backend'ов."
 
@@ -297,9 +302,7 @@ class ArgosQuantum:
             result = job.result()
             counts = result.get_counts()
             return (
-                f"[🧪] IBM Bell test выполнен на {backend_label}.\n"
-                f"  job_id: {job.job_id()}\n"
-                f"  counts: {counts}"
+                f"[🧪] IBM Bell test выполнен на {backend_label}.\n" f"  job_id: {job.job_id()}\n" f"  counts: {counts}"
             )
         except Exception as e:
             return f"[⚠️] IBM Quantum Bell test ошибка: {e}"
@@ -345,17 +348,13 @@ class ArgosQuantum:
 
             if q_resp.status_code == 200:
                 backends = q_resp.json()
-                real_hw = [b["name"] for b in backends
-                           if "simulator" not in b.get("name", "")]
+                real_hw = [b["name"] for b in backends if "simulator" not in b.get("name", "")]
                 hw_preview = ", ".join(real_hw[:3]) + ("…" if len(real_hw) > 3 else "")
-                return (f"[🌌] КВАНТОВЫЙ ЛИНК OK. "
-                        f"Узлов IBM: {len(backends)}. "
-                        f"Реальное железо: {hw_preview}")
+                return f"[🌌] КВАНТОВЫЙ ЛИНК OK. " f"Узлов IBM: {len(backends)}. " f"Реальное железо: {hw_preview}"
 
             return f"[⚠️] IBM backends: HTTP {q_resp.status_code}"
         except Exception as e:
             return f"[⚠️] Сетевая аномалия при запросе к IBM: {e}"
-
 
 
 # README alias

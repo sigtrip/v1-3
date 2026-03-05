@@ -1,8 +1,9 @@
 import os
 import sys
+
 from kivy.app import App
-from kivy.uix.button import Button
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 
@@ -28,9 +29,7 @@ class ArgosInterface(App):
             password=True,  # Скрыть ввод
         )
 
-        btn = Button(
-            text="ACTIVATE SYSTEM", size_hint=(1, 0.3), background_color=(0, 0.7, 1, 1)
-        )
+        btn = Button(text="ACTIVATE SYSTEM", size_hint=(1, 0.3), background_color=(0, 0.7, 1, 1))
         btn.bind(on_press=self.activate)
 
         layout.add_widget(self.status)

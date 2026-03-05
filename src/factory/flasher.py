@@ -1,7 +1,7 @@
 import os
-import time
 import shutil
 import subprocess
+import time
 from datetime import datetime
 
 try:
@@ -76,13 +76,15 @@ class AirFlasher:
     def detect_usb_chips(self):
         devices = []
         for p in self._comports():
-            devices.append({
-                "port": p.device,
-                "chip": self._guess_chip(p),
-                "description": getattr(p, "description", "") or "Unknown",
-                "vid": getattr(p, "vid", None),
-                "pid": getattr(p, "pid", None),
-            })
+            devices.append(
+                {
+                    "port": p.device,
+                    "chip": self._guess_chip(p),
+                    "description": getattr(p, "description", "") or "Unknown",
+                    "vid": getattr(p, "vid", None),
+                    "pid": getattr(p, "pid", None),
+                }
+            )
         return devices
 
     def detect_usb_chips_report(self) -> str:

@@ -9,6 +9,7 @@ air_snitch.py — AirSnitch (SDR / Sub-GHz Radio Scanner)
     ⚠ Модуль работает ТОЛЬКО в режиме приёма (RX).
     Передача (TX) и replay запрещены на уровне кода.
 """
+
 import os
 import re
 import time
@@ -26,14 +27,16 @@ log = get_logger("argos.airsnitch")
 
 # ── Graceful imports ─────────────────────────────────────
 try:
-    from rtlsdr import RtlSdr          # pip install pyrtlsdr
+    from rtlsdr import RtlSdr  # pip install pyrtlsdr
+
     RTLSDR_OK = True
 except ImportError:
     RtlSdr = None
     RTLSDR_OK = False
 
 try:
-    import SoapySDR                     # pip install SoapySDR
+    import SoapySDR  # pip install SoapySDR
+
     SOAPY_OK = True
 except ImportError:
     SoapySDR = None
@@ -41,6 +44,7 @@ except ImportError:
 
 try:
     import numpy as np
+
     NP_OK = True
 except ImportError:
     np = None
@@ -48,6 +52,7 @@ except ImportError:
 
 try:
     import serial
+
     SERIAL_OK = True
 except ImportError:
     serial = None
@@ -72,13 +77,14 @@ class Band(Enum):
 @dataclass
 class RFPacket:
     """Одна перехваченная RF-посылка (RX only)."""
+
     ts: float = field(default_factory=time.time)
     freq_hz: float = 0.0
     modulation: str = "unknown"
     rssi_dbm: float = -120.0
     raw_hex: str = ""
     decoded: str = ""
-    protocol: str = ""       # e.g. "Oregon Scientific", "Nexus-TH", "generic"
+    protocol: str = ""  # e.g. "Oregon Scientific", "Nexus-TH", "generic"
     device_id: str = ""
     repeated: int = 1
 
@@ -91,6 +97,7 @@ class RFPacket:
 @dataclass
 class SpectrumSlice:
     """Спектральный «снимок» полосы."""
+
     center_hz: float
     bw_hz: float
     peak_hz: float
@@ -149,9 +156,9 @@ class AirSnitch:
 
     def __init__(self, backend: str = "auto"):
         self._backend = self._detect_backend(backend)
-        self._sdr = None              # RTL-SDR handle
-        self._soapy = None            # SoapySDR handle
-        self._serial = None           # serial sub-GHz
+        self._sdr = None  # RTL-SDR handle
+        self._soapy = None  # SoapySDR handle
+        self._serial = None  # serial sub-GHz
         self._lock = threading.Lock()
         self._running = False
         self._monitor_thread: Optional[threading.Thread] = None
@@ -180,8 +187,12 @@ class AirSnitch:
         self._sample_rate = int(os.getenv("ARGOS_AIRSNITCH_SAMPLERATE", "1024000") or "1024000")
         self._gain = os.getenv("ARGOS_AIRSNITCH_GAIN", "auto").strip()
 
-        log.info("AirSnitch v%s | backend=%s | bands=%s",
-                 self.VERSION, self._backend, [f"{b/1e6:.2f}MHz" for b in self._bands])
+        log.info(
+            "AirSnitch v%s | backend=%s | bands=%s",
+            self.VERSION,
+            self._backend,
+            [f"{b/1e6:.2f}MHz" for b in self._bands],
+        )
 
     # ── Backend Detection ────────────────────────────────
     @staticmethod
@@ -258,8 +269,7 @@ class AirSnitch:
             self._serial = None
 
     # ── Spectrum Analysis ────────────────────────────────
-    def scan_spectrum(self, freq_hz: float = 433.92e6,
-                      bw_hz: float = 1e6) -> Optional[SpectrumSlice]:
+    def scan_spectrum(self, freq_hz: float = 433.92e6, bw_hz: float = 1e6) -> Optional[SpectrumSlice]:
         """
         Быстрый спектральный анализ вокруг freq_hz.
         Возвращает SpectrumSlice или None если SDR недоступен.
@@ -282,7 +292,7 @@ class AirSnitch:
                 self._soapy.activateStream(rxStream)
                 buff = np.zeros(256 * 1024, dtype=np.complex64)
                 sr = self._soapy.readStream(rxStream, [buff], len(buff))
-                samples = buff[:sr.ret] if sr.ret > 0 else buff
+                samples = buff[: sr.ret] if sr.ret > 0 else buff
                 self._soapy.deactivateStream(rxStream)
                 self._soapy.closeStream(rxStream)
             else:
@@ -300,8 +310,10 @@ class AirSnitch:
             noise_floor = float(np.median(psd))
 
             sl = SpectrumSlice(
-                center_hz=freq_hz, bw_hz=bw_hz,
-                peak_hz=peak_hz, peak_dbm=peak_dbm,
+                center_hz=freq_hz,
+                bw_hz=bw_hz,
+                peak_hz=peak_hz,
+                peak_dbm=peak_dbm,
                 noise_floor_dbm=noise_floor,
             )
             self._spectrum_cache[freq_hz] = sl
@@ -317,8 +329,10 @@ class AirSnitch:
     def _simulate_spectrum(self, freq_hz: float, bw_hz: float) -> SpectrumSlice:
         """Симуляция для headless/demo режима."""
         import random
+
         sl = SpectrumSlice(
-            center_hz=freq_hz, bw_hz=bw_hz,
+            center_hz=freq_hz,
+            bw_hz=bw_hz,
             peak_hz=freq_hz + random.uniform(-5000, 5000),
             peak_dbm=random.uniform(-80, -30),
             noise_floor_dbm=random.uniform(-110, -95),
@@ -328,8 +342,7 @@ class AirSnitch:
         return sl
 
     # ── Packet Capture (RX only) ─────────────────────────
-    def capture_packets(self, freq_hz: float = 433.92e6,
-                        duration_sec: float = 5.0) -> List[RFPacket]:
+    def capture_packets(self, freq_hz: float = 433.92e6, duration_sec: float = 5.0) -> List[RFPacket]:
         """
         Захватывает пакеты на указанной частоте.
         Работает только в режиме приёма.
@@ -368,7 +381,7 @@ class AirSnitch:
                     self._soapy.activateStream(rxStream)
                     buff = np.zeros(min(num_samples, 1024 * 1024), dtype=np.complex64)
                     sr = self._soapy.readStream(rxStream, [buff], len(buff))
-                    samples = buff[:sr.ret] if sr.ret > 0 else buff
+                    samples = buff[: sr.ret] if sr.ret > 0 else buff
                     self._soapy.deactivateStream(rxStream)
                     self._soapy.closeStream(rxStream)
                 else:
@@ -430,7 +443,7 @@ class AirSnitch:
         if not NP_OK:
             return None
         try:
-            burst_data = samples[burst_indices[0]:burst_indices[-1]]
+            burst_data = samples[burst_indices[0] : burst_indices[-1]]
             raw_hex = burst_data[:16].tobytes().hex()[:32]
 
             # Try to match known protocol preamble
@@ -453,6 +466,7 @@ class AirSnitch:
     def _simulate_capture(self, freq_hz: float, duration_sec: float) -> List[RFPacket]:
         """Симуляция для demo."""
         import random
+
         protos = ["Oregon Scientific v2.1", "Nexus-TH", "EV1527 (generic remote)", "generic"]
         n = random.randint(0, 3)
         pkts = []
@@ -477,8 +491,7 @@ class AirSnitch:
             return "📡 AirSnitch: мониторинг уже запущен."
         self._running = True
         self._monitor_thread = threading.Thread(
-            target=self._monitor_loop, args=(interval_sec,),
-            daemon=True, name="airsnitch-monitor"
+            target=self._monitor_loop, args=(interval_sec,), daemon=True, name="airsnitch-monitor"
         )
         self._monitor_thread.start()
         return f"📡 AirSnitch: фоновый мониторинг запущен ({len(self._bands)} полос, {interval_sec}с)."

@@ -1,6 +1,11 @@
+import asyncio
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
 
-
-import os, sys, threading, asyncio, tempfile, subprocess, shutil
 """
 core.py — ArgosCore FINAL v2.0
     Все подсистемы интегрированы:
@@ -11,79 +16,102 @@ try:
     import requests
 except ImportError:
     requests = None
+import base64
 import concurrent.futures
+import difflib
 import json
 import time
-import base64
 import uuid
-import difflib
 from collections import deque
 from functools import lru_cache
 
 # ── Graceful imports ──────────────────────────────────────
 try:
-    from google import genai as genai_sdk; GEMINI_OK = True
+    from google import genai as genai_sdk
+
+    GEMINI_OK = True
 except ImportError:
-    genai_sdk = None; GEMINI_OK = False
+    genai_sdk = None
+    GEMINI_OK = False
 
 try:
-    import pyttsx3; PYTTSX3_OK = True
+    import pyttsx3
+
+    PYTTSX3_OK = True
 except ImportError:
-    pyttsx3 = None; PYTTSX3_OK = False
+    pyttsx3 = None
+    PYTTSX3_OK = False
 
 try:
-    import speech_recognition as sr; SR_OK = True
+    import speech_recognition as sr
+
+    SR_OK = True
 except ImportError:
-    sr = None; SR_OK = False
+    sr = None
+    SR_OK = False
 
 try:
     from pipecat.audio.vad.silero import SileroVADAnalyzer
     from pipecat.audio.vad.vad_analyzer import VADParams, VADState
+
     PIPECAT_VAD_OK = True
 except Exception:
+
     class SileroVADAnalyzer:
         pass
+
     class VADParams:
         pass
+
     class VADState:
         pass
+
     PIPECAT_VAD_OK = False
 
 try:
+    from ibm_watsonx_ai import Credentials
     from ibm_watsonx_ai.foundation_models import ModelInference
     from ibm_watsonx_ai.metanames import GenTextParamsMetaNames as GenParams
-    from ibm_watsonx_ai import Credentials
+
     WATSONX_OK = True
 except ImportError:
+
     class ModelInference:
         pass
+
     class GenParams:
         pass
+
     class Credentials:
         pass
+
     WATSONX_OK = False
 
 try:
     from faster_whisper import WhisperModel
+
     FASTER_WHISPER_OK = True
 except ImportError:
+
     class WhisperModel:
         pass
+
     FASTER_WHISPER_OK = False
 
-from src.quantum.logic               import ArgosQuantum
-from src.skills.web_scrapper         import ArgosScrapper
-from src.factory.replicator          import Replicator
-from src.connectivity.sensor_bridge  import ArgosSensorBridge
-from src.connectivity.p2p_bridge     import ArgosBridge, p2p_protocol_roadmap
-from src.skill_loader                import SkillLoader
-from src.dag_agent                   import DAGManager
-from src.github_marketplace          import GitHubMarketplace
-from src.modules                     import ModuleLoader
-from src.context_manager             import DialogContext
-from src.agent                       import ArgosAgent
-from src.argos_logger                import get_logger
-from src.env_bootstrap               import bootstrap_env
+from src.agent import ArgosAgent
+from src.argos_logger import get_logger
+from src.connectivity.p2p_bridge import ArgosBridge, p2p_protocol_roadmap
+from src.connectivity.sensor_bridge import ArgosSensorBridge
+from src.context_manager import DialogContext
+from src.dag_agent import DAGManager
+from src.env_bootstrap import bootstrap_env
+from src.factory.replicator import Replicator
+from src.github_marketplace import GitHubMarketplace
+from src.modules import ModuleLoader
+from src.quantum.logic import ArgosQuantum
+from src.skill_loader import SkillLoader
+from src.skills.web_scrapper import ArgosScrapper
+
 bootstrap_env()
 
 log = get_logger("argos.core")
@@ -94,7 +122,7 @@ log = get_logger("argos.core")
 MODEL_REGISTRY = {
     # ── OLLAMA (локальный сервер) ────────────────────────────────────────
     "ollama": {
-        "default":   "llama3",
+        "default": "llama3",
         "available": [
             "llama3",
             "llama3:8b",
@@ -112,15 +140,14 @@ MODEL_REGISTRY = {
             "deepseek-coder:6.7b",
             "deepseek-llm:7b",
         ],
-        "env_url":   "ARGOS_OLLAMA_URL",
+        "env_url": "ARGOS_OLLAMA_URL",
         "env_model": "ARGOS_OLLAMA_MODEL",
-        "health":    "ARGOS_OLLAMA_HEALTH_URL",
+        "health": "ARGOS_OLLAMA_HEALTH_URL",
         "autostart": "ARGOS_OLLAMA_AUTOSTART",
     },
-
     # ── GOOGLE GEMINI (SDK + REST) ───────────────────────────────────────
     "gemini": {
-        "default":   "gemini-1.5-flash",
+        "default": "gemini-1.5-flash",
         "available": [
             "gemini-1.5-flash",
             "gemini-1.5-pro",
@@ -128,69 +155,66 @@ MODEL_REGISTRY = {
             "gemini-2.0-flash-lite",
             "gemini-2.0-pro",
         ],
-        "env_key":   "GEMINI_API_KEY",
-        "rest_url":  "GEMINI_REST_URL",
+        "env_key": "GEMINI_API_KEY",
+        "rest_url": "GEMINI_REST_URL",
     },
-
     # ── OPENAI (ChatGPT) ──────────────────────────────────────────────────
     "openai": {
-        "default":   "gpt-4o-mini",
+        "default": "gpt-4o-mini",
         "available": [
-            "gpt-4o", "gpt-4o-mini",
-            "gpt-4-turbo", "gpt-4",
-            "gpt-3.5-turbo", "gpt-3.5-turbo-16k",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4-turbo",
+            "gpt-4",
+            "gpt-3.5-turbo",
+            "gpt-3.5-turbo-16k",
         ],
-        "env_key":   "OPENAI_API_KEY",
-        "base_url":  "OPENAI_API_URL",
+        "env_key": "OPENAI_API_KEY",
+        "base_url": "OPENAI_API_URL",
     },
-
     # ── LM-STUDIO (локальный сервер OpenAI-совместимый) ───────────────────
     "lmstudio": {
-        "default":   "local-model",
+        "default": "local-model",
         "available": [],
-        "env_url":   "LMSTUDIO_BASE_URL",
+        "env_url": "LMSTUDIO_BASE_URL",
         "env_model": "LMSTUDIO_MODEL",
     },
-
     # ── YANDEX GPT (Yandex.Cloud) ───────────────────────────────────────
     "yandexgpt": {
-        "default":   "gpt://{folder_id}/yandexgpt/latest",
+        "default": "gpt://{folder_id}/yandexgpt/latest",
         "available": [],
         "env_token": "YANDEX_IAM_TOKEN",
         "env_folder": "YANDEX_FOLDER_ID",
         "env_model_uri": "YANDEXGPT_MODEL_URI",
     },
-
     # ── GIGACHAT (Сбер) ───────────────────────────────────────────────────
     "gigachat": {
-        "default":   "GigaChat-2",
+        "default": "GigaChat-2",
         "available": ["GigaChat-2", "GigaChat-2.0", "GigaChat-Pro"],
         "env_token": "GIGACHAT_ACCESS_TOKEN",
-        "env_client_id":     "GIGACHAT_CLIENT_ID",
+        "env_client_id": "GIGACHAT_CLIENT_ID",
         "env_client_secret": "GIGACHAT_CLIENT_SECRET",
     },
-
     # ── GROK / X-AI ───────────────────────────────────────────────────────
     "grok": {
-        "default":   "grok-2-latest",
+        "default": "grok-2-latest",
         "available": ["grok-1", "grok-2", "grok-2-latest"],
-        "env_key":   "GROK_API_KEY",
-        "env_url":   "GROK_API_URL",
+        "env_key": "GROK_API_KEY",
+        "env_url": "GROK_API_URL",
         "env_model": "GROK_MODEL",
     },
-
     # ── IBM WATSONX ─────────────────────────────────────────────────────
     "watsonx": {
-        "default":   "meta-llama/llama-3-1-70b-instruct",
+        "default": "meta-llama/llama-3-1-70b-instruct",
         "available": [
             "meta-llama/llama-3-1-70b-instruct",
             "meta-llama/llama-3-1-8b-instruct",
             "ibm/granite-13b-chat-v2",
             "ibm/granite-20b-chat-v2",
         ],
-        "env_key":   "WATSONX_API_KEY",
+        "env_key": "WATSONX_API_KEY",
         "env_project": "WATSONX_PROJECT_ID",
-        "env_url":   "WATSONX_URL",
+        "env_url": "WATSONX_URL",
     },
 }
 
@@ -235,8 +259,8 @@ class _ProviderCircuitBreaker:
     }
 
     def __init__(self):
-        self._cooldowns: dict[str, float] = {}       # provider → resume_at
-        self._fail_streak: dict[str, int] = {}        # consecutive failures
+        self._cooldowns: dict[str, float] = {}  # provider → resume_at
+        self._fail_streak: dict[str, int] = {}  # consecutive failures
         self._lock = threading.Lock()
 
     def available(self, provider: str) -> bool:
@@ -246,8 +270,7 @@ class _ProviderCircuitBreaker:
                 return True
             return False
 
-    def record_failure(self, provider: str, kind: str = "generic",
-                       retry_after_seconds: float | None = None):
+    def record_failure(self, provider: str, kind: str = "generic", retry_after_seconds: float | None = None):
         base = retry_after_seconds or self._DEFAULT_COOLDOWNS.get(kind, 30)
         with self._lock:
             streak = self._fail_streak.get(provider, 0) + 1
@@ -255,8 +278,9 @@ class _ProviderCircuitBreaker:
             multiplier = min(2 ** (streak - 1), 10)  # cap at 10×
             cooldown = min(base * multiplier, 600)
             self._cooldowns[provider] = time.time() + cooldown
-        log.warning("⏸ Провайдер [%s] приостановлен на %.0f с (причина: %s, серия: %d)",
-                     provider, cooldown, kind, streak)
+        log.warning(
+            "⏸ Провайдер [%s] приостановлен на %.0f с (причина: %s, серия: %d)", provider, cooldown, kind, streak
+        )
 
     def record_success(self, provider: str):
         with self._lock:
@@ -288,6 +312,7 @@ class _GeminiResponse:
 
 class _GeminiCompatClient:
     """Лёгкий адаптер google.genai под старый интерфейс generate_content()."""
+
     def __init__(self, api_key: str, model_name: str = "gemini-2.0-flash"):
         self.client = genai_sdk.Client(api_key=api_key)
         self.model_name = self._resolve_model_name(model_name)
@@ -360,14 +385,17 @@ class ArgosCore:
             self.ai_mode = "ollama"  # локальная модель
             # self.mic_index  = 0  # функция была пустой, удаляем для устранения IndentationError
         log.info(f"Режим ИИ: {'онлайн' if online else 'оффлайн'}")
+
     def __init__(self):
-        self.quantum    = ArgosQuantum()
-        self.scrapper   = ArgosScrapper()
+        self.quantum = ArgosQuantum()
+        self.scrapper = ArgosScrapper()
         self.replicator = Replicator()
-        self.sensors    = ArgosSensorBridge()
-        self.context    = DialogContext(max_turns=10)
-        self.agent      = ArgosAgent(self)
-        self.ollama_url = (os.getenv("ARGOS_OLLAMA_URL", "http://localhost:11434/api/generate") or "").strip() or "http://localhost:11434/api/generate"
+        self.sensors = ArgosSensorBridge()
+        self.context = DialogContext(max_turns=10)
+        self.agent = ArgosAgent(self)
+        self.ollama_url = (
+            os.getenv("ARGOS_OLLAMA_URL", "http://localhost:11434/api/generate") or ""
+        ).strip() or "http://localhost:11434/api/generate"
         self.ollama_health_url = (os.getenv("ARGOS_OLLAMA_HEALTH_URL", "http://localhost:11434/api/tags") or "").strip()
         self.lmstudio_url = (os.getenv("LMSTUDIO_BASE_URL", "http://127.0.0.1:1234/v1/chat/completions") or "").strip()
         self.lmstudio_model = (os.getenv("LMSTUDIO_MODEL", "local-model") or "").strip() or "local-model"
@@ -376,23 +404,30 @@ class ArgosCore:
         except Exception:
             self.ollama_timeout_sec = 45.0
         try:
-            self.ollama_max_prompt_chars = max(2000, min(int(os.getenv("ARGOS_OLLAMA_MAX_PROMPT_CHARS", "16000") or "16000"), 200000))
+            self.ollama_max_prompt_chars = max(
+                2000, min(int(os.getenv("ARGOS_OLLAMA_MAX_PROMPT_CHARS", "16000") or "16000"), 200000)
+            )
         except Exception:
             self.ollama_max_prompt_chars = 16000
-        self.ai_mode    = self._normalize_ai_mode(os.getenv("ARGOS_AI_MODE", "auto"))
+        self.ai_mode = self._normalize_ai_mode(os.getenv("ARGOS_AI_MODE", "auto"))
         self.voice_engine = (os.getenv("ARGOS_VOICE_ENGINE", "auto") or "auto").strip().lower()
-        self.voice_on   = os.getenv("ARGOS_VOICE_DEFAULT", "off").strip().lower() in (
-            "1", "true", "on", "yes", "да", "вкл"
+        self.voice_on = os.getenv("ARGOS_VOICE_DEFAULT", "off").strip().lower() in (
+            "1",
+            "true",
+            "on",
+            "yes",
+            "да",
+            "вкл",
         )
-        self.p2p        = None
-        self.db         = None
-        self.memory     = None
-        self.scheduler  = None
-        self.alerts     = None
-        self.vision     = None
-        self._boot      = None
+        self.p2p = None
+        self.db = None
+        self.memory = None
+        self.scheduler = None
+        self.alerts = None
+        self.vision = None
+        self._boot = None
         self._dashboard = None
-        self._wake      = None
+        self._wake = None
         self._ollama_proc = None
         self._tts_engine = None
         self._tts_lock = threading.Lock()
@@ -401,13 +436,13 @@ class ArgosCore:
         self._pipecat_vad_lock = threading.Lock()
         self._whisper_model = None
         self.skill_loader = None
-        self.dag_manager  = None
-        self.marketplace  = None
-        self.iot_bridge   = None
+        self.dag_manager = None
+        self.marketplace = None
+        self.iot_bridge = None
         self.bacnet_bridge = None
-        self.mesh_net     = None
-        self.smart_sys    = None
-        self.gateway_mgr  = None
+        self.mesh_net = None
+        self.smart_sys = None
+        self.gateway_mgr = None
         self.smart_profiles = {}
         self._smart_create_wizard = None
         self.operator_mode = False
@@ -440,16 +475,28 @@ class ArgosCore:
         self._circuit = _ProviderCircuitBreaker()
         self._gigachat_access_token = self._clean_secret(os.getenv("GIGACHAT_ACCESS_TOKEN", "")) or None
         self._gigachat_verify_ssl = (os.getenv("GIGACHAT_VERIFY_SSL", "1") or "1").strip().lower() not in {
-            "0", "off", "false", "no", "нет"
+            "0",
+            "off",
+            "false",
+            "no",
+            "нет",
         }
         self._gigachat_token_expires_at = 0.0
         self._gigachat_retry_after = 0.0
         self._grok_unavailable_models = set()
-        self.auto_collab_enabled = os.getenv("ARGOS_AUTO_COLLAB", "on").strip().lower() not in {"0", "false", "off", "no", "нет"}
+        self.auto_collab_enabled = os.getenv("ARGOS_AUTO_COLLAB", "on").strip().lower() not in {
+            "0",
+            "false",
+            "off",
+            "no",
+            "нет",
+        }
         self.auto_collab_max_models = max(2, min(int(os.getenv("ARGOS_AUTO_COLLAB_MAX_MODELS", "4") or "4"), 4))
         self.spec_draft_count = max(1, min(int(os.getenv("ARGOS_SPEC_DRAFT_COUNT", "3") or "3"), 3))
         try:
-            self.acceptance_major_ratio = max(0.4, min(float(os.getenv("ARGOS_ACCEPTANCE_MAJOR_RATIO", "0.72") or "0.72"), 0.95))
+            self.acceptance_major_ratio = max(
+                0.4, min(float(os.getenv("ARGOS_ACCEPTANCE_MAJOR_RATIO", "0.72") or "0.72"), 0.95)
+            )
         except Exception:
             self.acceptance_major_ratio = 0.72
         self.homeostasis = None
@@ -500,6 +547,7 @@ class ArgosCore:
     def _init_memory(self):
         try:
             from src.memory import ArgosMemory
+
             self.memory = ArgosMemory()
             self.context.memory_ref = self.memory
             log.info("Память: OK")
@@ -509,6 +557,7 @@ class ArgosCore:
     def _init_scheduler(self):
         try:
             from src.skills.scheduler import ArgosScheduler
+
             self.scheduler = ArgosScheduler(core=self)
             self.scheduler.start()
             log.info("Планировщик: OK")
@@ -518,6 +567,7 @@ class ArgosCore:
     def _init_homeostasis(self):
         try:
             from src.hardware_guard import HardwareHomeostasisGuard
+
             self.homeostasis = HardwareHomeostasisGuard(core=self)
             if os.getenv("ARGOS_HOMEOSTASIS", "on").strip().lower() not in {"0", "off", "false", "no", "нет"}:
                 self.homeostasis.start()
@@ -528,6 +578,7 @@ class ArgosCore:
     def _init_curiosity(self):
         try:
             from src.curiosity import ArgosCuriosity
+
             self.curiosity = ArgosCuriosity(core=self)
             if os.getenv("ARGOS_CURIOSITY", "on").strip().lower() not in {"0", "off", "false", "no", "нет"}:
                 self.curiosity.start()
@@ -538,6 +589,7 @@ class ArgosCore:
     def _init_alerts(self):
         try:
             from src.connectivity.alert_system import AlertSystem
+
             self.alerts = AlertSystem(on_alert=self._on_alert)
             self.alerts.start(interval_sec=30)
             log.info("Алерты: OK")
@@ -547,6 +599,7 @@ class ArgosCore:
     def _init_vision(self):
         try:
             from src.vision import ArgosVision
+
             self.vision = ArgosVision()
             log.info("Vision: OK")
         except Exception as e:
@@ -579,6 +632,7 @@ class ArgosCore:
         """IoT Bridge + BACnet + Mesh Network + Gateway Manager."""
         try:
             from src.connectivity.iot_bridge import IoTBridge
+
             self.iot_bridge = IoTBridge()
             log.info("IoT Bridge: OK (%d устройств)", len(self.iot_bridge.registry.all()))
         except Exception as e:
@@ -586,6 +640,7 @@ class ArgosCore:
 
         try:
             from src.connectivity.bacnet_bridge import BACnetBridge
+
             self.bacnet_bridge = BACnetBridge()
             log.info("BACnet Bridge: OK (%s)", "simulation" if self.bacnet_bridge.simulation else "live")
         except Exception as e:
@@ -593,6 +648,7 @@ class ArgosCore:
 
         try:
             from src.connectivity.mesh_network import MeshNetwork
+
             self.mesh_net = MeshNetwork()
             log.info("Mesh Network: OK (%d устройств)", len(self.mesh_net.devices))
         except Exception as e:
@@ -600,6 +656,7 @@ class ArgosCore:
 
         try:
             from src.connectivity.gateway_manager import GatewayManager
+
             self.gateway_mgr = GatewayManager(iot_bridge=self.iot_bridge)
             log.info("Gateway Manager: OK")
         except Exception as e:
@@ -608,7 +665,8 @@ class ArgosCore:
     def _init_smart_systems(self):
         """Smart Systems Manager — умные среды + DAG Bio-Control."""
         try:
-            from src.smart_systems import SmartSystemsManager, SYSTEM_PROFILES
+            from src.smart_systems import SYSTEM_PROFILES, SmartSystemsManager
+
             self.smart_sys = SmartSystemsManager(on_alert=self._on_alert)
             self.smart_profiles = SYSTEM_PROFILES
             log.info("Smart Systems: OK (%d систем)", len(self.smart_sys.systems))
@@ -627,6 +685,7 @@ class ArgosCore:
     def _init_home_assistant(self):
         try:
             from src.connectivity.home_assistant import HomeAssistantBridge
+
             self.ha = HomeAssistantBridge()
             log.info("Home Assistant bridge: %s", "ON" if self.ha.enabled else "OFF")
         except Exception as e:
@@ -636,6 +695,7 @@ class ArgosCore:
         """NFC Manager — мониторинг собственных NFC-меток."""
         try:
             from src.connectivity.nfc_manager import NFCManager
+
             self.nfc = NFCManager(android_mode=False)
             log.info("NFC Manager: OK (%d меток)", len(self.nfc.list_tags()))
         except Exception as e:
@@ -645,6 +705,7 @@ class ArgosCore:
         """USB Diagnostics — диагностика авторизованных устройств."""
         try:
             from src.connectivity.usb_diagnostics import USBDiagnostics
+
             self.usb_diag = USBDiagnostics(android_mode=False)
             log.info("USB Diagnostics: OK (%d авториз.)", len(self.usb_diag.list_authorized()))
         except Exception as e:
@@ -654,6 +715,7 @@ class ArgosCore:
         """Bluetooth Scanner — инвентаризация IoT."""
         try:
             from src.connectivity.bluetooth_scanner import ArgosBluetoothScanner
+
             self.bt_scanner = ArgosBluetoothScanner()
             log.info("BT Scanner: OK (%d в инвентаре)", len(self.bt_scanner.devices))
         except Exception as e:
@@ -663,6 +725,7 @@ class ArgosCore:
         """AWA-Core — центральный координатор модулей."""
         try:
             from src.awa_core import AWACore
+
             self.awa = AWACore(core=self)
             log.info("AWA-Core: OK")
         except Exception as e:
@@ -672,6 +735,7 @@ class ArgosCore:
         """Adaptive Drafter (TLT) — кэш/сжатие/фильтрация."""
         try:
             from src.adaptive_drafter import AdaptiveDrafter
+
             self.drafter = AdaptiveDrafter(core=self)
             log.info("Adaptive Drafter: OK")
         except Exception as e:
@@ -681,6 +745,7 @@ class ArgosCore:
         """Self-Healing Engine — автоисправление Python-кода."""
         try:
             from src.self_healing import SelfHealingEngine
+
             self.healer = SelfHealingEngine(core=self)
             self.healer.start_intercepting()
             log.info("Self-Healing: OK")
@@ -691,6 +756,7 @@ class ArgosCore:
         """AirSnitch — SDR/Sub-GHz сканер эфира."""
         try:
             from src.connectivity.air_snitch import AirSnitch
+
             self.air_snitch = AirSnitch()
             log.info("AirSnitch: OK (backend=%s)", self.air_snitch.backend)
         except Exception as e:
@@ -700,6 +766,7 @@ class ArgosCore:
         """WiFi Sentinel — сетевая безопасность + HoneyPot."""
         try:
             from src.connectivity.wifi_sentinel import WiFiSentinel
+
             self.wifi_sentinel = WiFiSentinel(core=self)
             log.info("WiFi Sentinel: OK")
         except Exception as e:
@@ -709,6 +776,7 @@ class ArgosCore:
         """SmartHome Override — прямое управление Zigbee/Z-Wave."""
         try:
             from src.connectivity.smarthome_override import SmartHomeOverride
+
             self.smarthome = SmartHomeOverride()
             log.info("SmartHome Override: OK (%d устройств)", len(self.smarthome.devices))
         except Exception as e:
@@ -718,6 +786,7 @@ class ArgosCore:
         """Power Sentry — контроль энергосистемы / UPS."""
         try:
             from src.connectivity.power_sentry import PowerSentry
+
             self.power_sentry = PowerSentry()
             log.info("Power Sentry: OK")
         except Exception as e:
@@ -727,6 +796,7 @@ class ArgosCore:
         """Emergency Purge — экстренное уничтожение данных."""
         try:
             from src.security.emergency_purge import EmergencyPurge
+
             self.purge = EmergencyPurge()
             log.info("Emergency Purge: OK")
         except Exception as e:
@@ -736,6 +806,7 @@ class ArgosCore:
         """Container Isolation — LXD/Docker изоляция."""
         try:
             from src.security.container_isolation import ContainerIsolation
+
             self.containers = ContainerIsolation()
             log.info("Container Isolation: OK (runtime=%s)", self.containers.runtime.value)
         except Exception as e:
@@ -745,6 +816,7 @@ class ArgosCore:
         """MasterKeyValidator — авторизация администратора."""
         try:
             from src.security.master_auth import get_auth
+
             self.master_auth = get_auth()
             log.info("Master Auth: %s", "configured" if self.master_auth.is_configured else "pass-through")
         except Exception as e:
@@ -754,6 +826,7 @@ class ArgosCore:
         """Biosphere DAG — DAG-контроллер биосферы."""
         try:
             from src.modules.biosphere_dag import BiosphereDAGController
+
             self.biosphere_dag = BiosphereDAGController(core=self)
             auto_sys_id = (os.getenv("ARGOS_BIOSPHERE_SYS_ID", "") or "").strip()
             if auto_sys_id:
@@ -772,6 +845,7 @@ class ArgosCore:
     def _init_tool_calling(self):
         try:
             from src.tool_calling import ArgosToolCallingEngine
+
             self.tool_calling = ArgosToolCallingEngine(core=self)
             log.info("Tool Calling: OK")
         except Exception as e:
@@ -780,6 +854,7 @@ class ArgosCore:
     def _init_git_ops(self):
         try:
             from src.git_ops import ArgosGitOps
+
             self.git_ops = ArgosGitOps(repo_path=".")
             log.info("GitOps: OK")
         except Exception as e:
@@ -788,6 +863,7 @@ class ArgosCore:
     def _init_pupi_ops(self):
         try:
             from src.pupi_ops import ArgosPupiOps
+
             self.pupi_ops = ArgosPupiOps()
             if self.pupi_ops.configured:
                 log.info("PupiOps: OK")
@@ -799,6 +875,7 @@ class ArgosCore:
     def _init_jarvis(self):
         try:
             from src.jarvis_engine import JarvisEngine
+
             self.jarvis = JarvisEngine(core=self)
             log.info("JarvisEngine: OK")
         except Exception as e:
@@ -807,6 +884,7 @@ class ArgosCore:
     def _init_task_queue(self):
         try:
             from src.task_queue import TaskQueueManager
+
             self.task_queue = TaskQueueManager(worker_count=2)
             self.task_queue.register_runner("logic.command", self._queue_run_logic)
             if self.curiosity and hasattr(self.curiosity, "run_idle_learning_cycle"):
@@ -826,11 +904,15 @@ class ArgosCore:
         sys_id = (os.getenv("ARGOS_BIOSPHERE_SYS_ID", "") or "").strip()
         if not sys_id:
             return "Biosphere idle: ARGOS_BIOSPHERE_SYS_ID не задан"
-        profile = getattr(self.biosphere_dag, "default_profile", {
-            "temp_min": 22.0,
-            "temp_max": 26.0,
-            "hum_min": 60.0,
-        })
+        profile = getattr(
+            self.biosphere_dag,
+            "default_profile",
+            {
+                "temp_min": 22.0,
+                "temp_max": 26.0,
+                "hum_min": 60.0,
+            },
+        )
         return self.biosphere_dag.run_cycle(sys_id, dict(profile))
 
     def _queue_run_logic(self, task) -> str:
@@ -847,16 +929,43 @@ class ArgosCore:
     def _classify_queue_command(self, command: str) -> str:
         cmd = (command or "").lower()
         heavy_markers = [
-            "посмотри на экран", "что на экране", "посмотри в камеру", "анализ фото",
-            "проанализируй изображение", "компиля", "compile", "создай прошивку", "прошей",
+            "посмотри на экран",
+            "что на экране",
+            "посмотри в камеру",
+            "анализ фото",
+            "проанализируй изображение",
+            "компиля",
+            "compile",
+            "создай прошивку",
+            "прошей",
         ]
         iot_markers = [
-            "шлюз", "gateway", "датчик", "sensor", "mqtt", "zigbee", "lora", "mesh", "ha ",
-            "home assistant", "iot",
+            "шлюз",
+            "gateway",
+            "датчик",
+            "sensor",
+            "mqtt",
+            "zigbee",
+            "lora",
+            "mesh",
+            "ha ",
+            "home assistant",
+            "iot",
         ]
         system_markers = [
-            "git ", "гит ", "очередь ", "queue ", "статус системы", "чек-ап", "список процессов",
-            "файлы", "прочитай файл", "создай файл", "удали файл", "консоль ", "оператор ",
+            "git ",
+            "гит ",
+            "очередь ",
+            "queue ",
+            "статус системы",
+            "чек-ап",
+            "список процессов",
+            "файлы",
+            "прочитай файл",
+            "создай файл",
+            "удали файл",
+            "консоль ",
+            "оператор ",
         ]
         if any(marker in cmd for marker in heavy_markers):
             return "heavy"
@@ -885,12 +994,13 @@ class ArgosCore:
     def start_p2p(self) -> str:
         self.p2p = ArgosBridge(core=self)
         result = self.p2p.start()
-        log.info("P2P: %s", result.split('\n')[0])
+        log.info("P2P: %s", result.split("\n")[0])
         return result
 
     def start_dashboard(self, admin, flasher, port: int = 8080) -> str:
         try:
             from src.interface.fastapi_dashboard import FastAPIDashboard
+
             self._dashboard = FastAPIDashboard(self, admin, flasher, port)
             result = self._dashboard.start()
             if isinstance(result, str) and not result.startswith("❌"):
@@ -900,6 +1010,7 @@ class ArgosCore:
 
         try:
             from src.interface.web_dashboard import WebDashboard
+
             self._dashboard = WebDashboard(self, admin, flasher, port)
             return self._dashboard.start()
         except Exception as e:
@@ -908,6 +1019,7 @@ class ArgosCore:
     def start_wake_word(self, admin, flasher) -> str:
         try:
             from src.connectivity.wake_word import WakeWordListener
+
             self._wake = WakeWordListener(self, admin, flasher)
             return self._wake.start()
         except Exception as e:
@@ -925,11 +1037,11 @@ class ArgosCore:
             return
         try:
             self._tts_engine = pyttsx3.init()
-            for v in self._tts_engine.getProperty('voices'):
+            for v in self._tts_engine.getProperty("voices"):
                 if "Russian" in v.name or "ru" in v.id:
-                    self._tts_engine.setProperty('voice', v.id)
+                    self._tts_engine.setProperty("voice", v.id)
                     break
-            self._tts_engine.setProperty('rate', 175)
+            self._tts_engine.setProperty("rate", 175)
             log.info("TTS: OK")
         except Exception as e:
             self._tts_engine = None
@@ -975,7 +1087,8 @@ class ArgosCore:
                 loop.close()
 
             # Индикация событий VAD через EventBus
-            from src.connectivity.event_bus import bus, EventType
+            from src.connectivity.event_bus import EventType, bus
+
             if state == VADState.SPEECH:
                 bus.publish("vad.speech_start", {"ts": time.time()})
             elif state == VADState.QUIET:
@@ -989,6 +1102,7 @@ class ArgosCore:
     def say(self, text: str):
         if not self.voice_on or not self._tts_engine:
             return
+
         def _speak():
             with self._tts_lock:
                 if self._tts_busy:
@@ -1003,7 +1117,8 @@ class ArgosCore:
                 finally:
                     self._tts_busy = False
                     self.on_tts_end(text)
-        if not hasattr(self, '_voice_executor'):
+
+        if not hasattr(self, "_voice_executor"):
             self._voice_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         self._voice_executor.submit(_speak)
 
@@ -1015,8 +1130,8 @@ class ArgosCore:
                 try:
                     rec = sr.Recognizer()
                     mic_kwargs = {}
-                    if hasattr(self, '_mic_index'):
-                        mic_kwargs['device_index'] = self._mic_index
+                    if hasattr(self, "_mic_index"):
+                        mic_kwargs["device_index"] = self._mic_index
                     with sr.Microphone(**mic_kwargs) as src:
                         log.info(f"Слушаю... (device_index={mic_kwargs.get('device_index', 0)})")
                         rec.adjust_for_ambient_noise(src, duration=0.5)
@@ -1040,7 +1155,8 @@ class ArgosCore:
                 log.warning("STT недоступен (SpeechRecognition/Whisper)")
             self.on_stt_end(result)
             return result
-        if not hasattr(self, '_voice_executor'):
+
+        if not hasattr(self, "_voice_executor"):
             self._voice_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
         future = self._voice_executor.submit(_listen_task)
         try:
@@ -1053,6 +1169,7 @@ class ArgosCore:
     @lru_cache(maxsize=2)
     def _get_whisper_model_cached(model_size, device, compute):
         from faster_whisper import WhisperModel
+
         return WhisperModel(model_size, device=device, compute_type=compute)
 
     def _transcribe_with_whisper(self, audio_data) -> str:
@@ -1085,6 +1202,7 @@ class ArgosCore:
         try:
             if self._whisper_model is None:
                 from faster_whisper import WhisperModel
+
                 model_size = os.getenv("WHISPER_MODEL", "small")
                 device = os.getenv("WHISPER_DEVICE", "cpu")
                 compute = os.getenv("WHISPER_COMPUTE_TYPE", "int8")
@@ -1150,10 +1268,21 @@ class ArgosCore:
             return ""
         low = v.lower()
         placeholders = {
-            "your_key_here", "your_token_here", "changeme", "none", "null",
-            "токен_от_@botfather", "твой_telegram_id", "ключ_openai", "ключ_grok_xai",
-            "ключ_от_ibm_watsonx", "project_id_из_watsonx", "iam_токен_yandex_cloud",
-            "folder_id_yandex_cloud", "ключ_от_ai.google.dev", "токен_gigachat_если_есть",
+            "your_key_here",
+            "your_token_here",
+            "changeme",
+            "none",
+            "null",
+            "токен_от_@botfather",
+            "твой_telegram_id",
+            "ключ_openai",
+            "ключ_grok_xai",
+            "ключ_от_ibm_watsonx",
+            "project_id_из_watsonx",
+            "iam_токен_yandex_cloud",
+            "folder_id_yandex_cloud",
+            "ключ_от_ai.google.dev",
+            "токен_gigachat_если_есть",
             "токен_pupi_api",
         }
         if low in placeholders:
@@ -1222,7 +1351,11 @@ class ArgosCore:
 
     def _ensure_ollama_running(self) -> None:
         autostart = (os.getenv("ARGOS_OLLAMA_AUTOSTART", "on") or "on").strip().lower() not in {
-            "0", "off", "false", "no", "нет"
+            "0",
+            "off",
+            "false",
+            "no",
+            "нет",
         }
         if not autostart:
             log.info("Ollama autostart: OFF")
@@ -1267,20 +1400,17 @@ class ArgosCore:
 
         if WATSONX_OK and self.watsonx_api_key and self.watsonx_project_id:
             try:
-                credentials = Credentials(
-                    api_key=self.watsonx_api_key,
-                    url=self.watsonx_url
-                )
+                credentials = Credentials(api_key=self.watsonx_api_key, url=self.watsonx_url)
                 parameters = {
                     GenParams.DECODING_METHOD: "greedy",
                     GenParams.MAX_NEW_TOKENS: 1024,
-                    GenParams.REPETITION_PENALTY: 1.05
+                    GenParams.REPETITION_PENALTY: 1.05,
                 }
                 self.watsonx_model = ModelInference(
                     model_id="meta-llama/llama-3-1-70b-instruct",
                     params=parameters,
                     credentials=credentials,
-                    project_id=self.watsonx_project_id
+                    project_id=self.watsonx_project_id,
                 )
                 log.info("Watsonx: OK (Llama-3.1-70B)")
             except Exception as e:
@@ -1295,11 +1425,7 @@ class ArgosCore:
 
         # По умолчанию берем тяжелую модель, если URI не задан в .env
         self.yandex_model_uri = (
-            os.getenv(
-                "YANDEXGPT_MODEL_URI",
-                f"gpt://{self.yandex_folder_id}/yandexgpt/latest"
-            )
-            or ""
+            os.getenv("YANDEXGPT_MODEL_URI", f"gpt://{self.yandex_folder_id}/yandexgpt/latest") or ""
         ).strip()
 
         if self.yandex_api_key and self.yandex_folder_id:
@@ -1312,9 +1438,9 @@ class ArgosCore:
     # ═══════════════════════════════════════════════════════
     def _select_model(self, backend: str) -> str:
         """Возвращает имя модели для backend, учитывая:
-          1) ENV-переменную (ARGOS_<BACKEND>_MODEL / OPENAI_MODEL / …)
-          2) self.ai_mode (пользователь написал «режим ии gemini:pro»)
-          3) дефолт из MODEL_REGISTRY
+        1) ENV-переменную (ARGOS_<BACKEND>_MODEL / OPENAI_MODEL / …)
+        2) self.ai_mode (пользователь написал «режим ии gemini:pro»)
+        3) дефолт из MODEL_REGISTRY
         """
         cfg = MODEL_REGISTRY.get(backend, {})
         # 1. ENV — наивысший приоритет
@@ -1342,6 +1468,7 @@ class ArgosCore:
     def _parse_retry_delay(text: str) -> float | None:
         """Extract retryDelay value (seconds) from API error body."""
         import re as _re
+
         m = _re.search(r'"retryDelay"\s*:\s*"(\d+)s?"', text)
         if m:
             return float(m.group(1))
@@ -1386,15 +1513,7 @@ class ArgosCore:
         try:
             hist = self.context.get_prompt_context()
             prompt = f"{context}\n\n{hist}\n\nUser: {user_text}\nArgos:"
-            payload = {
-                "contents": [
-                    {
-                        "parts": [
-                            {"text": prompt}
-                        ]
-                    }
-                ]
-            }
+            payload = {"contents": [{"parts": [{"text": prompt}]}]}
             response = requests.post(
                 endpoint,
                 headers={
@@ -1450,11 +1569,7 @@ class ArgosCore:
             }
             response = requests.post(self.lmstudio_url, json=payload, timeout=8)
             if response.ok:
-                return (
-                    "🧪 LM Studio: ONLINE\n"
-                    f"  URL: {self.lmstudio_url}\n"
-                    f"  Model: {self.lmstudio_model}"
-                )
+                return "🧪 LM Studio: ONLINE\n" f"  URL: {self.lmstudio_url}\n" f"  Model: {self.lmstudio_model}"
             return (
                 "⚠️ LM Studio: OFFLINE/ERROR\n"
                 f"  URL: {self.lmstudio_url}\n"
@@ -1462,11 +1577,7 @@ class ArgosCore:
                 f"  Body: {(response.text or '')[:180]}"
             )
         except Exception as e:
-            return (
-                "⚠️ LM Studio: недоступен\n"
-                f"  URL: {self.lmstudio_url}\n"
-                f"  Error: {e}"
-            )
+            return "⚠️ LM Studio: недоступен\n" f"  URL: {self.lmstudio_url}\n" f"  Error: {e}"
 
     def _get_gigachat_token(self) -> str | None:
         if self._gigachat_access_token and self._gigachat_token_expires_at <= 0:
@@ -1738,7 +1849,7 @@ class ArgosCore:
         headers = {
             "Authorization": f"Api-Key {self.yandex_api_key}",
             "x-folder-id": self.yandex_folder_id,
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
         try:
@@ -1772,7 +1883,7 @@ class ArgosCore:
             log.error("YandexGPT: connection refused")
             return None
         except requests.exceptions.HTTPError as e:
-            status = getattr(e.response, 'status_code', 0)
+            status = getattr(e.response, "status_code", 0)
             if status == 429:
                 self._circuit.record_failure("YandexGPT", "rate_limit")
             elif status in (401, 403):
@@ -1793,12 +1904,12 @@ class ArgosCore:
             # Добавляем историю в промпт
             hist = self.context.get_prompt_context()
             if len(hist) > self.ollama_max_prompt_chars:
-                hist = hist[-self.ollama_max_prompt_chars:]
+                hist = hist[-self.ollama_max_prompt_chars :]
             full_prompt = f"{context}\n\n{hist}\n\nUser: {user_text}\nArgos:"
             res = requests.post(
                 self.ollama_url,
                 json={"model": self._select_model("ollama"), "prompt": full_prompt, "stream": False},
-                timeout=self.ollama_timeout_sec
+                timeout=self.ollama_timeout_sec,
             )
             res.raise_for_status()
             data = res.json()
@@ -1923,8 +2034,7 @@ class ArgosCore:
                 futures[executor.submit(self._ask_ollama, context, user_text)] = "Ollama"
 
             if not futures:
-                log.warning("⚛️ Консенсус: все провайдеры на cooldown\n%s",
-                            self._circuit.status_summary())
+                log.warning("⚛️ Консенсус: все провайдеры на cooldown\n%s", self._circuit.status_summary())
                 return None
 
             for future in concurrent.futures.as_completed(futures):
@@ -1972,7 +2082,7 @@ class ArgosCore:
             providers.append(("LMStudio", self._ask_lmstudio))
         if self._circuit.available("Ollama"):
             providers.append(("Ollama", self._ask_ollama))
-        return providers[:self.auto_collab_max_models]
+        return providers[: self.auto_collab_max_models]
 
     def _cloud_verifier_providers(self) -> list[tuple[str, callable]]:
         providers = []
@@ -1984,7 +2094,7 @@ class ArgosCore:
             providers.append(("OpenAI", self._ask_openai))
         if self._has_grok_config() and self._circuit.available("Grok"):
             providers.append(("Grok", self._ask_grok))
-        return providers[:self.auto_collab_max_models]
+        return providers[: self.auto_collab_max_models]
 
     def _all_auto_providers(self) -> list[tuple[str, callable]]:
         return self._cloud_verifier_providers() + self._local_drafter_providers()
@@ -2005,6 +2115,7 @@ class ArgosCore:
         accepted = best_ratio >= self.acceptance_major_ratio
         try:
             from src.observability import record_acceptance
+
             record_acceptance(
                 accepted=accepted,
                 drafter=best_drafter,
@@ -2013,6 +2124,7 @@ class ArgosCore:
             )
             # Per-drafter quality → отдельные метрики
             from src.observability import Metrics as ObsMetrics
+
             for d_name, d_ratio in drafter_scores:
                 ObsMetrics.observe("drafter.similarity", d_ratio, tags={"drafter": d_name})
                 ObsMetrics.gauge(f"drafter.last_similarity.{d_name}", d_ratio)
@@ -2102,8 +2214,7 @@ class ArgosCore:
 
         # ── Верификация ───────────────────────────────────
         drafts_block = "\n\n".join(
-            f"=== ЧЕРНОВИК #{i+1} (от {name}) ===\n{text}"
-            for i, (name, text) in enumerate(drafts)
+            f"=== ЧЕРНОВИК #{i+1} (от {name}) ===\n{text}" for i, (name, text) in enumerate(drafts)
         )
         verifier_prompt = (
             "Ты Verifier. АБСОЛЮТНЫЙ ЗАПРЕТ писать ответ с нуля.\n"
@@ -2224,7 +2335,7 @@ class ArgosCore:
                 context += f"\n\n{rag_ctx}"
 
         answer = None
-        engine = q_data['name']
+        engine = q_data["name"]
 
         if self.ai_mode == "gemini":
             answer = self._ask_gemini(context, user_text)
@@ -2270,11 +2381,15 @@ class ArgosCore:
             elif self.ai_mode == "gigachat":
                 answer = "GigaChat недоступен в текущем режиме. Проверьте токен/credentials или переключите режим ИИ."
             elif self.ai_mode == "yandexgpt":
-                answer = "YandexGPT недоступен в текущем режиме. Проверьте IAM_TOKEN/FOLDER_ID или переключите режим ИИ."
+                answer = (
+                    "YandexGPT недоступен в текущем режиме. Проверьте IAM_TOKEN/FOLDER_ID или переключите режим ИИ."
+                )
             elif self.ai_mode == "lmstudio":
                 answer = "LM Studio недоступен в текущем режиме. Проверьте LMSTUDIO_BASE_URL/LMSTUDIO_MODEL или переключите режим ИИ."
             elif self.ai_mode == "ollama":
-                answer = "Ollama недоступен в текущем режиме. Проверьте локальный сервер Ollama или переключите режим ИИ."
+                answer = (
+                    "Ollama недоступен в текущем режиме. Проверьте локальный сервер Ollama или переключите режим ИИ."
+                )
             elif self.ai_mode == "watsonx":
                 answer = "Watsonx недоступен. Проверьте WATSONX_API_KEY/WATSONX_PROJECT_ID или переключите режим ИИ."
             elif self.ai_mode == "openai":
@@ -2315,9 +2430,7 @@ class ArgosCore:
 
         # Авто-определение команды, если env не задан
         if not cmd:
-            build_script = os.path.join(
-                os.path.dirname(os.path.dirname(__file__)), "build_apk.py"
-            )
+            build_script = os.path.join(os.path.dirname(os.path.dirname(__file__)), "build_apk.py")
             if not os.path.exists(build_script):
                 build_script = "build_apk.py"
             if os.path.exists(build_script):
@@ -2326,14 +2439,13 @@ class ArgosCore:
                 cmd = "buildozer -v android debug"
 
         import shlex as _shlex2
+
         parts = _shlex2.split(cmd)
         if not parts:
             return "❌ Команда сборки APK пуста после разбора."
 
         # Проверяем buildozer.spec
-        is_buildozer = parts[0].lower() == "buildozer" or (
-            len(parts) >= 3 and "buildozer" in parts[-2]
-        )
+        is_buildozer = parts[0].lower() == "buildozer" or (len(parts) >= 3 and "buildozer" in parts[-2])
         if is_buildozer and not os.path.exists("buildozer.spec"):
             return (
                 "❌ Не найден buildozer.spec в корне проекта.\n"
@@ -2345,6 +2457,7 @@ class ArgosCore:
             result = subprocess.run(parts, shell=False, check=True, capture_output=True, text=True, timeout=600)
             # Ищем артефакт
             from pathlib import Path as _Path
+
             apk_files = []
             for pattern in ["bin/*.apk", "dist/**/*.apk", "build/**/*.apk"]:
                 apk_files.extend(_Path(".").glob(pattern))
@@ -2371,7 +2484,10 @@ class ArgosCore:
             log.info("📦 Запуск сборки EXE: python %s", script)
             result = subprocess.run(
                 [sys.executable, script],
-                check=True, capture_output=True, text=True, timeout=300,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=300,
             )
             output = (result.stdout or "")[-500:]
             # Проверяем артефакт
@@ -2404,7 +2520,10 @@ class ArgosCore:
             log.info("📦 Запуск сборки инсталлятора: python %s --build", script)
             result = subprocess.run(
                 [sys.executable, script, "--build"],
-                check=True, capture_output=True, text=True, timeout=300,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=300,
             )
             output = (result.stdout or "")[-500:]
             if os.path.exists("setup_argos.exe"):
@@ -2421,6 +2540,7 @@ class ArgosCore:
     def _intent_build_auto(self) -> str:
         """Автоматическая сборка: EXE на Windows, реплика на остальных ОС."""
         import platform as _pf
+
         os_name = _pf.system()
         lines = [f"📦 *Автосборка Argos* (ОС: {os_name})\n"]
 
@@ -2439,9 +2559,7 @@ class ArgosCore:
             lines.append(f"2. EXE: пропуск (не Windows, текущая ОС: {os_name})")
 
         # Проверяем APK (build_apk.py или buildozer)
-        build_apk_script = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "build_apk.py"
-        )
+        build_apk_script = os.path.join(os.path.dirname(os.path.dirname(__file__)), "build_apk.py")
         has_apk_toolchain = (
             os.getenv("ARGOS_APK_BUILD_CMD", "").strip()
             or os.path.exists(build_apk_script)
@@ -2462,11 +2580,26 @@ class ArgosCore:
     def execute_intent(self, text: str, admin, flasher) -> str | None:
         t = text.lower()
 
-        if self._homeostasis_block_heavy and any(k in t for k in [
-            "посмотри на экран", "что на экране", "посмотри в камеру", "анализ фото",
-            "проанализируй изображение", "компиля", "compile", "создай прошивку", "прошей шлюз", "прошей gateway",
-            "собрать", "собери", "build apk", "build exe", "build setup",
-        ]):
+        if self._homeostasis_block_heavy and any(
+            k in t
+            for k in [
+                "посмотри на экран",
+                "что на экране",
+                "посмотри в камеру",
+                "анализ фото",
+                "проанализируй изображение",
+                "компиля",
+                "compile",
+                "создай прошивку",
+                "прошей шлюз",
+                "прошей gateway",
+                "собрать",
+                "собери",
+                "build apk",
+                "build exe",
+                "build setup",
+            ]
+        ):
             return "🔥 Гомеостаз: тяжёлая операция временно заблокирована (режим Protective/Unstable)."
 
         if self.homeostasis and any(k in t for k in ["гомеостаз статус", "статус гомеостаза", "homeostasis status"]):
@@ -2485,14 +2618,10 @@ class ArgosCore:
         if self.curiosity and any(k in t for k in ["любопытство сейчас", "curiosity now"]):
             return self.curiosity.ask_now()
 
-        if any(k in t for k in [
-            "голос вкл", "включи голос", "голос включи", "voice on", "voice_on"
-        ]):
+        if any(k in t for k in ["голос вкл", "включи голос", "голос включи", "voice on", "voice_on"]):
             self.voice_on = True
             return "🔊 Голосовой модуль активирован."
-        if any(k in t for k in [
-            "голос выкл", "выключи голос", "голос отключи", "voice off", "voice_off"
-        ]):
+        if any(k in t for k in ["голос выкл", "выключи голос", "голос отключи", "voice off", "voice_off"]):
             self.voice_on = False
             return "🔇 Голосовой модуль отключён."
         if any(k in t for k in ["голос статус", "voice status", "voice_state"]):
@@ -2505,15 +2634,16 @@ class ArgosCore:
         if any(k in t for k in ["очередь метрики", "queue metrics"]):
             try:
                 from src.observability import Metrics
+
                 return Metrics.report()
             except Exception as e:
                 return f"❌ Метрики недоступны: {e}"
         if self.task_queue and (t.startswith("в очередь ") or t.startswith("queue run ")):
             cmd = text
             if t.startswith("в очередь "):
-                cmd = text[len("в очередь "):].strip()
+                cmd = text[len("в очередь ") :].strip()
             elif t.startswith("queue run "):
-                cmd = text[len("queue run "):].strip()
+                cmd = text[len("queue run ") :].strip()
             if not cmd:
                 return "Формат: в очередь [команда]"
             parts = cmd.split()
@@ -2588,12 +2718,14 @@ class ArgosCore:
             return self.git_ops.status()
         if self.git_ops and any(k in t for k in ["git пуш", "гит пуш", "git push"]):
             return self.git_ops.push()
-        if self.git_ops and any(k in t for k in ["git автокоммит и пуш", "гит автокоммит и пуш", "git auto push", "git commit and push"]):
+        if self.git_ops and any(
+            k in t for k in ["git автокоммит и пуш", "гит автокоммит и пуш", "git auto push", "git commit and push"]
+        ):
             msg = text
             for marker in ["git автокоммит и пуш", "гит автокоммит и пуш", "git auto push", "git commit and push"]:
                 if marker in msg.lower():
                     idx = msg.lower().find(marker)
-                    msg = msg[idx + len(marker):].strip()
+                    msg = msg[idx + len(marker) :].strip()
                     break
             if not msg:
                 msg = "chore: argos autonomous update"
@@ -2603,7 +2735,7 @@ class ArgosCore:
             for marker in ["git коммит", "гит коммит", "git commit"]:
                 if marker in msg.lower():
                     idx = msg.lower().find(marker)
-                    msg = msg[idx + len(marker):].strip()
+                    msg = msg[idx + len(marker) :].strip()
                     break
             return self.git_ops.commit(msg)
 
@@ -2635,7 +2767,9 @@ class ArgosCore:
             role = text.split()[-1].strip().lower()
             return admin.set_role(role)
 
-        if hasattr(admin, "security_status") and any(k in t for k in ["статус безопасности", "security status", "audit status"]):
+        if hasattr(admin, "security_status") and any(
+            k in t for k in ["статус безопасности", "security status", "audit status"]
+        ):
             return admin.security_status()
 
         if any(k in t for k in ["оператор режим вкл", "включи операторский режим"]):
@@ -2654,7 +2788,9 @@ class ArgosCore:
         if self.module_loader and any(k in t for k in ["модули", "список модулей", "modules"]):
             return self.module_loader.list_modules()
 
-        if self.tool_calling and any(k in t for k in ["схемы инструментов", "tool schema", "tool calling schema", "json схемы инструментов"]):
+        if self.tool_calling and any(
+            k in t for k in ["схемы инструментов", "tool schema", "tool calling schema", "json схемы инструментов"]
+        ):
             return json.dumps(self.tool_calling.tool_schemas(), ensure_ascii=False, indent=2)
 
         # ── Мастер создания умной системы (пошаговый) ─────
@@ -2716,31 +2852,47 @@ class ArgosCore:
 
         # ── Файлы ─────────────────────────────────────────
         if any(k in t for k in ["покажи файлы", "список файлов"]) or t.startswith("файлы "):
-            path = text.replace("аргос","").replace("покажи файлы","").replace("список файлов","").replace("файлы","").strip()
+            path = (
+                text.replace("аргос", "")
+                .replace("покажи файлы", "")
+                .replace("список файлов", "")
+                .replace("файлы", "")
+                .strip()
+            )
             return admin.list_dir(path or ".")
         if "прочитай файл" in t or t.startswith("прочитай "):
-            path = text.replace("аргос","").replace("прочитай файл","").replace("прочитай","").strip()
+            path = text.replace("аргос", "").replace("прочитай файл", "").replace("прочитай", "").strip()
             return admin.read_file(path)
         if any(k in t for k in ["создай файл", "напиши файл"]):
-            parts = text.replace("создай файл","").replace("напиши файл","").strip().split(maxsplit=1)
-            return admin.create_file(parts[0] if parts else "note.txt", parts[1] if len(parts)>1 else "")
+            parts = text.replace("создай файл", "").replace("напиши файл", "").strip().split(maxsplit=1)
+            return admin.create_file(parts[0] if parts else "note.txt", parts[1] if len(parts) > 1 else "")
         if any(k in t for k in ["удали файл", "удали папку"]):
-            return admin.delete_item(text.replace("аргос","").replace("удали файл","").replace("удали папку","").strip())
+            return admin.delete_item(
+                text.replace("аргос", "").replace("удали файл", "").replace("удали папку", "").strip()
+            )
 
         # ── Терминал ──────────────────────────────────────
         if any(k in t for k in ["консоль", "терминал"]):
             if not self.context.allow_root:
                 return "⛔ Команды терминала ограничены текущим квантовым профилем (без root-допуска)."
-            cmd = text.split("консоль",1)[-1].strip() if "консоль" in t else text.split("терминал",1)[-1].strip()
+            cmd = text.split("консоль", 1)[-1].strip() if "консоль" in t else text.split("терминал", 1)[-1].strip()
             return admin.run_cmd(cmd, user="argos")
 
         # ── Vision ────────────────────────────────────────
         if self.vision:
             if any(k in t for k in ["посмотри на экран", "что на экране", "скриншот"]):
-                question = text.replace("аргос","").replace("посмотри на экран","").replace("что на экране","").replace("скриншот","").strip()
+                question = (
+                    text.replace("аргос", "")
+                    .replace("посмотри на экран", "")
+                    .replace("что на экране", "")
+                    .replace("скриншот", "")
+                    .strip()
+                )
                 return self.vision.look_at_screen(question or "Что происходит на экране?")
             if any(k in t for k in ["посмотри в камеру", "что видит камера", "включи камеру"]):
-                question = text.replace("аргос","").replace("посмотри в камеру","").replace("что видит камера","").strip()
+                question = (
+                    text.replace("аргос", "").replace("посмотри в камеру", "").replace("что видит камера", "").strip()
+                )
                 return self.vision.look_through_camera(question or "Что ты видишь?")
             if "проанализируй изображение" in t or "анализ фото" in t:
                 path = text.split()[-1]
@@ -2763,8 +2915,17 @@ class ArgosCore:
             return self._intent_build_apk()
         if any(k in t for k in ["собрать exe", "собери exe", "build exe", "сборка exe"]):
             return self._intent_build_exe()
-        if any(k in t for k in ["собрать инсталлятор", "собери инсталлятор", "build setup", "сборка setup",
-                                 "собрать установщик", "собери установщик"]):
+        if any(
+            k in t
+            for k in [
+                "собрать инсталлятор",
+                "собери инсталлятор",
+                "build setup",
+                "сборка setup",
+                "собрать установщик",
+                "собери установщик",
+            ]
+        ):
             return self._intent_build_setup()
         if any(k in t for k in ["собрать", "собери", "build", "сборка"]):
             return self._intent_build_auto()
@@ -2791,9 +2952,11 @@ class ArgosCore:
 
         # ── Голос ─────────────────────────────────────────
         if any(k in t for k in ["голос вкл", "включи голос"]):
-            self.voice_on = True; return "🔊 Голосовой модуль активирован."
+            self.voice_on = True
+            return "🔊 Голосовой модуль активирован."
         if any(k in t for k in ["голос выкл", "выключи голос"]):
-            self.voice_on = False; return "🔇 Голосовой модуль отключён."
+            self.voice_on = False
+            return "🔇 Голосовой модуль отключён."
         if any(k in t for k in ["режим ии авто", "модель авто", "ai mode auto"]):
             return self.set_ai_mode("auto")
         if any(k in t for k in ["режим ии gemini", "модель gemini", "ai mode gemini"]):
@@ -2802,7 +2965,16 @@ class ArgosCore:
             return self.set_ai_mode("gigachat")
         if any(k in t for k in ["режим ии yandexgpt", "модель yandexgpt", "ai mode yandexgpt", "режим ии яндекс"]):
             return self.set_ai_mode("yandexgpt")
-        if any(k in t for k in ["режим ии lmstudio", "модель lmstudio", "ai mode lmstudio", "режим ии lm studio", "модель lm studio"]):
+        if any(
+            k in t
+            for k in [
+                "режим ии lmstudio",
+                "модель lmstudio",
+                "ai mode lmstudio",
+                "режим ии lm studio",
+                "модель lm studio",
+            ]
+        ):
             return self.set_ai_mode("lmstudio")
         if any(k in t for k in ["режим ии ollama", "модель ollama", "ai mode ollama"]):
             return self.set_ai_mode("ollama")
@@ -2830,30 +3002,36 @@ class ArgosCore:
 
         if "дайджест" in t:
             from src.skills.content_gen import ContentGen
+
             return ContentGen().generate_digest()
         if "опубликуй" in t:
             from src.skills.content_gen import ContentGen
+
             return ContentGen().publish()
         if any(k in t for k in ["крипто", "биткоин", "bitcoin", "ethereum"]):
             from src.skills.crypto_monitor import CryptoSentinel
+
             return CryptoSentinel().report()
         if any(k in t for k in ["сканируй сеть", "сетевой призрак"]):
             from src.skills.net_scanner import NetGhost
+
             return NetGhost().scan()
         if any(k in t for k in ["список навыков", "навыки аргоса", "скиллы", "список скиллов"]):
             if self.skill_loader:
                 return self.skill_loader.list_skills()
             from src.skills.evolution import ArgosEvolution
+
             return ArgosEvolution().list_skills()
         if any(k in t for k in ["напиши навык", "создай навык"]):
             from src.skills.evolution import ArgosEvolution
-            desc = text.replace("напиши навык","").replace("создай навык","").strip()
+
+            desc = text.replace("напиши навык", "").replace("создай навык", "").strip()
             return ArgosEvolution(ai_core=self).generate_skill(desc)
 
         # ── Память ────────────────────────────────────────
         if self.memory:
             if "запомни" in t:
-                return self.memory.parse_and_remember(text.replace("аргос","").replace("запомни","").strip())
+                return self.memory.parse_and_remember(text.replace("аргос", "").replace("запомни", "").strip())
             if any(k in t for k in ["что ты знаешь", "моя память", "покажи память"]):
                 return self.memory.format_memory()
             if any(k in t for k in ["поиск по памяти", "найди в памяти", "rag память"]):
@@ -2868,28 +3046,38 @@ class ArgosCore:
             if any(k in t for k in ["граф знаний", "связи памяти", "мои связи"]):
                 return self.memory.graph_report()
             if "забудь" in t and "разговор" not in t:
-                return self.memory.forget(text.replace("аргос","").replace("забудь","").strip())
+                return self.memory.forget(text.replace("аргос", "").replace("забудь", "").strip())
             if any(k in t for k in ["запиши заметку", "новая заметка"]):
-                parts = text.replace("запиши заметку","").replace("новая заметка","").strip().split(":",1)
-                return self.memory.add_note(parts[0].strip(), parts[1].strip() if len(parts)>1 else parts[0])
+                parts = text.replace("запиши заметку", "").replace("новая заметка", "").strip().split(":", 1)
+                return self.memory.add_note(parts[0].strip(), parts[1].strip() if len(parts) > 1 else parts[0])
             if any(k in t for k in ["мои заметки", "список заметок"]):
                 return self.memory.get_notes()
             if "прочитай заметку" in t:
-                try: return self.memory.read_note(int(text.split()[-1]))
-                except: return "Укажи номер: прочитай заметку 1"
+                try:
+                    return self.memory.read_note(int(text.split()[-1]))
+                except:
+                    return "Укажи номер: прочитай заметку 1"
             if "удали заметку" in t:
-                try: return self.memory.delete_note(int(text.split()[-1]))
-                except: return "Укажи номер: удали заметку 1"
+                try:
+                    return self.memory.delete_note(int(text.split()[-1]))
+                except:
+                    return "Укажи номер: удали заметку 1"
 
         # ── Планировщик ───────────────────────────────────
         if self.scheduler:
             if any(k in t for k in ["расписание", "список задач"]):
                 return self.scheduler.list_tasks()
-            if any(k in t for k in ["каждые", "напомни", "ежедневно"]) or "через" in t or (t.strip().startswith("в ") and ":" in t):
+            if (
+                any(k in t for k in ["каждые", "напомни", "ежедневно"])
+                or "через" in t
+                or (t.strip().startswith("в ") and ":" in t)
+            ):
                 return self.scheduler.parse_and_add(text)
             if "удали задачу" in t:
-                try: return self.scheduler.remove(int(text.split()[-1]))
-                except: return "Укажи номер: удали задачу 1"
+                try:
+                    return self.scheduler.remove(int(text.split()[-1]))
+                except:
+                    return "Укажи номер: удали задачу 1"
 
         # ── Алерты ────────────────────────────────────────
         if self.alerts:
@@ -2898,8 +3086,9 @@ class ArgosCore:
             if "установи порог" in t:
                 try:
                     parts = text.split()
-                    return self.alerts.set_threshold(parts[-2], float(parts[-1].replace("%","")))
-                except: return "Формат: установи порог cpu 85"
+                    return self.alerts.set_threshold(parts[-2], float(parts[-1].replace("%", "")))
+                except:
+                    return "Формат: установи порог cpu 85"
 
         # ── Веб-панель ────────────────────────────────────
         if any(k in t for k in ["веб-панель", "веб панель", "dashboard", "открой панель"]):
@@ -2908,35 +3097,47 @@ class ArgosCore:
         # ── Геолокация ────────────────────────────────────
         if any(k in t for k in ["геолокация", "мой ip", "где я", "мой адрес"]):
             from src.connectivity.spatial import SpatialAwareness
+
             return SpatialAwareness(db=self.db).get_full_report()
 
         # ── Загрузчик ─────────────────────────────────────
         if any(k in t for k in ["загрузчик", "boot info"]):
             from src.security.bootloader_manager import BootloaderManager
-            if not self._boot: self._boot = BootloaderManager()
+
+            if not self._boot:
+                self._boot = BootloaderManager()
             return self._boot.full_report()
         if "ARGOS-BOOT-CONFIRM" in t.upper():
             from src.security.bootloader_manager import BootloaderManager
-            if not self._boot: self._boot = BootloaderManager()
+
+            if not self._boot:
+                self._boot = BootloaderManager()
             return self._boot.confirm("ARGOS-BOOT-CONFIRM")
         if any(k in t for k in ["установи persistence", "персистенс"]):
             from src.security.bootloader_manager import BootloaderManager
-            if not self._boot: self._boot = BootloaderManager()
+
+            if not self._boot:
+                self._boot = BootloaderManager()
             return self._boot.install_persistence()
         if "обнови grub" in t:
             from src.security.bootloader_manager import BootloaderManager
-            if not self._boot: self._boot = BootloaderManager()
+
+            if not self._boot:
+                self._boot = BootloaderManager()
             return self._boot.linux_update_grub()
 
         # ── Автозапуск ────────────────────────────────────
         if "установи автозапуск" in t:
             from src.security.autostart import ArgosAutostart
+
             return ArgosAutostart().install()
         if "статус автозапуска" in t:
             from src.security.autostart import ArgosAutostart
+
             return ArgosAutostart().status()
         if "удали автозапуск" in t:
             from src.security.autostart import ArgosAutostart
+
             return ArgosAutostart().uninstall()
 
         # ── P2P ───────────────────────────────────────────
@@ -2973,8 +3174,12 @@ class ArgosCore:
             return self.p2p.connect_to(ip) if self.p2p else "P2P не запущен."
         if any(k in t for k in ["распредели задачу", "общая мощность"]):
             if self.p2p:
-                q = text.replace("распредели задачу","").replace("общая мощность","").strip()
-                route_type = "heavy" if any(k in q.lower() for k in ["vision", "камер", "компиля", "compile", "прошив"]) else None
+                q = text.replace("распредели задачу", "").replace("общая мощность", "").strip()
+                route_type = (
+                    "heavy"
+                    if any(k in q.lower() for k in ["vision", "камер", "компиля", "compile", "прошив"])
+                    else None
+                )
                 return self.p2p.route_query(q or "Статус сети Аргоса.", task_type=route_type)
             return "P2P не запущен."
 
@@ -3030,26 +3235,26 @@ class ArgosCore:
             if any(k in t for k in ["типы систем", "доступные системы"]):
                 return self.smart_sys.available_types()
             if "добавь систему" in t or "создай систему" in t:
-                parts = text.replace("добавь систему","").replace("создай систему","").strip().split()
+                parts = text.replace("добавь систему", "").replace("создай систему", "").strip().split()
                 if not parts:
                     return self.smart_sys.available_types()
                 sys_type = parts[0]
-                sys_id   = parts[1] if len(parts) > 1 else None
+                sys_id = parts[1] if len(parts) > 1 else None
                 return self.smart_sys.add_system(sys_type, sys_id)
             if "обнови сенсор" in t or "сенсор" in t and "=" in t:
                 # Формат: обнови сенсор [система] [сенсор] [значение]
-                parts = text.replace("обнови сенсор","").strip().split()
+                parts = text.replace("обнови сенсор", "").strip().split()
                 if len(parts) >= 3:
                     return self.smart_sys.update(parts[0], parts[1], parts[2])
                 return "Формат: обнови сенсор [id_системы] [сенсор] [значение]"
             if any(k in t for k in ["включи", "выключи", "установи"]) and self.smart_sys.systems:
                 # включи полив greenhouse / выключи обогрев home
-                for action_w, state in [("включи","on"),("выключи","off"),("установи","set")]:
+                for action_w, state in [("включи", "on"), ("выключи", "off"), ("установи", "set")]:
                     if action_w in t:
                         rest = text.split(action_w, 1)[-1].strip().split()
                         if len(rest) >= 2:
                             actuator = rest[0]
-                            sys_id   = rest[1]
+                            sys_id = rest[1]
                             if sys_id in self.smart_sys.systems:
                                 return self.smart_sys.command(sys_id, actuator, state)
                         break
@@ -3061,7 +3266,7 @@ class ArgosCore:
                     rule_text = parts[1]
                     if "если" in rule_text and "то" in rule_text:
                         cond = rule_text.split("если")[1].split("то")[0].strip()
-                        act  = rule_text.split("то")[1].strip()
+                        act = rule_text.split("то")[1].strip()
                         return self.smart_sys.systems[parts[0]].add_rule(cond, act)
                 return "Формат: добавь правило [система] если [условие] то [действие]"
 
@@ -3087,6 +3292,7 @@ class ArgosCore:
             if "добавь шлюз" in t or "зарегистрируй шлюз" in t:
                 # Формат: добавь шлюз [id] [протокол] [ip] [mac] [name...]
                 import shlex as _shlex
+
                 tail = text
                 for marker in ("добавь шлюз", "зарегистрируй шлюз"):
                     if marker in t:
@@ -3160,8 +3366,7 @@ class ArgosCore:
             if any(k in t for k in ["команда устройству", "отправь команду"]):
                 parts = text.split("устройству" if "устройству" in t else "команду")[-1].strip().split()
                 if len(parts) >= 2:
-                    return self.iot_bridge.send_command(parts[0], parts[1],
-                                                       parts[2] if len(parts) > 2 else None)
+                    return self.iot_bridge.send_command(parts[0], parts[1], parts[2] if len(parts) > 2 else None)
                 return "Формат: команда устройству [id] [команда] [значение]"
 
         if self.bacnet_bridge:
@@ -3231,9 +3436,13 @@ class ArgosCore:
             if "добавь mesh устройство" in t:
                 parts = text.split("mesh устройство")[-1].strip().split()
                 if len(parts) >= 3:
-                    return self.mesh_net.add_device(parts[0], parts[1], parts[2],
-                                                    parts[3] if len(parts) > 3 else "",
-                                                    parts[4] if len(parts) > 4 else "")
+                    return self.mesh_net.add_device(
+                        parts[0],
+                        parts[1],
+                        parts[2],
+                        parts[3] if len(parts) > 3 else "",
+                        parts[4] if len(parts) > 4 else "",
+                    )
                 return "Формат: добавь mesh устройство [id] [протокол] [адрес] [имя] [комната]"
             if "mesh broadcast" in t or "mesh рассылка" in t:
                 parts = text.split("broadcast" if "broadcast" in t else "рассылка")[-1].strip().split(maxsplit=1)
@@ -3244,7 +3453,7 @@ class ArgosCore:
                 parts = text.split("gateway")[-1].strip().split()
                 if len(parts) >= 1:
                     port = parts[0]
-                    fw   = parts[1] if len(parts) > 1 else "zigbee_gateway"
+                    fw = parts[1] if len(parts) > 1 else "zigbee_gateway"
                     return self.mesh_net.flash_gateway(port, fw)
                 return "Формат: прошей gateway [порт] [прошивка]"
 
@@ -3274,8 +3483,10 @@ class ArgosCore:
                         protocol=protocol,
                         firmware=firmware,
                     )
-                return ("Формат: изучи протокол [шаблон] [протокол] [прошивка?] [описание?]\n"
-                        "Пример: изучи протокол bt_gateway bluetooth custom_bridge BLE шлюз")
+                return (
+                    "Формат: изучи протокол [шаблон] [протокол] [прошивка?] [описание?]\n"
+                    "Пример: изучи протокол bt_gateway bluetooth custom_bridge BLE шлюз"
+                )
             if any(k in t for k in ["изучи устройство", "выучи устройство", "изучи устроц", "выучи устроц"]):
                 tail = text
                 for marker in ("изучи устройство", "выучи устройство", "изучи устроц", "выучи устроц"):
@@ -3293,8 +3504,10 @@ class ArgosCore:
                         protocol=protocol,
                         hardware=hardware,
                     )
-                return ("Формат: изучи устройство [шаблон] [протокол] [hardware?]\n"
-                        "Пример: изучи устройство rtu_bridge modbus USB-RS485 адаптер")
+                return (
+                    "Формат: изучи устройство [шаблон] [протокол] [hardware?]\n"
+                    "Пример: изучи устройство rtu_bridge modbus USB-RS485 адаптер"
+                )
             if "создай прошивку" in t or "собери прошивку" in t:
                 # создай прошивку [id] [шаблон] [порт?]
                 tail = text.split("прошивку", 1)[-1].strip().split()
@@ -3331,7 +3544,9 @@ class ArgosCore:
                         steps = 1
                 return self.gateway_mgr.rollback_firmware(parts[0], steps)
             if "конфиг шлюза" in t:
-                gw_id = text.split("конфиг шлюза")[-1].strip().split()[0] if text.split("конфиг шлюза")[-1].strip() else ""
+                gw_id = (
+                    text.split("конфиг шлюза")[-1].strip().split()[0] if text.split("конфиг шлюза")[-1].strip() else ""
+                )
                 if gw_id:
                     return self.gateway_mgr.get_config(gw_id)
                 return "Формат: конфиг шлюза [id]"
@@ -3360,6 +3575,7 @@ class ArgosCore:
                 tail = text.split("регистрация" if "регистрация" in t else "метку", 1)[-1].strip().split()
                 if len(tail) >= 3:
                     from src.connectivity.nfc_manager import TagAction
+
                     uid, name = tail[0], tail[1]
                     action_str = tail[2] if len(tail) > 2 else "log_event"
                     action = TagAction.LOG_EVENT
@@ -3391,8 +3607,10 @@ class ArgosCore:
                 lines = ["🔌 USB УСТРОЙСТВА:"]
                 for d in devices:
                     auth = "✓" if d.get("authorized") else "✗"
-                    lines.append(f"  [{auth}] {d.get('port', '?')}: {d.get('description', '?')} "
-                                 f"({d.get('vid', '')}:{d.get('pid', '')}) — {d.get('device_type', '?')}")
+                    lines.append(
+                        f"  [{auth}] {d.get('port', '?')}: {d.get('description', '?')} "
+                        f"({d.get('vid', '')}:{d.get('pid', '')}) — {d.get('device_type', '?')}"
+                    )
                 return "\n".join(lines)
             if any(k in t for k in ["usb авторизованные", "usb authorized"]):
                 devs = self.usb_diag.list_authorized()
@@ -3506,7 +3724,9 @@ class ArgosCore:
                 lines = [f"📡 WiFi: обнаружено {len(aps)} точек доступа:"]
                 for ap in aps[:20]:
                     d = ap.to_dict()
-                    lines.append(f"  • {d.get('ssid', '?')} ({d.get('bssid', '?')}) ch{d.get('channel', '?')} {d.get('signal_dbm', '?')}dBm — {d.get('encryption', '?')}")
+                    lines.append(
+                        f"  • {d.get('ssid', '?')} ({d.get('bssid', '?')}) ch{d.get('channel', '?')} {d.get('signal_dbm', '?')}dBm — {d.get('encryption', '?')}"
+                    )
                 return "\n".join(lines)
             if any(k in t for k in ["wifi ловушка", "wifi honeypot", "honeypot вкл"]):
                 return self.wifi_sentinel.start_honeypot()
@@ -3520,7 +3740,9 @@ class ArgosCore:
                     return "🛡️ WiFi Sentinel: инцидентов нет."
                 lines = ["🛡️ WiFi ИНЦИДЕНТЫ:"]
                 for inc in incidents[-15:]:
-                    lines.append(f"  [{inc.get('threat_level', '?')}] {inc.get('type', '?')} — {inc.get('description', '')}")
+                    lines.append(
+                        f"  [{inc.get('threat_level', '?')}] {inc.get('type', '?')} — {inc.get('description', '')}"
+                    )
                 return "\n".join(lines)
 
         # ── SmartHome Override ────────────────────────────
@@ -3533,7 +3755,9 @@ class ArgosCore:
                     return "🏠 SmartHome Override: устройств нет."
                 lines = ["🏠 OVERRIDE УСТРОЙСТВА:"]
                 for d in devs:
-                    lines.append(f"  • {d.get('device_id', '?')} — {d.get('friendly_name', '?')} [{d.get('protocol', '?')}] cloud={'blocked' if d.get('cloud_blocked') else 'allowed'}")
+                    lines.append(
+                        f"  • {d.get('device_id', '?')} — {d.get('friendly_name', '?')} [{d.get('protocol', '?')}] cloud={'blocked' if d.get('cloud_blocked') else 'allowed'}"
+                    )
                 return "\n".join(lines)
             if any(k in t for k in ["smarthome старт", "override старт", "smarthome start"]):
                 return self.smarthome.start()
@@ -3543,7 +3767,11 @@ class ArgosCore:
             if t.startswith("smarthome команда ") or t.startswith("override cmd "):
                 parts = t.split(maxsplit=2)
                 if len(parts) >= 3:
-                    dev_id = parts[1] if t.startswith("override") else parts[2].split()[0] if len(parts[2].split()) > 0 else ""
+                    dev_id = (
+                        parts[1]
+                        if t.startswith("override")
+                        else parts[2].split()[0] if len(parts[2].split()) > 0 else ""
+                    )
                     return f"Используй формат: smarthome команда [device_id] {{json}}"
 
         # ── Power Sentry ──────────────────────────────────
@@ -3558,7 +3786,9 @@ class ArgosCore:
                     return "🔋 UPS: не обнаружены."
                 lines = ["🔋 UPS УСТРОЙСТВА:"]
                 for u in ups_list:
-                    lines.append(f"  • {u.get('name', '?')} — {u.get('status', '?')} charge={u.get('battery_pct', '?')}% load={u.get('load_pct', '?')}%")
+                    lines.append(
+                        f"  • {u.get('name', '?')} — {u.get('status', '?')} charge={u.get('battery_pct', '?')}% load={u.get('load_pct', '?')}%"
+                    )
                 return "\n".join(lines)
             if any(k in t for k in ["питание показания", "power readings", "показания датчиков питания"]):
                 rds = self.power_sentry.get_readings()
@@ -3566,7 +3796,9 @@ class ArgosCore:
                     return "🔋 Показания: нет данных."
                 lines = ["🔋 ПОКАЗАНИЯ ПИТАНИЯ:"]
                 for r in rds[-10:]:
-                    lines.append(f"  {r.get('sensor_id', '?')}: {r.get('voltage_v', '?')}V {r.get('current_a', '?')}A {r.get('power_w', '?')}W")
+                    lines.append(
+                        f"  {r.get('sensor_id', '?')}: {r.get('voltage_v', '?')}V {r.get('current_a', '?')}A {r.get('power_w', '?')}W"
+                    )
                 return "\n".join(lines)
             if any(k in t for k in ["аварийное отключение", "power emergency", "emergency arm"]):
                 return self.power_sentry.arm_emergency()
@@ -3637,15 +3869,22 @@ class ArgosCore:
         if self.biosphere_dag:
             if any(k in t for k in ["биосфера статус", "biosphere статус", "biosphere status"]):
                 return self.biosphere_dag.status()
-            if any(k in t for k in ["биосфера цикл", "biosphere cycle", "биосфера сейчас", "биосфера тик", "biosphere tick"]):
+            if any(
+                k in t
+                for k in ["биосфера цикл", "biosphere cycle", "биосфера сейчас", "биосфера тик", "biosphere tick"]
+            ):
                 auto_sys_id = (os.getenv("ARGOS_BIOSPHERE_SYS_ID", "") or "").strip()
                 if not auto_sys_id:
                     return "Формат: биосфера цикл [system_id]"
-                profile = getattr(self.biosphere_dag, "default_profile", {
-                    "temp_min": 22.0,
-                    "temp_max": 26.0,
-                    "hum_min": 60.0,
-                })
+                profile = getattr(
+                    self.biosphere_dag,
+                    "default_profile",
+                    {
+                        "temp_min": 22.0,
+                        "temp_max": 26.0,
+                        "hum_min": 60.0,
+                    },
+                )
                 return self.biosphere_dag.run_cycle(auto_sys_id, dict(profile))
             if any(k in t for k in ["биосфера старт", "biosphere start"]):
                 interval = 30.0
@@ -3677,6 +3916,7 @@ class ArgosCore:
         # ── Загрузчик прошивок ─────────────────────────────────────
         if any(k in t for k in ["обнови тасмота", "скачай прошивки", "обнови tasmota"]):
             from src.skills.tasmota_updater import TasmotaUpdater
+
             return TasmotaUpdater().execute()
 
         # ── IBM Quantum ───────────────────────────────────
@@ -3705,7 +3945,7 @@ class ArgosCore:
             query = text
             for prefix in ["jarvis задача ", "jarvis task ", "jarvis выполни "]:
                 if t.startswith(prefix):
-                    query = text[len(prefix):].strip()
+                    query = text[len(prefix) :].strip()
                     break
             if query:
                 result = self.jarvis.process(query)
@@ -3755,7 +3995,9 @@ class ArgosCore:
         lines = ["🛠️ ОПЕРАТОР: ВОССТАНОВЛЕНИЕ"]
         if self.gateway_mgr:
             lines.append(self.gateway_mgr.health_check())
-        lines.append("Чек-лист:\n  1) Проверить порты/сеть\n  2) Переподготовить прошивку\n  3) Выполнить откат прошивки при деградации")
+        lines.append(
+            "Чек-лист:\n  1) Проверить порты/сеть\n  2) Переподготовить прошивку\n  3) Выполнить откат прошивки при деградации"
+        )
         return "\n\n".join(lines)
 
     def _help(self) -> str:
@@ -3966,7 +4208,11 @@ class ArgosCore:
             "purpose": "",
             "functions": [],
         }
-        types = ", ".join(self.smart_profiles.keys()) if self.smart_profiles else "home, greenhouse, garage, cellar, incubator, aquarium, terrarium"
+        types = (
+            ", ".join(self.smart_profiles.keys())
+            if self.smart_profiles
+            else "home, greenhouse, garage, cellar, incubator, aquarium, terrarium"
+        )
         return (
             "🧭 Мастер создания умной системы.\n"
             "Шаг 1/4: выбери тип системы:\n"
@@ -4057,6 +4303,7 @@ class ArgosCore:
             result = self.skill_loader.load(name, core=self)
             return self.skill_loader, result
         import importlib
+
         try:
             return importlib.import_module(f"src.skills.{name}"), f"✅ '{name}' загружен."
         except ModuleNotFoundError:

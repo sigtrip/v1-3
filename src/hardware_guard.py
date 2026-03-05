@@ -2,10 +2,12 @@
 hardware_guard.py — Квантовый гомеостаз железа
   Мониторинг CPU/RAM/температуры и автоматическая стабилизация системы.
 """
+
 import os
-import time
 import threading
+import time
 from collections import deque
+
 import psutil
 
 from src.argos_logger import get_logger
@@ -121,24 +123,19 @@ class HardwareHomeostasisGuard:
     def _decide_state(self, cpu: float, ram: float, temp: float | None, cpu_pred_5s: float) -> str:
         temp_val = temp if temp is not None else 0.0
         unstable = (
-            cpu >= self.unstable_cpu or
-            ram >= self.unstable_ram or
-            (temp is not None and temp_val >= self.unstable_temp)
+            cpu >= self.unstable_cpu
+            or ram >= self.unstable_ram
+            or (temp is not None and temp_val >= self.unstable_temp)
         )
         if unstable:
             return "Unstable"
 
-        predictive = (
-            cpu < self.unstable_cpu and
-            cpu_pred_5s >= self.unstable_cpu
-        )
+        predictive = cpu < self.unstable_cpu and cpu_pred_5s >= self.unstable_cpu
         if predictive:
             return "Predictive"
 
         protective = (
-            cpu >= self.protect_cpu or
-            ram >= self.protect_ram or
-            (temp is not None and temp_val >= self.protect_temp)
+            cpu >= self.protect_cpu or ram >= self.protect_ram or (temp is not None and temp_val >= self.protect_temp)
         )
         if protective:
             return "Protective"
@@ -147,7 +144,9 @@ class HardwareHomeostasisGuard:
     def _apply_mitigation(self, state: str, cpu: float, ram: float, temp: float | None) -> str:
         if hasattr(self.core, "quantum") and self.core.quantum:
             try:
-                self.core.quantum.set_external_telemetry(cpu=cpu, ram=ram, temp=temp, ttl_seconds=max(10, self.interval_sec * 2))
+                self.core.quantum.set_external_telemetry(
+                    cpu=cpu, ram=ram, temp=temp, ttl_seconds=max(10, self.interval_sec * 2)
+                )
             except Exception:
                 pass
 

@@ -3,11 +3,14 @@ encryption.py — AES-256-GCM шифрование Аргоса
   Основное шифрование: AES-256-GCM (через cryptography).
   Fernet-совместимость сохранена как fallback.
 """
-import os
+
 import base64
+import os
 import secrets
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 from src.argos_logger import get_logger
 
 log = get_logger("argos.shield")
@@ -45,16 +48,16 @@ class ArgosShield:
         """Шифрует строку. Возвращает base64."""
         if self._aesgcm:
             nonce = secrets.token_bytes(12)  # 96-бит nonce для GCM
-            ct    = self._aesgcm.encrypt(nonce, data.encode("utf-8"), None)
+            ct = self._aesgcm.encrypt(nonce, data.encode("utf-8"), None)
             return base64.b64encode(nonce + ct).decode("ascii")
         return self._fernet.encrypt(data.encode()).decode()
 
     def decrypt(self, data: str) -> str:
         """Дешифрует строку из base64."""
         if self._aesgcm:
-            raw   = base64.b64decode(data)
+            raw = base64.b64decode(data)
             nonce = raw[:12]
-            ct    = raw[12:]
+            ct = raw[12:]
             return self._aesgcm.decrypt(nonce, ct, None).decode("utf-8")
         return self._fernet.decrypt(data.encode()).decode()
 
@@ -62,7 +65,7 @@ class ArgosShield:
         """Шифрует байты."""
         if self._aesgcm:
             nonce = secrets.token_bytes(12)
-            ct    = self._aesgcm.encrypt(nonce, data, None)
+            ct = self._aesgcm.encrypt(nonce, data, None)
             return nonce + ct
         return self._fernet.encrypt(data)
 

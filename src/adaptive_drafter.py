@@ -6,6 +6,7 @@ adaptive_drafter.py — Adaptive Drafter (TLT — Traffic-Light Thinker)
     - Фильтрация тривиальных запросов (offline-ответ)
     - Учёт лимитов API
 """
+
 import os
 import re
 import time
@@ -126,8 +127,14 @@ class AdaptiveDrafter:
         self._bytes_saved = 0
         self._lock = threading.Lock()
 
-        log.info("TLT v%s init | cache=%d/%ds | compress>%d max_lines=%d",
-             self.VERSION, cache_size, int(cache_ttl), self._compress_threshold, self._compress_max_lines)
+        log.info(
+            "TLT v%s init | cache=%d/%ds | compress>%d max_lines=%d",
+            self.VERSION,
+            cache_size,
+            int(cache_ttl),
+            self._compress_threshold,
+            self._compress_max_lines,
+        )
 
     def _load_offline_patterns(self) -> None:
         """Загружает оффлайн-паттерны: builtin + custom из файла."""
@@ -222,7 +229,7 @@ class AdaptiveDrafter:
             seen.add(sig)
             if len(stripped) > self._compress_line_limit:
                 head = stripped[: self._compress_line_limit // 2]
-                tail = stripped[-(self._compress_line_limit // 2):]
+                tail = stripped[-(self._compress_line_limit // 2) :]
                 stripped = head + " [...] " + tail
             out.append(stripped)
             if len(out) >= self._compress_max_lines:

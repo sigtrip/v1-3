@@ -1,11 +1,12 @@
 """
 biosphere_dag.py — DAG-контроллер биосферы
 """
+
 import logging
 import threading
 import time
 
-from src.modules.biosphere_tools import SensorReaderNode, ClimateAnalyzerNode, ActuatorNode
+from src.modules.biosphere_tools import ActuatorNode, ClimateAnalyzerNode, SensorReaderNode
 
 log = logging.getLogger("argos.biosphere.dag")
 

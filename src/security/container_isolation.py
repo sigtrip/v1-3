@@ -12,17 +12,18 @@ container_isolation.py — LXD / Docker Isolation
 
     ⚠ Запуск контейнеров требует прав Docker-группы или root.
 """
+
+import json
 import os
 import re
-import time
-import json
 import shutil
 import subprocess
 import threading
+import time
+from collections import deque
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
-from collections import deque
-from dataclasses import dataclass, field, asdict
 
 from src.argos_logger import get_logger
 
@@ -46,24 +47,25 @@ class ContainerState(Enum):
 
 
 class NetworkMode(Enum):
-    NONE = "none"           # полная изоляция
-    BRIDGE = "bridge"       # доступ через bridge
-    HOST = "host"           # общая сеть (небезопасно)
+    NONE = "none"  # полная изоляция
+    BRIDGE = "bridge"  # доступ через bridge
+    HOST = "host"  # общая сеть (небезопасно)
 
 
 @dataclass
 class ContainerInfo:
     """Метаинформация о контейнере."""
+
     name: str
-    module: str                                # имя модуля Аргоса
+    module: str  # имя модуля Аргоса
     runtime: str = "docker"
     image: str = "python:3.12-slim"
     state: str = "unknown"
     network: str = "none"
     container_id: str = ""
     created_at: float = field(default_factory=time.time)
-    cpu_limit: str = "0.5"                     # --cpus
-    mem_limit: str = "256m"                    # --memory
+    cpu_limit: str = "0.5"  # --cpus
+    mem_limit: str = "256m"  # --memory
     auto_restart: bool = True
     ports: Dict[str, str] = field(default_factory=dict)
     volumes: Dict[str, str] = field(default_factory=dict)
@@ -97,9 +99,11 @@ class ContainerIsolation:
         self._watchdog_running = False
         self._watchdog_interval = int(os.getenv("ARGOS_ISO_WATCHDOG_SEC", "30"))
         self._default_image = os.getenv("ARGOS_ISO_IMAGE", "python:3.12-slim")
-        self._default_network = NetworkMode(
-            os.getenv("ARGOS_ISO_NETWORK", "none").strip().lower()
-        ) if os.getenv("ARGOS_ISO_NETWORK") else NetworkMode.NONE
+        self._default_network = (
+            NetworkMode(os.getenv("ARGOS_ISO_NETWORK", "none").strip().lower())
+            if os.getenv("ARGOS_ISO_NETWORK")
+            else NetworkMode.NONE
+        )
         log.info("ContainerIsolation: runtime=%s", self._runtime.value)
 
     # ── Детекция runtime ─────────────────────────────────
@@ -109,16 +113,14 @@ class ContainerIsolation:
         """Определить доступный runtime."""
         if shutil.which("docker"):
             try:
-                r = subprocess.run(["docker", "info"], capture_output=True,
-                                   timeout=5, text=True)
+                r = subprocess.run(["docker", "info"], capture_output=True, timeout=5, text=True)
                 if r.returncode == 0:
                     return Runtime.DOCKER
             except Exception:
                 pass
         if shutil.which("lxc"):
             try:
-                r = subprocess.run(["lxc", "list", "--format=json"],
-                                   capture_output=True, timeout=5, text=True)
+                r = subprocess.run(["lxc", "list", "--format=json"], capture_output=True, timeout=5, text=True)
                 if r.returncode == 0:
                     return Runtime.LXD
             except Exception:
@@ -127,15 +129,19 @@ class ContainerIsolation:
 
     # ── Публичный API ────────────────────────────────────
 
-    def launch(self, module: str, *,
-               image: Optional[str] = None,
-               network: Optional[str] = None,
-               cpu: str = "0.5",
-               mem: str = "256m",
-               ports: Optional[Dict[str, str]] = None,
-               volumes: Optional[Dict[str, str]] = None,
-               env: Optional[Dict[str, str]] = None,
-               cmd: Optional[str] = None) -> str:
+    def launch(
+        self,
+        module: str,
+        *,
+        image: Optional[str] = None,
+        network: Optional[str] = None,
+        cpu: str = "0.5",
+        mem: str = "256m",
+        ports: Optional[Dict[str, str]] = None,
+        volumes: Optional[Dict[str, str]] = None,
+        env: Optional[Dict[str, str]] = None,
+        cmd: Optional[str] = None,
+    ) -> str:
         """Запустить модуль в контейнере."""
         if self._runtime == Runtime.NONE:
             return "❌ Docker / LXD не обнаружен."
@@ -181,10 +187,15 @@ class ContainerIsolation:
 
         with self._lock:
             self._containers[name] = info
-            self._history.append({
-                "ts": time.time(), "action": "launch",
-                "name": name, "module": module, "image": img,
-            })
+            self._history.append(
+                {
+                    "ts": time.time(),
+                    "action": "launch",
+                    "name": name,
+                    "module": module,
+                    "image": img,
+                }
+            )
 
         log.info("Container '%s' launched (runtime=%s)", name, self._runtime.value)
         return f"✅ Контейнер '{name}' запущен ({self._runtime.value}, {img}, net={net})"
@@ -198,11 +209,9 @@ class ContainerIsolation:
 
         try:
             if self._runtime == Runtime.DOCKER:
-                subprocess.run(["docker", "stop", name],
-                               capture_output=True, timeout=30, text=True, check=True)
+                subprocess.run(["docker", "stop", name], capture_output=True, timeout=30, text=True, check=True)
             elif self._runtime == Runtime.LXD:
-                subprocess.run(["lxc", "stop", name],
-                               capture_output=True, timeout=30, text=True, check=True)
+                subprocess.run(["lxc", "stop", name], capture_output=True, timeout=30, text=True, check=True)
             with self._lock:
                 info.state = ContainerState.STOPPED.value
                 self._history.append({"ts": time.time(), "action": "stop", "name": name})
@@ -218,11 +227,9 @@ class ContainerIsolation:
             return f"❌ Контейнер '{name}' не найден."
         try:
             if self._runtime == Runtime.DOCKER:
-                subprocess.run(["docker", "restart", name],
-                               capture_output=True, timeout=30, text=True, check=True)
+                subprocess.run(["docker", "restart", name], capture_output=True, timeout=30, text=True, check=True)
             elif self._runtime == Runtime.LXD:
-                subprocess.run(["lxc", "restart", name],
-                               capture_output=True, timeout=30, text=True, check=True)
+                subprocess.run(["lxc", "restart", name], capture_output=True, timeout=30, text=True, check=True)
             with self._lock:
                 info.state = ContainerState.RUNNING.value
                 self._history.append({"ts": time.time(), "action": "restart", "name": name})
@@ -235,11 +242,9 @@ class ContainerIsolation:
         self.stop(name)
         try:
             if self._runtime == Runtime.DOCKER:
-                subprocess.run(["docker", "rm", "-f", name],
-                               capture_output=True, timeout=15, text=True)
+                subprocess.run(["docker", "rm", "-f", name], capture_output=True, timeout=15, text=True)
             elif self._runtime == Runtime.LXD:
-                subprocess.run(["lxc", "delete", name, "--force"],
-                               capture_output=True, timeout=15, text=True)
+                subprocess.run(["lxc", "delete", name, "--force"], capture_output=True, timeout=15, text=True)
             with self._lock:
                 self._containers.pop(name, None)
                 self._history.append({"ts": time.time(), "action": "remove", "name": name})
@@ -252,8 +257,8 @@ class ContainerIsolation:
         if self._runtime == Runtime.DOCKER:
             try:
                 r = subprocess.run(
-                    ["docker", "logs", "--tail", str(tail), name],
-                    capture_output=True, timeout=10, text=True)
+                    ["docker", "logs", "--tail", str(tail), name], capture_output=True, timeout=10, text=True
+                )
                 return r.stdout[-4000:] if r.stdout else "(пусто)"
             except Exception as exc:
                 return f"❌ {exc}"
@@ -264,8 +269,8 @@ class ContainerIsolation:
         if self._runtime == Runtime.DOCKER:
             try:
                 r = subprocess.run(
-                    ["docker", "exec", name] + command.split(),
-                    capture_output=True, timeout=30, text=True)
+                    ["docker", "exec", name] + command.split(), capture_output=True, timeout=30, text=True
+                )
                 out = (r.stdout + r.stderr)[:4000]
                 return out or "(пусто)"
             except Exception as exc:
@@ -273,8 +278,8 @@ class ContainerIsolation:
         elif self._runtime == Runtime.LXD:
             try:
                 r = subprocess.run(
-                    ["lxc", "exec", name, "--"] + command.split(),
-                    capture_output=True, timeout=30, text=True)
+                    ["lxc", "exec", name, "--"] + command.split(), capture_output=True, timeout=30, text=True
+                )
                 return (r.stdout + r.stderr)[:4000] or "(пусто)"
             except Exception as exc:
                 return f"❌ {exc}"
@@ -290,8 +295,11 @@ class ContainerIsolation:
         lines = [f"📦 КОНТЕЙНЕРЫ АРГОСА ({self._runtime.value}):"]
         for c in containers:
             state_icon = {
-                "running": "🟢", "stopped": "🔴", "paused": "🟡",
-                "error": "❌", "creating": "🔵",
+                "running": "🟢",
+                "stopped": "🔴",
+                "paused": "🟡",
+                "error": "❌",
+                "creating": "🔵",
             }.get(c.state, "⚪")
             lines.append(
                 f"  {state_icon} {c.name} — {c.module} "
@@ -304,7 +312,8 @@ class ContainerIsolation:
         removed = 0
         with self._lock:
             to_remove = [
-                name for name, c in self._containers.items()
+                name
+                for name, c in self._containers.items()
                 if c.state in (ContainerState.STOPPED.value, ContainerState.ERROR.value)
             ]
         for name in to_remove:
@@ -316,8 +325,7 @@ class ContainerIsolation:
         """Статус подсистемы."""
         self._refresh_states()
         with self._lock:
-            running = sum(1 for c in self._containers.values()
-                          if c.state == ContainerState.RUNNING.value)
+            running = sum(1 for c in self._containers.values() if c.state == ContainerState.RUNNING.value)
             total = len(self._containers)
         return {
             "runtime": self._runtime.value,
@@ -363,8 +371,7 @@ class ContainerIsolation:
         if self._watchdog_running:
             return "ℹ️ Watchdog уже запущен."
         self._watchdog_running = True
-        self._watchdog_thread = threading.Thread(
-            target=self._watchdog_loop, daemon=True, name="argos-iso-watchdog")
+        self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True, name="argos-iso-watchdog")
         self._watchdog_thread.start()
         return "✅ Watchdog контейнеров запущен."
 
@@ -380,9 +387,9 @@ class ContainerIsolation:
                 # Автоперезапуск рухнувших контейнеров
                 with self._lock:
                     crashed = [
-                        name for name, c in self._containers.items()
-                        if c.state in (ContainerState.STOPPED.value, ContainerState.ERROR.value)
-                        and c.auto_restart
+                        name
+                        for name, c in self._containers.items()
+                        if c.state in (ContainerState.STOPPED.value, ContainerState.ERROR.value) and c.auto_restart
                     ]
                 for name in crashed:
                     log.warning("Watchdog: auto-restart %s", name)
@@ -403,9 +410,11 @@ class ContainerIsolation:
     def _docker_refresh(self):
         try:
             r = subprocess.run(
-                ["docker", "ps", "-a", "--filter", f"label={self.LABEL}",
-                 "--format", "{{.Names}}|{{.State}}|{{.ID}}"],
-                capture_output=True, timeout=10, text=True)
+                ["docker", "ps", "-a", "--filter", f"label={self.LABEL}", "--format", "{{.Names}}|{{.State}}|{{.ID}}"],
+                capture_output=True,
+                timeout=10,
+                text=True,
+            )
             if r.returncode != 0:
                 return
             live = {}
@@ -427,9 +436,7 @@ class ContainerIsolation:
 
     def _lxd_refresh(self):
         try:
-            r = subprocess.run(
-                ["lxc", "list", "--format=json"],
-                capture_output=True, timeout=10, text=True)
+            r = subprocess.run(["lxc", "list", "--format=json"], capture_output=True, timeout=10, text=True)
             if r.returncode != 0:
                 return
             data = json.loads(r.stdout)
@@ -447,13 +454,21 @@ class ContainerIsolation:
     def _docker_run(self, info: ContainerInfo, cmd: Optional[str]) -> str:
         """Запуск контейнера через docker CLI."""
         args = [
-            "docker", "run", "-d",
-            "--name", info.name,
-            "--label", f"{self.LABEL}={info.module}",
-            "--cpus", info.cpu_limit,
-            "--memory", info.mem_limit,
-            "--restart", "unless-stopped" if info.auto_restart else "no",
-            "--network", info.network,
+            "docker",
+            "run",
+            "-d",
+            "--name",
+            info.name,
+            "--label",
+            f"{self.LABEL}={info.module}",
+            "--cpus",
+            info.cpu_limit,
+            "--memory",
+            info.mem_limit,
+            "--restart",
+            "unless-stopped" if info.auto_restart else "no",
+            "--network",
+            info.network,
         ]
         for hp, cp in info.ports.items():
             args.extend(["-p", f"{hp}:{cp}"])
@@ -472,16 +487,16 @@ class ContainerIsolation:
 
     def _lxd_launch(self, info: ContainerInfo, cmd: Optional[str]) -> None:
         """Запуск через lxc."""
-        r = subprocess.run(
-            ["lxc", "launch", info.image, info.name],
-            capture_output=True, timeout=60, text=True)
+        r = subprocess.run(["lxc", "launch", info.image, info.name], capture_output=True, timeout=60, text=True)
         if r.returncode != 0:
             raise RuntimeError(r.stderr.strip()[:300])
         # Применить лимиты
         subprocess.run(
-            ["lxc", "config", "set", info.name,
-             f"limits.cpu={info.cpu_limit}", f"limits.memory={info.mem_limit}"],
-            capture_output=True, timeout=10, text=True)
+            ["lxc", "config", "set", info.name, f"limits.cpu={info.cpu_limit}", f"limits.memory={info.mem_limit}"],
+            capture_output=True,
+            timeout=10,
+            text=True,
+        )
 
     @staticmethod
     def _docker_state_map(state: str) -> str:

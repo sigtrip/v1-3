@@ -6,8 +6,9 @@ pupi_ops.py — Работа с Pupi API как со скриптовым regist
 from __future__ import annotations
 
 import os
-import requests
 from pathlib import Path
+
+import requests
 
 from src.argos_logger import get_logger
 
@@ -34,11 +35,7 @@ class ArgosPupiOps:
     def status(self) -> str:
         if not self.configured:
             return "❌ Pupi API не настроен. Укажи PUPI_API_URL и PUPI_API_TOKEN в .env"
-        return (
-            "🧰 Pupi API: configured\n"
-            f"  URL: {self.base_url}\n"
-            f"  Branch: {self.default_branch}"
-        )
+        return "🧰 Pupi API: configured\n" f"  URL: {self.base_url}\n" f"  Branch: {self.default_branch}"
 
     def _request(self, method: str, path: str, *, json_payload: dict | None = None) -> tuple[int, dict | str]:
         if not self.configured:

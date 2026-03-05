@@ -4,12 +4,14 @@ import os
 import platform
 import sys
 import time
-import psutil
 from datetime import datetime
-from src.security.syscalls import ArgosSyscalls
-from src.security.root_manager import RootManager
-from src.quantum.logic import ArgosQuantum
+
+import psutil
+
 from src.factory.replicator import Replicator
+from src.quantum.logic import ArgosQuantum
+from src.security.root_manager import RootManager
+from src.security.syscalls import ArgosSyscalls
 
 # Rich Visualization
 try:
@@ -27,21 +29,25 @@ except ImportError:
     class _NoopStatus:
         def __enter__(self):
             return self
+
         def __exit__(self, exc_type, exc, tb):
             return False
 
     class Console:
         def print(self, *args, **kwargs):
             print(*args)
+
         def status(self, *args, **kwargs):
             return _NoopStatus()
+
     console = Console()
     RICH_OK = False
+
 
 class ArgosShell(cmd.Cmd):
     intro = ""
     prompt = "argos> "
-    
+
     def __init__(self):
         super().__init__()
         self.syscalls = ArgosSyscalls()
@@ -64,17 +70,20 @@ class ArgosShell(cmd.Cmd):
             self._print_logo_rich()
         else:
             self._print_logo_plain()
-    
+
     def _print_logo_rich(self):
-        logo = Text(r"""
+        logo = Text(
+            r"""
     ___    ____  __________  _____
    /   |  / __ \/ ____/ __ \/ ___/
   / /| | / /_/ / / __/ / / /\__ \ 
  / ___ |/ _, _/ /_/ / /_/ /___/ / 
 /_/  |_/_/ |_|\____/\____//____/  
                                   
-        """, style="bold cyan")
-        
+        """,
+            style="bold cyan",
+        )
+
         info = f"Argos System v1.3 | Kernel: {platform.release()}\nLogged in as: [bold yellow]{os.getenv('USER', 'unknown')}[/bold yellow]"
         console.print(Panel(logo, title="[bold cyan]SYSTEM ONLINE[/bold cyan]", subtitle=info, border_style="cyan"))
         console.print("[dim]Type 'help' or '?' for commands.[/dim]\n")
@@ -85,7 +94,7 @@ class ArgosShell(cmd.Cmd):
         print("-" * 40)
 
     def _clear_screen(self):
-        os.system('cls' if os.name == 'nt' else 'clear')
+        os.system("cls" if os.name == "nt" else "clear")
 
     def do_status(self, arg):
         """Show system status and root privileges check."""
@@ -99,16 +108,16 @@ class ArgosShell(cmd.Cmd):
         table = Table(title="System Status", box=box.ROUNDED)
         table.add_column("Property", style="cyan")
         table.add_column("Value", style="magenta")
-        
+
         table.add_row("OS", f"{platform.system()} {platform.release()}")
         table.add_row("Architecture", platform.machine())
-        
+
         root_status = self.root_manager.status()
         if "✅" in root_status:
             status_style = "bold green"
         else:
             status_style = "bold yellow"
-            
+
         table.add_row("Privileges", Text(root_status, style=status_style))
         console.print(table)
 
@@ -132,11 +141,7 @@ class ArgosShell(cmd.Cmd):
 
     def _make_layout(self):
         layout = Layout()
-        layout.split(
-            Layout(name="header", size=3),
-            Layout(name="main", ratio=1),
-            Layout(name="footer", size=7)
-        )
+        layout.split(Layout(name="header", size=3), Layout(name="main", ratio=1), Layout(name="footer", size=7))
         layout["main"].split_row(
             Layout(name="left"),
             Layout(name="right"),
@@ -147,25 +152,22 @@ class ArgosShell(cmd.Cmd):
         grid = Table.grid(expand=True)
         grid.add_column(justify="center", ratio=1)
         grid.add_column(justify="right")
-        grid.add_row(
-            "[b]ARGOS INTEGRATED DASHBOARD[/b]", 
-            datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        )
+        grid.add_row("[b]ARGOS INTEGRATED DASHBOARD[/b]", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         return Panel(grid, style="white on blue")
 
     def _get_system_stats_panel(self):
         table = Table(box=None, expand=True)
         table.add_column("Metric")
         table.add_column("Value", justify="right")
-        
+
         cpu = psutil.cpu_percent()
         mem = psutil.virtual_memory().percent
-        disk = psutil.disk_usage('/').percent
-        
+        disk = psutil.disk_usage("/").percent
+
         table.add_row("CPU Load", f"[green]{cpu}%[/green]" if cpu < 50 else f"[red]{cpu}%[/red]")
         table.add_row("Memory", f"[yellow]{mem}%[/yellow]")
         table.add_row("Disk", f"{disk}%")
-        
+
         return Panel(table, title="[b]System Telemetry[/b]", border_style="green")
 
     def _get_quantum_panel(self):
@@ -173,13 +175,13 @@ class ArgosShell(cmd.Cmd):
         table = Table(box=None, expand=True)
         table.add_column("State")
         table.add_column("Prob")
-        
-        for s, p in state['probabilities'].items():
-            if s == state['name']:
+
+        for s, p in state["probabilities"].items():
+            if s == state["name"]:
                 table.add_row(f"[bold cyan]{s}[/bold cyan]", f"{p:.2f}")
             else:
                 table.add_row(s, f"{p:.2f}")
-                
+
         return Panel(table, title=f"Quantum State: [bold]{state['name']}[/bold]", border_style="magenta")
 
     def _get_log_panel(self):
@@ -194,6 +196,7 @@ class ArgosShell(cmd.Cmd):
         """Start Vision Feedback window (OpenCV)."""
         try:
             from src.vision import ArgosVision
+
             vision = ArgosVision()
             # Аргумент timeout можно передать
             print(vision.live_feed(timeout=None))
@@ -229,16 +232,16 @@ class ArgosShell(cmd.Cmd):
 
         with console.status("[bold green]Scanning network environment...[/bold green]", spinner="dots"):
             time.sleep(2)
-            
+
         table = Table(title="Network Scan Results")
         table.add_column("IP Address", style="cyan")
         table.add_column("Hostname", style="magenta")
         table.add_column("Status", style="green")
-        
+
         table.add_row("192.168.1.10", "Argos-Core", "ONLINE (Self)")
         table.add_row("192.168.1.1", "Gateway", "ONLINE")
         table.add_row("192.168.1.14", "Simulate-IoT", "ONLINE")
-        
+
         console.print(table)
 
     def do_clear(self, arg):
@@ -255,7 +258,7 @@ class ArgosShell(cmd.Cmd):
         print("\n--- Quantum State Inference ---")
         print(f"Dominant State: \033[96m{state['name']}\033[0m")
         print("\nProbabilities:")
-        for s, p in state['probabilities'].items():
+        for s, p in state["probabilities"].items():
             bar = "█" * int(p * 20)
             print(f"  {s:<12} {p:.2f} {bar}")
         print("-------------------------------\n")
@@ -271,7 +274,7 @@ class ArgosShell(cmd.Cmd):
         if cmd == "create":
             label = args[1] if len(args) > 1 else "manual"
             print(self.replicator.create_snapshot(label))
-        
+
         elif cmd == "list":
             files = self.replicator.list_snapshots()
             print("\n--- Available Snapshots ---")
@@ -285,7 +288,7 @@ class ArgosShell(cmd.Cmd):
                 return
             target = args[1]
             confirm = input(f"⚠️  WARNING: Rollback to {target}? Current data may be lost. (y/n): ")
-            if confirm.lower() == 'y':
+            if confirm.lower() == "y":
                 print(self.replicator.rollback(target))
             else:
                 print("Rollback cancelled.")
@@ -309,6 +312,7 @@ class ArgosShell(cmd.Cmd):
             os.system(line)
         except Exception as e:
             print(f"Error executing system command: {e}")
+
 
 if __name__ == "__main__":
     try:

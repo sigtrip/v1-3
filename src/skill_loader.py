@@ -4,10 +4,17 @@ skill_loader.py — Plugin-система навыков Аргоса
   Проверяет зависимости, версии, разрешения.
   Поддерживает версионирование и P2P-синхронизацию.
 """
-import importlib, importlib.util, json, os, sys
+
+import importlib
+import importlib.util
+import json
+import os
+import sys
+
 from packaging.version import Version as V
+
 from src.argos_logger import get_logger
-from src.event_bus import get_bus, Events
+from src.event_bus import Events, get_bus
 
 log = get_logger("argos.skills")
 bus = get_bus()
@@ -17,18 +24,17 @@ SKILLS_ROOT = "src/skills"
 # Структура нового навыка
 MANIFEST_SCHEMA = {
     "required": ["name", "version", "entry", "author"],
-    "optional": ["description", "dependencies", "permissions",
-                 "min_argos_version", "tags", "category"],
+    "optional": ["description", "dependencies", "permissions", "min_argos_version", "tags", "category"],
 }
 
 PERMISSIONS = {
-    "network",    # доступ к сети
-    "files",      # доступ к файлам
-    "execute",    # выполнение команд
-    "root",       # root-команды
-    "iot",        # IoT устройства
-    "telegram",   # Telegram уведомления
-    "p2p",        # P2P сеть
+    "network",  # доступ к сети
+    "files",  # доступ к файлам
+    "execute",  # выполнение команд
+    "root",  # root-команды
+    "iot",  # IoT устройства
+    "telegram",  # Telegram уведомления
+    "p2p",  # P2P сеть
 }
 
 PERMISSION_ALIASES = {
@@ -48,19 +54,19 @@ IMPORT_NAME_ALIASES = {
 
 class SkillManifest:
     def __init__(self, data: dict, skill_dir: str):
-        self.name        = data.get("name", "unknown")
-        self.version     = data.get("version", "0.0.1")
-        self.entry       = data.get("entry", "skill.py")
-        self.author      = data.get("author", "unknown")
+        self.name = data.get("name", "unknown")
+        self.version = data.get("version", "0.0.1")
+        self.entry = data.get("entry", "skill.py")
+        self.author = data.get("author", "unknown")
         self.description = data.get("description", "")
-        self.dependencies= data.get("dependencies", [])
+        self.dependencies = data.get("dependencies", [])
         raw_permissions = set(data.get("permissions", []))
         self.permissions = {PERMISSION_ALIASES.get(p, p) for p in raw_permissions}
         self.min_version = data.get("min_argos_version", "0.0.0")
-        self.tags        = data.get("tags", [])
-        self.category    = data.get("category", "general")
-        self.dir         = skill_dir
-        self._raw        = data
+        self.tags = data.get("tags", [])
+        self.category = data.get("category", "general")
+        self.dir = skill_dir
+        self._raw = data
 
     def validate(self) -> list[str]:
         errors = []
@@ -85,8 +91,8 @@ class SkillManifest:
 class SkillInstance:
     def __init__(self, manifest: SkillManifest, module):
         self.manifest = manifest
-        self.module   = module
-        self.loaded_at= __import__("time").time()
+        self.module = module
+        self.loaded_at = __import__("time").time()
         self._started = False
 
     def start(self, core=None):
@@ -105,15 +111,18 @@ class SkillInstance:
         return None
 
     @property
-    def name(self): return self.manifest.name
+    def name(self):
+        return self.manifest.name
+
     @property
-    def version(self): return self.manifest.version
+    def version(self):
+        return self.manifest.version
 
 
 class SkillLoader:
     def __init__(self):
         self._skills: dict[str, SkillInstance] = {}
-        self._failed: dict[str, str]           = {}
+        self._failed: dict[str, str] = {}
 
     def discover(self) -> list[str]:
         """Ищет все директории с manifest.json или manifest.yaml в SKILLS_ROOT."""
@@ -140,6 +149,7 @@ class SkillLoader:
                 else:
                     try:
                         import yaml
+
                         data = yaml.safe_load(open(path, encoding="utf-8"))
                     except ImportError:
                         # fallback: простой yaml parser
@@ -174,17 +184,18 @@ class SkillLoader:
             return f"❌ Точка входа не найдена: {entry_path}"
 
         try:
-            spec   = importlib.util.spec_from_file_location(
-                f"argos_skill_{skill_name}", entry_path)
+            spec = importlib.util.spec_from_file_location(f"argos_skill_{skill_name}", entry_path)
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
 
             inst = SkillInstance(manifest, module)
             inst.start(core)
             self._skills[skill_name] = inst
-            bus.emit(Events.SKILL_LOADED,
-                     {"name": skill_name, "version": manifest.version,
-                      "category": manifest.category}, "skill_loader")
+            bus.emit(
+                Events.SKILL_LOADED,
+                {"name": skill_name, "version": manifest.version, "category": manifest.category},
+                "skill_loader",
+            )
             log.info("Навык загружен: %s v%s", skill_name, manifest.version)
             return f"✅ Навык '{manifest.name}' v{manifest.version} загружен."
         except Exception as e:
@@ -196,10 +207,10 @@ class SkillLoader:
         """Загружает старый формат: src/skills/skill_name.py"""
         try:
             mod = importlib.import_module(f"src.skills.{skill_name}")
-            manifest = SkillManifest({
-                "name": skill_name, "version": "0.1.0",
-                "entry": f"{skill_name}.py", "author": "legacy"
-            }, os.path.join(SKILLS_ROOT, skill_name))
+            manifest = SkillManifest(
+                {"name": skill_name, "version": "0.1.0", "entry": f"{skill_name}.py", "author": "legacy"},
+                os.path.join(SKILLS_ROOT, skill_name),
+            )
             inst = SkillInstance(manifest, mod)
             self._skills[skill_name] = inst
             return f"✅ Навык '{skill_name}' загружен (legacy mode)."
@@ -234,8 +245,7 @@ class SkillLoader:
             try:
                 result = inst.handle(text, core)
                 if result:
-                    bus.emit(Events.SKILL_EXECUTED,
-                             {"skill": name, "input": text[:80]}, "skill_loader")
+                    bus.emit(Events.SKILL_EXECUTED, {"skill": name, "input": text[:80]}, "skill_loader")
                     return result
             except Exception as e:
                 log.error("Skill %s dispatch error: %s", name, e)
@@ -251,7 +261,7 @@ class SkillLoader:
     def list_skills(self) -> str:
         loaded = list(self._skills.values())
         failed = self._failed
-        lines  = [f"🧩 НАВЫКИ АРГОСА ({len(loaded)} загружено):"]
+        lines = [f"🧩 НАВЫКИ АРГОСА ({len(loaded)} загружено):"]
         by_cat = {}
         for inst in loaded:
             cat = inst.manifest.category
@@ -272,16 +282,22 @@ class SkillLoader:
         os.makedirs(skill_dir, exist_ok=True)
 
         manifest = {
-            "name": name, "version": "1.0.0",
-            "entry": "skill.py", "author": "Всеволод",
+            "name": name,
+            "version": "1.0.0",
+            "entry": "skill.py",
+            "author": "Всеволод",
             "description": f"Навык {name}",
             "category": category,
             "tags": [category],
             "dependencies": [],
             "permissions": ["network"],
         }
-        json.dump(manifest, open(os.path.join(skill_dir, "manifest.json"), "w",
-                                  encoding="utf-8"), indent=2, ensure_ascii=False)
+        json.dump(
+            manifest,
+            open(os.path.join(skill_dir, "manifest.json"), "w", encoding="utf-8"),
+            indent=2,
+            ensure_ascii=False,
+        )
 
         skill_code = f'''"""
 {name} — Навык Аргоса
@@ -310,10 +326,12 @@ def teardown():
         with open(os.path.join(skill_dir, "README.md"), "w", encoding="utf-8") as f:
             f.write(f"# {name}\n\nКатегория: {category}\n\n## Команды\n\n- `{name}` — ...\n")
 
-        return (f"✅ Шаблон навыка создан: {skill_dir}/\n"
-                f"   📄 skill.py — логика\n"
-                f"   📄 manifest.json — декларация\n"
-                f"   📄 README.md — документация")
+        return (
+            f"✅ Шаблон навыка создан: {skill_dir}/\n"
+            f"   📄 skill.py — логика\n"
+            f"   📄 manifest.json — декларация\n"
+            f"   📄 README.md — документация"
+        )
 
 
 def _simple_yaml_load(path: str) -> dict:
@@ -326,10 +344,9 @@ def _simple_yaml_load(path: str) -> dict:
                 continue
             if ":" in line:
                 k, _, v = line.partition(":")
-                v = v.strip().strip('"\'')
+                v = v.strip().strip("\"'")
                 if v.startswith("["):
-                    result[k.strip()] = [x.strip().strip('"\'')
-                                         for x in v.strip("[]").split(",") if x.strip()]
+                    result[k.strip()] = [x.strip().strip("\"'") for x in v.strip("[]").split(",") if x.strip()]
                 else:
                     result[k.strip()] = v
     return result

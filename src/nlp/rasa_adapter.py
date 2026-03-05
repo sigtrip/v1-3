@@ -1,6 +1,8 @@
 """
 Rasa NLP Adapter для Argos (в разработке)
 """
+
+
 class RasaAdapter:
     def __init__(self, core, url="http://localhost:5005/model/parse"):
         self.core = core

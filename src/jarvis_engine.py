@@ -37,7 +37,7 @@ log = get_logger("argos.jarvis")
 TASK_PLANNING_SYSTEM = (
     "Ты ИИ-планировщик задач Argos. Пользователь даёт запрос на естественном языке. "
     "Твоя задача — разбить его на атомарные подзадачи и вернуть JSON-массив.\n"
-    "Каждая задача: {\"id\": int, \"task\": str, \"args\": dict, \"dep\": [int]}\n"
+    'Каждая задача: {"id": int, "task": str, "args": dict, "dep": [int]}\n'
     "Поле dep содержит id задач-зависимостей (-1 если нет). "
     "task — одна из: text-generation, summarization, translation, "
     "question-answering, text-classification, image-classification, "
@@ -53,7 +53,7 @@ TASK_PLANNING_SYSTEM = (
 
 MODEL_SELECTION_SYSTEM = (
     "Ты ИИ-селектор моделей. Даны задача и список кандидатов. "
-    "Выбери лучшую модель и ответь JSON: {\"id\": str, \"reason\": str}. "
+    'Выбери лучшую модель и ответь JSON: {"id": str, "reason": str}. '
     "Учитывай задачу, описание модели, likes и теги. "
     "Отвечай ТОЛЬКО JSON."
 )
@@ -127,6 +127,7 @@ DEFAULT_MODELS_MAP: dict[str, list[dict]] = {
 @dataclass
 class TaskResult:
     """Результат выполнения одной задачи JARVIS pipeline."""
+
     task: dict
     choose: dict = field(default_factory=dict)
     inference_result: dict = field(default_factory=dict)
@@ -154,8 +155,11 @@ class JarvisEngine:
         self._results_dir = "public"
         os.makedirs(f"{self._results_dir}/images", exist_ok=True)
         os.makedirs(f"{self._results_dir}/audios", exist_ok=True)
-        log.info("JarvisEngine инициализирован (HF token: %s, local: %s)",
-                 "✅" if self.hf_token else "❌", self.local_endpoint or "none")
+        log.info(
+            "JarvisEngine инициализирован (HF token: %s, local: %s)",
+            "✅" if self.hf_token else "❌",
+            self.local_endpoint or "none",
+        )
 
     # ===================================================================
     # PUBLIC API
@@ -178,8 +182,11 @@ class JarvisEngine:
 
         # Для тривиальных NLP задач — прямой ответ
         if len(tasks) == 1 and tasks[0].get("task") in (
-            "summarization", "translation", "conversational",
-            "text-generation", "text2text-generation"
+            "summarization",
+            "translation",
+            "conversational",
+            "text-generation",
+            "text2text-generation",
         ):
             answer = self._ask_llm(RESPONSE_SYNTHESIS_SYSTEM, user_input)
             return {"message": answer, "tasks": tasks, "results": {}, "timing": time.time() - start}
@@ -270,16 +277,16 @@ class JarvisEngine:
             return {"id": available[0], "reason": "Only available model"}
 
         # LLM выбирает
-        meta_str = json.dumps([
-            {"id": c["id"], "likes": c.get("likes", 0)}
-            for c in candidates if c["id"] in available
-        ], ensure_ascii=False)
+        meta_str = json.dumps(
+            [{"id": c["id"], "likes": c.get("likes", 0)} for c in candidates if c["id"] in available],
+            ensure_ascii=False,
+        )
         prompt = (
             f"Задача: {task_type}\n"
             f"Аргументы: {json.dumps(task.get('args', {}), ensure_ascii=False)}\n"
             f"Запрос: {user_input}\n"
             f"Кандидаты: {meta_str}\n"
-            f"Выбери лучшую модель. Ответь JSON: {{\"id\": ..., \"reason\": ...}}"
+            f'Выбери лучшую модель. Ответь JSON: {{"id": ..., "reason": ...}}'
         )
         raw = self._ask_llm(MODEL_SELECTION_SYSTEM, prompt)
         try:
@@ -305,10 +312,7 @@ class JarvisEngine:
             # HuggingFace
             if self.hf_token:
                 try:
-                    r = requests.get(
-                        f"{HF_STATUS_URL}/{model_id}",
-                        headers=self.hf_headers, timeout=5
-                    )
+                    r = requests.get(f"{HF_STATUS_URL}/{model_id}", headers=self.hf_headers, timeout=5)
                     if r.status_code == 200:
                         state = r.json().get("state", "")
                         if state in ("Loadable", "Loaded"):
@@ -391,7 +395,7 @@ class JarvisEngine:
         if model_id == "ChatGPT" or model_id == "argos-internal":
             answer = self._ask_llm(
                 "user",
-                f"Задача: {task_type}, Аргументы: {json.dumps(args, ensure_ascii=False)}. Выполни и дай результат."
+                f"Задача: {task_type}, Аргументы: {json.dumps(args, ensure_ascii=False)}. Выполни и дай результат.",
             )
             results[task_id] = TaskResult(task=task, choose=choice, inference_result={"response": answer})
             return
@@ -509,8 +513,15 @@ class JarvisEngine:
             r = requests.post(url, headers=self.hf_headers, json=payload, timeout=self.timeout)
             return r.json()
 
-        if task in ("text-classification", "token-classification", "summarization",
-                     "translation", "text-generation", "text2text-generation", "conversational"):
+        if task in (
+            "text-classification",
+            "token-classification",
+            "summarization",
+            "translation",
+            "text-generation",
+            "text2text-generation",
+            "conversational",
+        ):
             payload = {"inputs": data.get("text", "")}
             r = requests.post(url, headers=self.hf_headers, json=payload, timeout=self.timeout)
             result = r.json()
@@ -598,15 +609,12 @@ class JarvisEngine:
                 else:
                     result_summary[k] = v
             results_text.append(
-                f"Task {task_id} ({task_type}, model: {model}): "
-                f"{json.dumps(result_summary, ensure_ascii=False)}"
+                f"Task {task_id} ({task_type}, model: {model}): " f"{json.dumps(result_summary, ensure_ascii=False)}"
             )
 
         prompt = (
             f"Запрос пользователя: {user_input}\n\n"
-            f"Результаты выполнения:\n" +
-            "\n".join(results_text) +
-            "\n\nСинтезируй единый ответ:"
+            f"Результаты выполнения:\n" + "\n".join(results_text) + "\n\nСинтезируй единый ответ:"
         )
         return self._ask_llm(RESPONSE_SYNTHESIS_SYSTEM, prompt)
 
@@ -657,7 +665,7 @@ class JarvisEngine:
             try:
                 url = os.getenv(
                     "GEMINI_REST_URL",
-                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+                    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
                 )
                 r = requests.post(
                     url,
@@ -716,8 +724,8 @@ class JarvisEngine:
             return None
         text = text.strip()
         # Убираем markdown
-        text = re.sub(r'^```(?:json)?\s*', '', text)
-        text = re.sub(r'\s*```$', '', text)
+        text = re.sub(r"^```(?:json)?\s*", "", text)
+        text = re.sub(r"\s*```$", "", text)
         text = text.strip()
         # Ищем массив
         start = text.find("[")
@@ -731,7 +739,7 @@ class JarvisEngine:
                 depth -= 1
                 if depth == 0:
                     try:
-                        return json.loads(text[start:i + 1])
+                        return json.loads(text[start : i + 1])
                     except json.JSONDecodeError:
                         return None
         return None
@@ -743,5 +751,5 @@ class JarvisEngine:
         start = text.find("{")
         end = text.rfind("}")
         if start != -1 and end != -1:
-            return text[start:end + 1]
+            return text[start : end + 1]
         return "{}"

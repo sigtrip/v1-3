@@ -11,17 +11,18 @@ wifi_sentinel.py — WiFi Sentinel & HoneyPot
     - iwlist / nmcli для безагентного сканирования
     - встроенный TCP honeypot (порт-ловушка)
 """
+
+import hashlib
+import json
 import os
 import re
-import time
-import json
 import socket
-import hashlib
 import threading
+import time
+from collections import deque
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, Tuple
-from collections import deque
-from dataclasses import dataclass, field, asdict
 
 from src.argos_logger import get_logger
 
@@ -30,13 +31,15 @@ log = get_logger("argos.wifi_sentinel")
 # ── Graceful imports ─────────────────────────────────────
 try:
     import subprocess
+
     SUBPROCESS_OK = True
 except ImportError:
     subprocess = None
     SUBPROCESS_OK = False
 
 try:
-    from scapy.all import sniff, Dot11, Dot11Beacon, Dot11Elt, RadioTap
+    from scapy.all import Dot11, Dot11Beacon, Dot11Elt, RadioTap, sniff
+
     SCAPY_OK = True
 except ImportError:
     SCAPY_OK = False
@@ -62,6 +65,7 @@ class IncidentType(Enum):
 @dataclass
 class AccessPoint:
     """Обнаруженная точка доступа."""
+
     bssid: str
     ssid: str = ""
     channel: int = 0
@@ -79,8 +83,9 @@ class AccessPoint:
 @dataclass
 class WifiClient:
     """Обнаруженный Wi-Fi клиент."""
+
     mac: str
-    connected_to: str = ""       # BSSID
+    connected_to: str = ""  # BSSID
     signal_dbm: int = -100
     first_seen: float = field(default_factory=time.time)
     last_seen: float = field(default_factory=time.time)
@@ -93,6 +98,7 @@ class WifiClient:
 @dataclass
 class SecurityIncident:
     """Инцидент безопасности Wi-Fi."""
+
     ts: float = field(default_factory=time.time)
     incident_type: str = ""
     threat_level: str = "info"
@@ -167,7 +173,7 @@ class WiFiSentinel:
         self._honeypot_port = int(os.getenv("ARGOS_HONEYPOT_PORT", "8888") or "8888")
         self._scan_interval = float(os.getenv("ARGOS_WIFI_SCAN_SEC", "60") or "60")
         self._deauth_threshold = int(os.getenv("ARGOS_DEAUTH_THRESHOLD", "10") or "10")
-        self._deauth_window = deque(maxlen=200)   # timestamps of deauth frames
+        self._deauth_window = deque(maxlen=200)  # timestamps of deauth frames
 
         # Load trusted networks from env
         trusted_str = os.getenv("ARGOS_TRUSTED_BSSIDS", "").strip()
@@ -180,8 +186,13 @@ class WiFiSentinel:
             for mac in authorized_str.split(","):
                 self._authorized_macs.add(mac.strip().upper())
 
-        log.info("WiFiSentinel v%s | iface=%s | honeypot_port=%d | trusted=%d",
-                 self.VERSION, self._interface, self._honeypot_port, len(self._trusted_bssids))
+        log.info(
+            "WiFiSentinel v%s | iface=%s | honeypot_port=%d | trusted=%d",
+            self.VERSION,
+            self._interface,
+            self._honeypot_port,
+            len(self._trusted_bssids),
+        )
 
     # ── AP Scanning ──────────────────────────────────────
     def scan_aps(self) -> List[AccessPoint]:
@@ -193,7 +204,9 @@ class WiFiSentinel:
             try:
                 result = subprocess.run(
                     ["nmcli", "-t", "-f", "BSSID,SSID,CHAN,SIGNAL,SECURITY", "dev", "wifi", "list"],
-                    capture_output=True, text=True, timeout=15
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
                 )
                 if result.returncode == 0:
                     for line in result.stdout.strip().split("\n"):
@@ -215,10 +228,7 @@ class WiFiSentinel:
         # Method 2: iwlist (fallback)
         if not aps and SUBPROCESS_OK:
             try:
-                result = subprocess.run(
-                    ["iwlist", self._interface, "scan"],
-                    capture_output=True, text=True, timeout=15
-                )
+                result = subprocess.run(["iwlist", self._interface, "scan"], capture_output=True, text=True, timeout=15)
                 if result.returncode == 0:
                     aps = self._parse_iwlist(result.stdout)
             except Exception as e:
@@ -243,8 +253,7 @@ class WiFiSentinel:
             m_cell = re.search(r"Address: ([0-9A-Fa-f:]+)", line)
             if m_cell:
                 if current_bssid:
-                    ap = self._update_ap(current_bssid, current_ssid,
-                                         current_channel, current_signal, current_enc)
+                    ap = self._update_ap(current_bssid, current_ssid, current_channel, current_signal, current_enc)
                     aps.append(ap)
                 current_bssid = m_cell.group(1).upper()
                 current_ssid = ""
@@ -273,14 +282,12 @@ class WiFiSentinel:
                 current_enc = "WEP"
 
         if current_bssid:
-            ap = self._update_ap(current_bssid, current_ssid,
-                                 current_channel, current_signal, current_enc)
+            ap = self._update_ap(current_bssid, current_ssid, current_channel, current_signal, current_enc)
             aps.append(ap)
 
         return aps
 
-    def _update_ap(self, bssid: str, ssid: str, channel: int,
-                   signal: int, enc: str) -> AccessPoint:
+    def _update_ap(self, bssid: str, ssid: str, channel: int, signal: int, enc: str) -> AccessPoint:
         bssid = bssid.upper()
         if bssid in self._access_points:
             ap = self._access_points[bssid]
@@ -291,8 +298,11 @@ class WiFiSentinel:
             ap.last_seen = time.time()
         else:
             ap = AccessPoint(
-                bssid=bssid, ssid=ssid, channel=channel,
-                signal_dbm=signal, encryption=enc,
+                bssid=bssid,
+                ssid=ssid,
+                channel=channel,
+                signal_dbm=signal,
+                encryption=enc,
                 trusted=(bssid in self._trusted_bssids),
                 vendor=_mac_vendor(bssid),
             )
@@ -300,7 +310,8 @@ class WiFiSentinel:
 
             # New AP → incident
             self._add_incident(
-                IncidentType.NEW_AP, ThreatLevel.INFO,
+                IncidentType.NEW_AP,
+                ThreatLevel.INFO,
                 f"Новая AP: {ssid} ({bssid}) ch={channel} enc={enc}",
                 bssid=bssid,
             )
@@ -319,25 +330,26 @@ class WiFiSentinel:
             # Evil Twin: тот же SSID но другой BSSID
             if ap.ssid in trusted_ssids and trusted_ssids[ap.ssid] != ap.bssid:
                 self._add_incident(
-                    IncidentType.EVIL_TWIN, ThreatLevel.CRITICAL,
-                    f"⚠️ Evil Twin: SSID '{ap.ssid}' с BSSID {ap.bssid} "
-                    f"(доверенный: {trusted_ssids[ap.ssid]})",
+                    IncidentType.EVIL_TWIN,
+                    ThreatLevel.CRITICAL,
+                    f"⚠️ Evil Twin: SSID '{ap.ssid}' с BSSID {ap.bssid} " f"(доверенный: {trusted_ssids[ap.ssid]})",
                     bssid=ap.bssid,
                 )
 
             # Rogue AP: неизвестная AP с сильным сигналом
             if not ap.trusted and ap.signal_dbm > -50:
                 self._add_incident(
-                    IncidentType.ROGUE_AP, ThreatLevel.WARNING,
-                    f"Rogue AP с сильным сигналом: {ap.ssid} ({ap.bssid}) "
-                    f"signal={ap.signal_dbm}dBm",
+                    IncidentType.ROGUE_AP,
+                    ThreatLevel.WARNING,
+                    f"Rogue AP с сильным сигналом: {ap.ssid} ({ap.bssid}) " f"signal={ap.signal_dbm}dBm",
                     bssid=ap.bssid,
                 )
 
             # Weak encryption
             if ap.encryption in ("WEP", "open") and ap.trusted:
                 self._add_incident(
-                    IncidentType.WEAK_ENCRYPTION, ThreatLevel.WARNING,
+                    IncidentType.WEAK_ENCRYPTION,
+                    ThreatLevel.WARNING,
                     f"Доверенная AP '{ap.ssid}' использует слабое шифрование: {ap.encryption}",
                     bssid=ap.bssid,
                 )
@@ -348,9 +360,7 @@ class WiFiSentinel:
         if self._honeypot_thread and self._honeypot_thread.is_alive():
             return f"🍯 HoneyPot: уже запущен на порту {self._honeypot_port}."
         self._running = True
-        self._honeypot_thread = threading.Thread(
-            target=self._honeypot_loop, daemon=True, name="honeypot"
-        )
+        self._honeypot_thread = threading.Thread(target=self._honeypot_loop, daemon=True, name="honeypot")
         self._honeypot_thread.start()
         return f"🍯 HoneyPot: запущен на порту {self._honeypot_port}."
 
@@ -395,7 +405,8 @@ class WiFiSentinel:
                     conn.close()
 
                     self._add_incident(
-                        IncidentType.HONEYPOT_TOUCH, ThreatLevel.WARNING,
+                        IncidentType.HONEYPOT_TOUCH,
+                        ThreatLevel.WARNING,
                         f"HoneyPot: подключение от {remote_ip}:{remote_port}",
                         source_mac=remote_ip,
                         details={"probe_data": probe, "port": self._honeypot_port},
@@ -420,9 +431,7 @@ class WiFiSentinel:
         if self._monitor_thread and self._monitor_thread.is_alive():
             return "🛡️ WiFi Sentinel: мониторинг уже запущен."
         self._running = True
-        self._monitor_thread = threading.Thread(
-            target=self._monitor_loop, daemon=True, name="wifi-sentinel"
-        )
+        self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True, name="wifi-sentinel")
         self._monitor_thread.start()
         return f"🛡️ WiFi Sentinel: мониторинг запущен (каждые {self._scan_interval}с)."
 
@@ -464,9 +473,15 @@ class WiFiSentinel:
         return f"✅ Клиент {mac} авторизован."
 
     # ── Incidents ────────────────────────────────────────
-    def _add_incident(self, incident_type: IncidentType, threat_level: ThreatLevel,
-                      description: str, bssid: str = "", source_mac: str = "",
-                      details: dict = None) -> None:
+    def _add_incident(
+        self,
+        incident_type: IncidentType,
+        threat_level: ThreatLevel,
+        description: str,
+        bssid: str = "",
+        source_mac: str = "",
+        details: dict = None,
+    ) -> None:
         inc = SecurityIncident(
             incident_type=incident_type.value,
             threat_level=threat_level.value,
@@ -479,8 +494,7 @@ class WiFiSentinel:
         if threat_level in (ThreatLevel.WARNING, ThreatLevel.CRITICAL):
             log.warning("WiFiSentinel INCIDENT [%s]: %s", threat_level.value, description)
 
-    def get_incidents(self, last_n: int = 30,
-                      level: Optional[str] = None) -> List[dict]:
+    def get_incidents(self, last_n: int = 30, level: Optional[str] = None) -> List[dict]:
         with self._lock:
             items = list(self._incidents)
         if level:
@@ -513,8 +527,7 @@ class WiFiSentinel:
             f"  AP: {s['access_points']} (доверенных: {s['trusted_aps']})",
             f"  Клиентов: {s['clients']} (авторизованных: {s['authorized_clients']})",
             f"  HoneyPot: порт {s['honeypot_port']}",
-            f"  Инцидентов: {s['incidents_total']} "
-            f"(🔴 {crit} | 🟡 {warn})",
+            f"  Инцидентов: {s['incidents_total']} " f"(🔴 {crit} | 🟡 {warn})",
             f"  Scapy: {'✅' if s['scapy_available'] else '❌'}",
         ]
         return "\n".join(lines)
@@ -534,8 +547,7 @@ class WiFiSentinel:
         if not self._access_points:
             return "🛡️ WiFi Sentinel: точки доступа не обнаружены. Запусти 'wifi скан'."
         lines = ["🛡️ WIFI — ТОЧКИ ДОСТУПА:"]
-        for bssid, ap in sorted(self._access_points.items(),
-                                 key=lambda x: x[1].signal_dbm, reverse=True):
+        for bssid, ap in sorted(self._access_points.items(), key=lambda x: x[1].signal_dbm, reverse=True):
             trust = "🟢" if ap.trusted else "⚪"
             lines.append(
                 f"  {trust} {ap.ssid or '(hidden)'} [{bssid}] "

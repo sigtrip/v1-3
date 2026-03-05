@@ -3,10 +3,11 @@ awa_core.py — AWA-Core (Absolute Workflow Agent)
     Центральный координатор Аргоса: маршрутизация между модулями,
     каскадирование задач, принятие решений без внешних фильтров.
 """
-import os
-import time
-import threading
+
 import json
+import os
+import threading
+import time
 from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional
 
@@ -17,11 +18,17 @@ log = get_logger("argos.awa")
 
 class ModuleDescriptor:
     """Описание зарегистрированного модуля."""
-    __slots__ = ("name", "ref", "priority", "category", "capabilities",
-                 "health", "last_heartbeat")
 
-    def __init__(self, name: str, ref: Any, priority: int = 50,
-                 category: str = "general", capabilities: Optional[List[str]] = None):
+    __slots__ = ("name", "ref", "priority", "category", "capabilities", "health", "last_heartbeat")
+
+    def __init__(
+        self,
+        name: str,
+        ref: Any,
+        priority: int = 50,
+        category: str = "general",
+        capabilities: Optional[List[str]] = None,
+    ):
         self.name = name
         self.ref = ref
         self.priority = priority
@@ -43,6 +50,7 @@ class ModuleDescriptor:
 
 class DecisionRecord:
     """Запись решения AWA-Core."""
+
     __slots__ = ("ts", "intent", "routed_to", "result", "latency_ms")
 
     def __init__(self, intent: str, routed_to: str, result: str, latency_ms: float):
@@ -85,13 +93,20 @@ class AWACore:
         self._heartbeat_thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
         self._heartbeat_thread.start()
 
-        log.info("AWA-Core v%s init | policy=%s | cascade_depth=%d",
-                 self.VERSION, self._policy, self._cascade_depth_limit)
+        log.info(
+            "AWA-Core v%s init | policy=%s | cascade_depth=%d", self.VERSION, self._policy, self._cascade_depth_limit
+        )
 
     # ── Регистрация модулей ──────────────────────────────
-    def register(self, name: str, ref: Any, *,
-                 priority: int = 50, category: str = "general",
-                 capabilities: Optional[List[str]] = None) -> None:
+    def register(
+        self,
+        name: str,
+        ref: Any,
+        *,
+        priority: int = 50,
+        category: str = "general",
+        capabilities: Optional[List[str]] = None,
+    ) -> None:
         """Регистрирует модуль в реестре AWA-Core."""
         desc = ModuleDescriptor(name, ref, priority, category, capabilities)
         with self._lock:
@@ -118,8 +133,9 @@ class AWACore:
             names = self._capability_index.get(capability, [])
             if not names:
                 return None
-            candidates = [(self._modules[n].priority, n) for n in names
-                          if n in self._modules and self._modules[n].health == "ok"]
+            candidates = [
+                (self._modules[n].priority, n) for n in names if n in self._modules and self._modules[n].health == "ok"
+            ]
         if not candidates:
             return None
         candidates.sort(key=lambda x: x[0], reverse=True)

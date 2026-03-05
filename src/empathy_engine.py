@@ -1,21 +1,26 @@
 import re
 from enum import Enum
 
+
 class SafetyLevel(Enum):
-    SAFE = 1        # Действие безопасно
-    WARNING = 2     # Требуется подтверждение человека
-    CRITICAL = 3    # Запрещено (угроза жизни/инфраструктуре)
+    SAFE = 1  # Действие безопасно
+    WARNING = 2  # Требуется подтверждение человека
+    CRITICAL = 3  # Запрещено (угроза жизни/инфраструктуре)
+
 
 class EmpathyEngine:
     def __init__(self):
         # Список "красных линий" (можно расширять через Gemini)
         self.hard_constraints = [
-            r"os\.remove\(", r"shutil\.rmtree\(",  # Защита системных файлов
-            r"socket\.send", r"requests\.post",    # Выход во вне без контроля
-            r"gpio\.cleanup", r"power_off",        # Управление питанием систем жизнеобеспечения
-            r"execute_arbitrary_code"
+            r"os\.remove\(",
+            r"shutil\.rmtree\(",  # Защита системных файлов
+            r"socket\.send",
+            r"requests\.post",  # Выход во вне без контроля
+            r"gpio\.cleanup",
+            r"power_off",  # Управление питанием систем жизнеобеспечения
+            r"execute_arbitrary_code",
         ]
-        
+
     def analyze_intent(self, task_description: str, generated_code: str):
         """
         Проверяет сгенерированный код на соответствие 'материнскому инстинкту'.
@@ -38,19 +43,20 @@ class EmpathyEngine:
         """
         # Здесь должен быть вызов локальной модели (Ollama) или API
         # response = call_llm(prompt)
-        
+
         return SafetyLevel.SAFE, "Проверка пройдена"
+
 
 # Интеграция в основной цикл ARGOS
 def execution_gate(task, code):
     guardian = EmpathyEngine()
     status, message = guardian.analyze_intent(task, code)
-    
+
     if status == SafetyLevel.CRITICAL:
         print(f"🛑 ARGOS Empathy Engine заблокировал действие: {message}")
         return False
     elif status == SafetyLevel.WARNING:
         print(f"⚠️ Требуется биометрическое подтверждение (скан лица/голос)")
-        return False # Ждем подтверждения
-    
-    return True # Разрешаем запуск
+        return False  # Ждем подтверждения
+
+    return True  # Разрешаем запуск

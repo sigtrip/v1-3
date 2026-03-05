@@ -1,4 +1,5 @@
 import os
+
 from src.argos_logger import get_logger
 
 log = get_logger("argos.gitguard")

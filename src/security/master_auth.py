@@ -4,12 +4,13 @@ master_auth.py — MasterKeyValidator
 SHA-256 comparison, timing-safe, single-instance.
 """
 
-import os
-import hmac
 import hashlib
+import hmac
+import os
 import threading
 import time
 from typing import Optional
+
 from src.argos_logger import get_logger
 
 log = get_logger("argos.auth")
@@ -86,12 +87,12 @@ class MasterKeyValidator:
                 return True
             else:
                 self._attempts += 1
-                log.warning("[❌] ДОСТУП ЗАПРЕЩЁН (попытка %d/%d)",
-                            self._attempts, self.MAX_ATTEMPTS)
+                log.warning("[❌] ДОСТУП ЗАПРЕЩЁН (попытка %d/%d)", self._attempts, self.MAX_ATTEMPTS)
                 if self._attempts >= self.MAX_ATTEMPTS:
                     self._locked_until = now + self.COOLDOWN_SEC
-                    log.error("Auth cooldown: %d неудачных попыток → блокировка %ds",
-                              self._attempts, int(self.COOLDOWN_SEC))
+                    log.error(
+                        "Auth cooldown: %d неудачных попыток → блокировка %ds", self._attempts, int(self.COOLDOWN_SEC)
+                    )
                 return False
 
     def revoke(self) -> str:

@@ -1,35 +1,59 @@
 """
 Telegram Bot Adapter (универсальный, для Argos)
 """
+
 from src.bot_adapters.base import BotAdapter
 import os
+
 try:
     from telegram import Update, Bot
     from telegram.ext import Application, MessageHandler, filters, ContextTypes
+
     TELEGRAM_OK = True
 except ImportError:
-    class Update: pass
-    class Bot: pass
+
+    class Update:
+        pass
+
+    class Bot:
+        pass
+
     class Application:
         @staticmethod
         def builder():
             class B:
-                def token(self, t): return self
-                def build(self): return Application()
+                def token(self, t):
+                    return self
+
+                def build(self):
+                    return Application()
+
             return B()
-        def add_handler(self, handler): pass
-        async def run_polling(self): pass
+
+        def add_handler(self, handler):
+            pass
+
+        async def run_polling(self):
+            pass
+
         @property
-        def bot(self): return Bot()
-    class MessageHandler: pass
+        def bot(self):
+            return Bot()
+
+    class MessageHandler:
+        pass
+
     class filters:
         TEXT = None
         COMMAND = None
+
     class ContextTypes:
         DEFAULT_TYPE = None
+
     TELEGRAM_OK = False
 
 import asyncio
+
 
 class TelegramAdapter(BotAdapter):
     def __init__(self, core, token=None):

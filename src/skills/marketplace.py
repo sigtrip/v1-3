@@ -1,6 +1,8 @@
 """
 Маркетплейс навыков Argos (в разработке)
 """
+
+
 class SkillMarketplace:
     def __init__(self, core):
         self.core = core
