@@ -1,6 +1,0 @@
-build/
-/dist/
-*.py[cod]
-__pycache__/
-*.egg-info/
-*.so

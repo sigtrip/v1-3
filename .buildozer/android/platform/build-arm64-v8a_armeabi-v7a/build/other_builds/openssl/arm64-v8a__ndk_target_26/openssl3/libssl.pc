@@ -1,9 +1,0 @@
-libdir=/home/jovyan/v1-3/.buildozer/android/platform/build-arm64-v8a_armeabi-v7a/build/other_builds/openssl/arm64-v8a__ndk_target_26/openssl3
-includedir=/home/jovyan/v1-3/.buildozer/android/platform/build-arm64-v8a_armeabi-v7a/build/other_builds/openssl/arm64-v8a__ndk_target_26/openssl3/include
-
-Name: OpenSSL-libssl
-Description: Secure Sockets Layer and cryptography libraries
-Version: 3.3.1
-Requires.private: libcrypto
-Libs: -L${libdir} -lssl
-Cflags: -I${includedir}
