@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  argos:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/app
+    environment:
+      # Здесь можно будет добавить переменные окружения, например, ключи API
+      # - TG_ID=${TG_ID}
+      # - TG_KEY=${TG_KEY}
+      # - GITHUB_TOKEN=${GITHUB_TOKEN}
+      # - GIST_ID=${GIST_ID}
+      # - GEMINI_API_KEY=${GEMINI_API_KEY}
+    # command: python main.py --web # Если не хотите использовать CMD из Dockerfile
