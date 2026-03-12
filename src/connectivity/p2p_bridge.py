@@ -24,6 +24,12 @@ class ArgosP2PBridge:
         log.info("P2P: запущен (порт %d)", self.DISCOVERY_PORT)
         return f"🌐 P2P сеть запущена. Нода: {self.node_id}"
 
+    def stop(self) -> str:
+        """Остановка всех потоков и закрытие сокетов"""
+        self._running = False
+        log.info("P2P: остановка ноды {self.node_id}")
+        return "🌐 P2P остановлена."
+
     def broadcast_command(self, cmd: str, payload: dict = None):
         """Отправить команду всем узлам сети"""
         msg = json.dumps({"node_id": self.node_id, "cmd": cmd, "data": payload, "secret": self.SECRET[:8]})
@@ -46,6 +52,7 @@ class ArgosP2PBridge:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind(("",self.DISCOVERY_PORT))
+        sock.settimeout(2.0)
         while self._running:
             try:
                 data, addr = sock.recvfrom(2048)
@@ -60,6 +67,7 @@ class ArgosP2PBridge:
                 elif "cmd" in msg and self.core:
                     log.info("P2P: Получена команда [%s] от %s", msg['cmd'], nid)
                     self.core.process(msg['cmd'])
+            except socket.timeout: continue
             except Exception: pass
 
     def network_status(self) -> str:
