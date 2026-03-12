@@ -28,6 +28,24 @@ class ArgosCore:
         self._init_own_model()
         self._init_pypi()
         self._init_skill_loader()
+    # Собственная ML-модель
+        try:
+            from src.argos_model import ArgosOwnModel
+            self.own_model = ArgosOwnModel(core=self)
+            log.info("Собственная модель: загружена")
+        except Exception as e:
+            self.own_model = None
+            log.warning("Собственная модель недоступна: %s", e)
+    
+        # PyPI Publisher
+        try:
+            from src.pypi_publisher import ArgosPyPIPublisher
+            self.pypi = ArgosPyPIPublisher(core=self)
+            log.info("PyPI Publisher: готов")
+        except Exception as e:
+            self.pypi = None
+            log.warning("PyPI Publisher недоступен: %s", e)
+
         log.info("ArgosCore v%s готов", self.VERSION)
 
     # ── ИНИЦИАЛИЗАЦИЯ ПОДСИСТЕМ ──────────────────────────
@@ -175,7 +193,56 @@ class ArgosCore:
     def _ask_gemini(self, system: str, prompt: str) -> str | None:
         key = os.getenv("GEMINI_API_KEY", "")
         if not key:
-            return None
+    # ── СОБСТВЕННАЯ МОДЕЛЬ АРГОСА ─────────────────────────
+        if self.own_model:
+            if any(k in t for k in ["модель статус", "model status", "статус модели"]):
+                return self.own_model.status()
+
+            if any(k in t for k in ["модель обучить", "обучи модель", "train model", "model train"]):
+                return self.own_model.train()
+
+            if any(k in t for k in ["модель сохранить", "сохрани модель", "model save"]):
+                return self.own_model.save()
+
+            if any(k in t for k in ["модель версия", "model version", "версия модели"]):
+                return self.own_model.version()
+
+            if any(k in t for k in ["модель история", "model history", "история обучений"]):
+                return self.own_model.history()
+
+            if any(k in t for k in ["модель экспорт", "model export", "экспорт модели"]):
+                return self.own_model.export_onnx()
+
+            if t.startswith("модель спросить ") or t.startswith("model ask "):
+                query = text.split(maxsplit=2)[-1] if len(text.split()) > 2 else ""
+                return self.own_model.ask(query) if query else "Формат: модель спросить [вопрос]"
+
+        # ── PYPI PUBLISHER ────────────────────────────────────
+        if self.pypi:
+            if any(k in t for k in ["pypi статус", "пайпи статус", "pypi status"]):
+                return self.pypi.status()
+
+            if any(k in t for k in ["pypi список", "опубликованные навыки", "pypi list"]):
+                return self.pypi.list_published()
+
+            if t.startswith("pypi опубликовать ") or t.startswith("pypi publish "):
+                parts = text.split(maxsplit=2)
+                skill_name = parts[2] if len(parts) > 2 else ""
+                return self.pypi.publish(skill_name) if skill_name else "Формат: pypi опубликовать [skill_name]"
+
+            if t.startswith("pypi собрать ") or t.startswith("pypi build "):
+                parts = text.split(maxsplit=2)
+                skill_name = parts[2] if len(parts) > 2 else ""
+                return self.pypi.build_only(skill_name) if skill_name else "Формат: pypi собрать [skill_name]"
+
+            if t.startswith("pypi версия "):
+                # pypi версия [skill_name] [version]
+                parts = text.split(maxsplit=3)
+                skill_name = parts[2] if len(parts) > 2 else ""
+                version = parts[3] if len(parts) > 3 else None
+                return self.pypi.publish(skill_name, version) if skill_name else "Формат: pypi версия [skill_name] [version]"
+
+        return None
         try:
             import google.generativeai as genai
             genai.configure(api_key=key)
@@ -184,7 +251,56 @@ class ArgosCore:
             return resp.text
         except Exception as e:
             log.warning("Gemini: %s", e)
-            return None
+    # ── СОБСТВЕННАЯ МОДЕЛЬ АРГОСА ─────────────────────────
+        if self.own_model:
+            if any(k in t for k in ["модель статус", "model status", "статус модели"]):
+                return self.own_model.status()
+
+            if any(k in t for k in ["модель обучить", "обучи модель", "train model", "model train"]):
+                return self.own_model.train()
+
+            if any(k in t for k in ["модель сохранить", "сохрани модель", "model save"]):
+                return self.own_model.save()
+
+            if any(k in t for k in ["модель версия", "model version", "версия модели"]):
+                return self.own_model.version()
+
+            if any(k in t for k in ["модель история", "model history", "история обучений"]):
+                return self.own_model.history()
+
+            if any(k in t for k in ["модель экспорт", "model export", "экспорт модели"]):
+                return self.own_model.export_onnx()
+
+            if t.startswith("модель спросить ") or t.startswith("model ask "):
+                query = text.split(maxsplit=2)[-1] if len(text.split()) > 2 else ""
+                return self.own_model.ask(query) if query else "Формат: модель спросить [вопрос]"
+
+        # ── PYPI PUBLISHER ────────────────────────────────────
+        if self.pypi:
+            if any(k in t for k in ["pypi статус", "пайпи статус", "pypi status"]):
+                return self.pypi.status()
+
+            if any(k in t for k in ["pypi список", "опубликованные навыки", "pypi list"]):
+                return self.pypi.list_published()
+
+            if t.startswith("pypi опубликовать ") or t.startswith("pypi publish "):
+                parts = text.split(maxsplit=2)
+                skill_name = parts[2] if len(parts) > 2 else ""
+                return self.pypi.publish(skill_name) if skill_name else "Формат: pypi опубликовать [skill_name]"
+
+            if t.startswith("pypi собрать ") or t.startswith("pypi build "):
+                parts = text.split(maxsplit=2)
+                skill_name = parts[2] if len(parts) > 2 else ""
+                return self.pypi.build_only(skill_name) if skill_name else "Формат: pypi собрать [skill_name]"
+
+            if t.startswith("pypi версия "):
+                # pypi версия [skill_name] [version]
+                parts = text.split(maxsplit=3)
+                skill_name = parts[2] if len(parts) > 2 else ""
+                version = parts[3] if len(parts) > 3 else None
+                return self.pypi.publish(skill_name, version) if skill_name else "Формат: pypi версия [skill_name] [version]"
+
+        return None
 
     def _ask_ollama(self, prompt: str) -> str:
         try:
@@ -277,6 +393,55 @@ class ArgosCore:
             ev = ArgosEvolution(ai_core=self)
             desc = text.split(maxsplit=2)[-1]
             return ev.generate_skill(desc)
+
+# ── СОБСТВЕННАЯ МОДЕЛЬ АРГОСА ─────────────────────────
+        if self.own_model:
+            if any(k in t for k in ["модель статус", "model status", "статус модели"]):
+                return self.own_model.status()
+
+            if any(k in t for k in ["модель обучить", "обучи модель", "train model", "model train"]):
+                return self.own_model.train()
+
+            if any(k in t for k in ["модель сохранить", "сохрани модель", "model save"]):
+                return self.own_model.save()
+
+            if any(k in t for k in ["модель версия", "model version", "версия модели"]):
+                return self.own_model.version()
+
+            if any(k in t for k in ["модель история", "model history", "история обучений"]):
+                return self.own_model.history()
+
+            if any(k in t for k in ["модель экспорт", "model export", "экспорт модели"]):
+                return self.own_model.export_onnx()
+
+            if t.startswith("модель спросить ") or t.startswith("model ask "):
+                query = text.split(maxsplit=2)[-1] if len(text.split()) > 2 else ""
+                return self.own_model.ask(query) if query else "Формат: модель спросить [вопрос]"
+
+        # ── PYPI PUBLISHER ────────────────────────────────────
+        if self.pypi:
+            if any(k in t for k in ["pypi статус", "пайпи статус", "pypi status"]):
+                return self.pypi.status()
+
+            if any(k in t for k in ["pypi список", "опубликованные навыки", "pypi list"]):
+                return self.pypi.list_published()
+
+            if t.startswith("pypi опубликовать ") or t.startswith("pypi publish "):
+                parts = text.split(maxsplit=2)
+                skill_name = parts[2] if len(parts) > 2 else ""
+                return self.pypi.publish(skill_name) if skill_name else "Формат: pypi опубликовать [skill_name]"
+
+            if t.startswith("pypi собрать ") or t.startswith("pypi build "):
+                parts = text.split(maxsplit=2)
+                skill_name = parts[2] if len(parts) > 2 else ""
+                return self.pypi.build_only(skill_name) if skill_name else "Формат: pypi собрать [skill_name]"
+
+            if t.startswith("pypi версия "):
+                # pypi версия [skill_name] [version]
+                parts = text.split(maxsplit=3)
+                skill_name = parts[2] if len(parts) > 2 else ""
+                version = parts[3] if len(parts) > 3 else None
+                return self.pypi.publish(skill_name, version) if skill_name else "Формат: pypi версия [skill_name] [version]"
 
         return None
 
