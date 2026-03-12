@@ -1,0 +1,10 @@
+.env
+*.db
+*.pyc
+__pycache__/
+*.log
+build/
+dist/
+*.egg-info/
+.venv/
+data/argos_model/*.pkl
