@@ -36,13 +36,13 @@ def run_terminal(core):
     print("Initialization in progress... Once you see the \'▶\' prompt, you can type commands.\n")
 
     import psutil
-    (from datetime import datetime)
-from src.awa_core import AWACore
-from src.memory import Memory
-from src.context_manager import ContextManager
-from src.connectivity.nfc_manager import NFCManager
-from src.connectivity.bluetooth_scanner import BluetoothScanner
-from src.security.root_manager import RootManager
+    from datetime import datetime
+    from src.awa_core import AWACore
+    from src.memory import Memory
+    from src.context_manager import ContextManager
+    from src.connectivity.nfc_manager import NFCManager
+    from src.connectivity.bluetooth_scanner import BluetoothScanner
+    from src.security.root_manager import RootManager
     from src.quantum.logic import STATES
 
     q = core.quantum.generate_state() if core.quantum else {"name": "System"}
@@ -85,7 +85,7 @@ if __name__ == "__main__":
     log.info("Запуск Argos Universal OS v1.3...")
 
     try:
-        from src.core import ArgosCore
+        from src.kernel import ArgosCore
         core = ArgosCore()
     except Exception as e:
         log.critical("Не удалось загрузить ArgosCore: %s", e)

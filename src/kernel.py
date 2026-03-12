@@ -162,17 +162,25 @@ class ArgosCore:
 
         # Обновляем любопытство
         if self.curiosity:
+            pass
+            pass
             self.curiosity.touch_activity(text)
 
         # Одиночная команда
         intent = self.execute_intent(text, admin, flasher)
         if intent:
+            pass
+            pass
             return {"answer": intent, "state": q_data["name"]}
 
         # Навыки
         if self.skill_loader:
+            pass
+            pass
             skill_answer = self.skill_loader.dispatch(text, core=self)
             if skill_answer:
+            pass
+            pass
                 return {"answer": skill_answer, "state": "Skill"}
 
         # ИИ-ответ
@@ -187,55 +195,85 @@ class ArgosCore:
         )
         gemini = self._ask_gemini(context, text)
         if gemini:
+            pass
+            pass
             return gemini
         return self._ask_ollama(context + "\n" + text)
 
     def _ask_gemini(self, system: str, prompt: str) -> str | None:
         key = os.getenv("GEMINI_API_KEY", "")
         if not key:
+            pass
+            pass
     # ── СОБСТВЕННАЯ МОДЕЛЬ АРГОСА ─────────────────────────
         if self.own_model:
+            pass
+            pass
             if any(k in t for k in ["модель статус", "model status", "статус модели"]):
+            pass
                 return self.own_model.status()
 
             if any(k in t for k in ["модель обучить", "обучи модель", "train model", "model train"]):
+            pass
+            pass
                 return self.own_model.train()
 
             if any(k in t for k in ["модель сохранить", "сохрани модель", "model save"]):
+            pass
+            pass
                 return self.own_model.save()
 
             if any(k in t for k in ["модель версия", "model version", "версия модели"]):
+            pass
+            pass
                 return self.own_model.version()
 
             if any(k in t for k in ["модель история", "model history", "история обучений"]):
+            pass
+            pass
                 return self.own_model.history()
 
             if any(k in t for k in ["модель экспорт", "model export", "экспорт модели"]):
+            pass
+            pass
                 return self.own_model.export_onnx()
 
             if t.startswith("модель спросить ") or t.startswith("model ask "):
+            pass
+            pass
                 query = text.split(maxsplit=2)[-1] if len(text.split()) > 2 else ""
                 return self.own_model.ask(query) if query else "Формат: модель спросить [вопрос]"
 
         # ── PYPI PUBLISHER ────────────────────────────────────
         if self.pypi:
+            pass
+            pass
             if any(k in t for k in ["pypi статус", "пайпи статус", "pypi status"]):
+            pass
                 return self.pypi.status()
 
             if any(k in t for k in ["pypi список", "опубликованные навыки", "pypi list"]):
+            pass
+            pass
                 return self.pypi.list_published()
 
             if t.startswith("pypi опубликовать ") or t.startswith("pypi publish "):
+            pass
+            pass
                 parts = text.split(maxsplit=2)
                 skill_name = parts[2] if len(parts) > 2 else ""
                 return self.pypi.publish(skill_name) if skill_name else "Формат: pypi опубликовать [skill_name]"
 
             if t.startswith("pypi собрать ") or t.startswith("pypi build "):
+            pass
+            pass
                 parts = text.split(maxsplit=2)
                 skill_name = parts[2] if len(parts) > 2 else ""
                 return self.pypi.build_only(skill_name) if skill_name else "Формат: pypi собрать [skill_name]"
 
             if t.startswith("pypi версия "):
+            pass
+            pass
                 # pypi версия [skill_name] [version]
                 parts = text.split(maxsplit=3)
                 skill_name = parts[2] if len(parts) > 2 else ""
@@ -253,47 +291,73 @@ class ArgosCore:
             log.warning("Gemini: %s", e)
     # ── СОБСТВЕННАЯ МОДЕЛЬ АРГОСА ─────────────────────────
         if self.own_model:
+            pass
+            pass
             if any(k in t for k in ["модель статус", "model status", "статус модели"]):
+            pass
                 return self.own_model.status()
 
             if any(k in t for k in ["модель обучить", "обучи модель", "train model", "model train"]):
+            pass
+            pass
                 return self.own_model.train()
 
             if any(k in t for k in ["модель сохранить", "сохрани модель", "model save"]):
+            pass
+            pass
                 return self.own_model.save()
 
             if any(k in t for k in ["модель версия", "model version", "версия модели"]):
+            pass
+            pass
                 return self.own_model.version()
 
             if any(k in t for k in ["модель история", "model history", "история обучений"]):
+            pass
+            pass
                 return self.own_model.history()
 
             if any(k in t for k in ["модель экспорт", "model export", "экспорт модели"]):
+            pass
+            pass
                 return self.own_model.export_onnx()
 
             if t.startswith("модель спросить ") or t.startswith("model ask "):
+            pass
+            pass
                 query = text.split(maxsplit=2)[-1] if len(text.split()) > 2 else ""
                 return self.own_model.ask(query) if query else "Формат: модель спросить [вопрос]"
 
         # ── PYPI PUBLISHER ────────────────────────────────────
         if self.pypi:
+            pass
+            pass
             if any(k in t for k in ["pypi статус", "пайпи статус", "pypi status"]):
+            pass
                 return self.pypi.status()
 
             if any(k in t for k in ["pypi список", "опубликованные навыки", "pypi list"]):
+            pass
+            pass
                 return self.pypi.list_published()
 
             if t.startswith("pypi опубликовать ") or t.startswith("pypi publish "):
+            pass
+            pass
                 parts = text.split(maxsplit=2)
                 skill_name = parts[2] if len(parts) > 2 else ""
                 return self.pypi.publish(skill_name) if skill_name else "Формат: pypi опубликовать [skill_name]"
 
             if t.startswith("pypi собрать ") or t.startswith("pypi build "):
+            pass
+            pass
                 parts = text.split(maxsplit=2)
                 skill_name = parts[2] if len(parts) > 2 else ""
                 return self.pypi.build_only(skill_name) if skill_name else "Формат: pypi собрать [skill_name]"
 
             if t.startswith("pypi версия "):
+            pass
+            pass
                 # pypi версия [skill_name] [version]
                 parts = text.split(maxsplit=3)
                 skill_name = parts[2] if len(parts) > 2 else ""
@@ -321,74 +385,122 @@ class ArgosCore:
 
         # Статус системы
         if any(k in t for k in ["статус системы", "чек-ап", "status"]):
+            pass
+            pass
             return self._system_status()
 
         # Процессы
         if any(k in t for k in ["список процессов", "процессы", "ps aux"]):
+            pass
+            pass
             return self._list_processes()
 
         # Квантовое состояние
         if any(k in t for k in ["квантовое состояние", "quantum status", "⚛️"]):
+            pass
+            pass
             return self.quantum.status() if self.quantum else "Quantum недоступен"
 
         # Помощь
         if any(k in t for k in ["помощь", "help", "команды", "что умеешь"]):
+            pass
+            pass
             return self._help()
 
         # Git
         if self.git_ops:
+            pass
+            pass
             if any(k in t for k in ["git статус", "git status"]):
+            pass
                 return self.git_ops.status()
             if any(k in t for k in ["git пуш", "git push"]):
+            pass
+            pass
                 return self.git_ops.push()
             if t.startswith("git коммит ") or t.startswith("git commit "):
+            pass
+            pass
                 msg = text.split(maxsplit=2)[-1]
                 return self.git_ops.commit(msg)
             if any(k in t for k in ["git автокоммит", "git auto push"]):
+            pass
+            pass
                 msg = text.split(maxsplit=3)[-1] if len(text.split()) > 3 else "chore: argos update"
                 return self.git_ops.commit_and_push(msg)
 
         # Собственная модель
         if self.own_model:
+            pass
+            pass
             if any(k in t for k in ["модель статус", "статус модели"]):
+            pass
                 return self.own_model.status()
             if any(k in t for k in ["модель обучить", "обучи модель"]):
+            pass
+            pass
                 return self.own_model.train()
             if any(k in t for k in ["модель сохранить"]):
+            pass
+            pass
                 return self.own_model.save()
             if any(k in t for k in ["модель история"]):
+            pass
+            pass
                 return self.own_model.history()
             if any(k in t for k in ["модель версия"]):
+            pass
+            pass
                 return self.own_model.version()
             if t.startswith("модель спросить "):
+            pass
+            pass
                 q = text.split(maxsplit=2)[-1]
                 return self.own_model.ask(q)
 
         # PyPI
         if self.pypi:
+            pass
+            pass
             if any(k in t for k in ["pypi статус"]):
+            pass
                 return self.pypi.status()
             if any(k in t for k in ["pypi список"]):
+            pass
+            pass
                 return self.pypi.list_published()
             if t.startswith("pypi опубликовать "):
+            pass
+            pass
                 skill = text.split(maxsplit=2)[-1]
                 return self.pypi.publish(skill)
             if t.startswith("pypi собрать "):
+            pass
+            pass
                 skill = text.split(maxsplit=2)[-1]
                 return self.pypi.build_only(skill)
 
         # Память
         if self.memory:
+            pass
+            pass
             if t.startswith("запомни "):
+            pass
                 parts = text.split(maxsplit=1)[-1].split("=", 1)
                 if len(parts) == 2:
+            pass
+            pass
                     self.memory.save(parts[0].strip(), parts[1].strip())
                     return f"✅ Запомнил: {parts[0].strip()}"
             if any(k in t for k in ["что ты знаешь", "моя память"]):
+            pass
+            pass
                 return self.memory.summary()
 
         # Эволюция / навыки
         if t.startswith("создай навык ") or t.startswith("напиши навык "):
+            pass
+            pass
             from src.skills.evolution.skill import ArgosEvolution
             ev = ArgosEvolution(ai_core=self)
             desc = text.split(maxsplit=2)[-1]
@@ -396,47 +508,73 @@ class ArgosCore:
 
 # ── СОБСТВЕННАЯ МОДЕЛЬ АРГОСА ─────────────────────────
         if self.own_model:
+            pass
+            pass
             if any(k in t for k in ["модель статус", "model status", "статус модели"]):
+            pass
                 return self.own_model.status()
 
             if any(k in t for k in ["модель обучить", "обучи модель", "train model", "model train"]):
+            pass
+            pass
                 return self.own_model.train()
 
             if any(k in t for k in ["модель сохранить", "сохрани модель", "model save"]):
+            pass
+            pass
                 return self.own_model.save()
 
             if any(k in t for k in ["модель версия", "model version", "версия модели"]):
+            pass
+            pass
                 return self.own_model.version()
 
             if any(k in t for k in ["модель история", "model history", "история обучений"]):
+            pass
+            pass
                 return self.own_model.history()
 
             if any(k in t for k in ["модель экспорт", "model export", "экспорт модели"]):
+            pass
+            pass
                 return self.own_model.export_onnx()
 
             if t.startswith("модель спросить ") or t.startswith("model ask "):
+            pass
+            pass
                 query = text.split(maxsplit=2)[-1] if len(text.split()) > 2 else ""
                 return self.own_model.ask(query) if query else "Формат: модель спросить [вопрос]"
 
         # ── PYPI PUBLISHER ────────────────────────────────────
         if self.pypi:
+            pass
+            pass
             if any(k in t for k in ["pypi статус", "пайпи статус", "pypi status"]):
+            pass
                 return self.pypi.status()
 
             if any(k in t for k in ["pypi список", "опубликованные навыки", "pypi list"]):
+            pass
+            pass
                 return self.pypi.list_published()
 
             if t.startswith("pypi опубликовать ") or t.startswith("pypi publish "):
+            pass
+            pass
                 parts = text.split(maxsplit=2)
                 skill_name = parts[2] if len(parts) > 2 else ""
                 return self.pypi.publish(skill_name) if skill_name else "Формат: pypi опубликовать [skill_name]"
 
             if t.startswith("pypi собрать ") or t.startswith("pypi build "):
+            pass
+            pass
                 parts = text.split(maxsplit=2)
                 skill_name = parts[2] if len(parts) > 2 else ""
                 return self.pypi.build_only(skill_name) if skill_name else "Формат: pypi собрать [skill_name]"
 
             if t.startswith("pypi версия "):
+            pass
+            pass
                 # pypi версия [skill_name] [version]
                 parts = text.split(maxsplit=3)
                 skill_name = parts[2] if len(parts) > 2 else ""
@@ -498,6 +636,8 @@ class ArgosCore:
 
     def say(self, text: str) -> None:
         if not self.voice_on:
+            pass
+            pass
             return
         try:
             import pyttsx3
