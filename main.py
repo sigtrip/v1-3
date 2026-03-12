@@ -1,94 +1,133 @@
-"""
-main.py — Оркестратор Argos Universal OS v1.3
-Запуск: python main.py [--no-gui]
-"""
-import sys, os, argparse, logging
+import os, sys, threading, requests, subprocess, time, json
+from src.core.scaler import SwarmScaler
+from src.connectivity.wearable_bridge import WearableBridge
 
-def _load_env():
-    try:
-        from dotenv import load_dotenv
-        for p in [".env", os.path.join(os.path.dirname(__file__), ".env")]:
-            if os.path.exists(p):
-                load_dotenv(p, override=False)
-                break
-    except ImportError:
-        pass
+# --- IDENTITY ---
+VERSION = "1.30.0-OMNI"
 
-_load_env()
-
+# Load Telegram credentials from files
 try:
-    from src.argos_logger import get_logger
-    log = get_logger("main")
-except Exception:
-    logging.basicConfig(level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-    log = logging.getLogger("main")
+    with open('/content/TG_KEY.txt', 'r') as f:
+        TG_TOKEN = f.read().strip()
+    with open('/content/TG_ID.txt', 'r') as f:
+        TG_ADMIN = f.read().strip()
+    print("DEBUG: Telegram credentials loaded.")
+except Exception as e:
+    print(f"ERROR: Failed to load Telegram credentials: {e}")
+    TG_TOKEN = None # Ensure it's None if loading fails
+    TG_ADMIN = None
+    sys.exit(1) # Exit if credentials cannot be loaded
 
-def parse_args():
-    p = argparse.ArgumentParser(description="Argos Universal OS v1.3")
-    p.add_argument("--no-gui", action="store_true")
-    p.add_argument("--dashboard", action="store_true")
-    return p.parse_args()
 
-def run_terminal(core):
-    """REPL терминал."""
-    print("\n--- ARGOS UNIVERSAL OS ORCHESTRATOR TERMINAL ---")
-    print("Initialization in progress... Once you see the \'▶\' prompt, you can type commands.\n")
+class ArgosOmni:
+    def __init__(self):
+        self.version = VERSION
+        self.scaler = SwarmScaler()
+        self.wearable = WearableBridge()
+        self.authorized = False
+        print("DEBUG: ArgosOmni initialized.")
 
-    import psutil
-    from datetime import datetime
-    from src.awa_core import AWACore
-    from src.memory import Memory
-    from src.context_manager import ContextManager
-    from src.connectivity.nfc_manager import NFCManager
-    from src.connectivity.bluetooth_scanner import BluetoothScanner
-    from src.security.root_manager import RootManager
-    from src.quantum.logic import STATES
+    def execute(self, cmd):
+        low = cmd.lower().strip()
+        print(f"DEBUG: Executing command: {cmd}")
 
-    q = core.quantum.generate_state() if core.quantum else {"name": "System"}
-    print(f"🔱 ARGOS UNIVERSAL OS v{core.VERSION}")
-    print("━" * 50)
-    print(f"[BOOT] ArgosCore engine...                    ✅")
-    print(f"[BOOT] QuantumEngine...                       ✅  состояние: {q['name']}")
-    print(f"[BOOT] Memory...                              {'✅' if core.memory else '⚠️'}")
-    print(f"[BOOT] GitOps...                              {'✅' if core.git_ops else '⚠️'}")
-    print(f"[BOOT] Собственная ML-модель...               {'✅' if core.own_model else '⚠️'}")
-    print(f"[BOOT] Curiosity...                           {'✅' if core.curiosity else '⚠️'}")
-    print(f"[BOOT] Homeostasis...                         {'✅' if core.homeostasis else '⚠️'}")
-    print("━" * 50)
-    print(f"⚛️  Квантовое состояние : {q['name']}")
-    print(f"🧠 Версия              : {core.VERSION}")
-    print(f"🕐 Время               : {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-    print("━" * 50)
-    print("Система готова. Введи \'помощь\' для списка команд.\n")
+        # [!] АВТОРИЗАЦИЯ
+        if not self.authorized and low == "sig1464":
+            self.authorized = True
+            return "🔱 [ACCESS GRANTED]: Режим Omni-Scale активен."
 
+        if not self.authorized: return "🔐 LOCKED."
+
+        # [1] МАСШТАБИРОВАНИЕ (Scaling)
+        if low == "swarm load":
+            return self.scaler.scale_report()
+
+        # [2] НОСИМЫЕ УСТРОЙСТВА (Wearables)
+        elif low.startswith("watch sync "):
+            parts = cmd.split(" ")
+            mac = parts[2] if len(parts) > 2 else "Unknown"
+            return self.wearable.sync_watch(mac)
+
+        elif low == "heart":
+            return f"🧬 [BIOMETRICS]: {self.wearable.get_biometrics()}"
+
+        elif low == "vibe":
+            return self.wearable.send_haptic_feedback("critical_alert")
+
+        # [3] СИСТЕМНЫЕ
+        elif low == "status":
+            return f"🔱 ARGOS v{self.version}\nScale Mode: Dynamic\nWearable: {self.wearable.connected_device if self.wearable.connected_device else 'None'}"
+
+        elif low.startswith("shell "):
+            try: return subprocess.check_output(cmd[6:], shell=True, stderr=subprocess.STDOUT).decode()
+            except Exception as e: return str(e)
+
+        else:
+            # ИИ с учетом нагрузки
+            target = self.scaler.get_optimal_node()
+            if target == "local":
+                try:
+                    print("DEBUG: Calling local AI.")
+                    r = requests.post("http://localhost:11434/api/generate",
+                                     json={"model": "llama3", "prompt": "Отвечай по-русски: " + cmd, "stream": False}, timeout=60)
+                    return f"🔱 [AI-LOCAL]: {r.json().get('response')}"
+                except Exception as e:
+                    print(f"ERROR: Local AI call failed: {e}")
+                    return "⚠️ AI Offline."
+            else:
+                return f"📡 [SCALING]: Задача перенаправлена на узел {target}"
+
+def run():
+    core = ArgosOmni()
+    last_id = 0
+    print(f"🔱 ARGOS {VERSION} СЛУШАЕТ...")
+    try:
+        if TG_TOKEN and TG_ADMIN:
+            print(f"DEBUG: Sending initial Telegram ONLINE message to {TG_ADMIN}")
+            requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", json={"chat_id": TG_ADMIN, "text": f"👁️ ARGOS v{VERSION} OMNI-SCALE ONLINE"})
+            print("DEBUG: Initial Telegram ONLINE message sent.")
+        else:
+            print("WARNING: TG_TOKEN or TG_ADMIN not available, skipping initial Telegram message.")
+    except Exception as e:
+        print(f"ERROR: Failed to send initial Telegram ONLINE message: {e}")
+
+    print("DEBUG: Entering Telegram polling loop.")
     while True:
         try:
-            user_input = input("▶ ").strip()
-            if not user_input:
-                continue
-            if user_input.lower() in ["exit", "выход", "quit"]:
-                print("🔱 Аргос: завершение работы.")
-                break
-            result = core.process(user_input)
-            answer = result.get("answer", "") if isinstance(result, dict) else str(result)
-            print(f"\n{answer}\n")
-        except KeyboardInterrupt:
-            print("\n🔱 Аргос: Ctrl+C получен. Завершение.")
-            break
-        except EOFError:
-            print("\n⚠️  Non-interactive mode. Запусти с флагом --no-gui или в интерактивной среде.")
-            break
+            if not TG_TOKEN or not TG_ADMIN:
+                print("ERROR: Telegram credentials missing in polling loop, exiting.")
+                sys.exit(1) # Exit if credentials somehow become missing here.
 
-if __name__ == "__main__":
-    args = parse_args()
-    log.info("Запуск Argos Universal OS v1.3...")
+            print("DEBUG: Polling Telegram for updates...")
+            r = requests.get(f"https://api.telegram.org/bot{TG_TOKEN}/getUpdates?offset={last_id + 1}&timeout=10").json()
+            print(f"DEBUG: Received {len(r.get('result', []))} updates.")
 
-    try:
-        from src.kernel import ArgosCore
-        core = ArgosCore()
-    except Exception as e:
-        log.critical("Не удалось загрузить ArgosCore: %s", e)
-        sys.exit(1)
+            for u in r.get("result", []):
+                last_id = u["update_id"]
+                msg = u.get("message", {})
+                chat_id = str(msg.get("chat", {}).get("id"))
+                text_msg = msg.get("text", "")
+                print(f"DEBUG: Received message from chat_id {chat_id}: {text_msg}")
 
-    run_terminal(core)
+                if chat_id == TG_ADMIN:
+                    res = core.execute(text_msg)
+                    print(f"DEBUG: Bot response: {res[:50]}...") # Print first 50 chars of response
+                    requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage", json={"chat_id": TG_ADMIN, "text": f"🔱 {res[:4000]}"})
+                else:
+                    print(f"DEBUG: Message from unauthorized chat_id {chat_id} ignored.")
+        except requests.exceptions.ConnectionError as e:
+            print(f"ERROR: Connection to Telegram API failed: {e}. Retrying in 5 seconds.")
+            time.sleep(5)
+        except json.JSONDecodeError as e:
+            print(f"ERROR: Failed to decode JSON from Telegram API response: {e}. Retrying in 5 seconds.")
+            # If 'r' exists and has a 'text' attribute, print it for debugging
+            print(f"Raw response was: {r.text if 'r' in locals() and hasattr(r, 'text') else 'N/A'}")
+            time.sleep(5)
+        except Exception as e:
+            print(f"ERROR: Unhandled exception in polling loop: {e}")
+            time.sleep(5)
+
+if __name__ == '__main__':
+    print("DEBUG: Starting main script.")
+    run()
+    print("DEBUG: Main script finished.") # This should not be reached.
